@@ -1,18 +1,17 @@
 #pragma once
-#include <HAL/Camera/CameraDevice.h>
+#include <miniglog/logging.h>
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/nonfree/features2d.hpp>
-#include <CommonFrontEnd/FundamentalMatrix.h>
 #include "options.h"
 #include "track.h"
 #include "keypoint.h"
 #include "utils.h"
-#include <Utils/PatchUtils.h>
-#include <HAL/Utils/TicToc.h>
+//#include <Utils/PatchUtils.h>
+#include "TicToc.h"
 #include <calibu/cam/CameraRig.h>
-#include <SparseTracking/FeatureMask.h>
-#include <Utils/Utils.h>
+#include "FeatureMask.h"
+//#include <Utils/Utils.h>
 #include <fstream>
 #include <calibu/cam/camera_crtp_interop.h>
 #include <Eigen/Eigenvalues>
@@ -20,7 +19,7 @@
 
 #define LM_DIM 3
 
-namespace rslam
+namespace sdtrack
 {
   struct TrackerPose
   {
@@ -114,7 +113,7 @@ namespace rslam
     uint32_t num_successful_tracks_;
     uint32_t next_track_id_;
     uint32_t longest_track_id_;
-    sparse::FeatureMask mask_;
+    FeatureMask mask_;
     std::vector<uint32_t> pyramid_patch_dims_;
     std::vector<std::vector<uint32_t>> pyramid_patch_corner_dims_;
     std::vector<std::vector<std::vector<double>>> pyramid_patch_interp_factors_;

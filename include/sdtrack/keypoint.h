@@ -4,7 +4,7 @@
 #include <Eigen/Eigen>
 #include <opencv2/features2d/features2d.hpp>
 
-namespace rslam
+namespace sdtrack
 {
   struct Track;
   struct DenseTrack;

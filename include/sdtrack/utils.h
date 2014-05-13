@@ -1,15 +1,51 @@
 #pragma once
 #include <stdint.h>
-#include <Features/brisk/brisk.h>
 #include <Eigen/Eigen>
 
-namespace rslam
+#ifdef REAL_TYPE
+typedef REAL_TYPE Scalar;
+#else // REAL_TYPE
+typedef double Scalar;
+#endif // REAL_TYPE
+
+namespace sdtrack
 {
   static Eigen::IOFormat kCleanFmt(4, 0, ", ", ";\n", "", "");
   static Eigen::IOFormat kLongFmt(Eigen::FullPrecision,
                                   0, ", ", ";\n", "", "");
   static Eigen::IOFormat kLongCsvFmt(Eigen::FullPrecision,
                                      0, ", ", "\n", "", "");
+
+  //template<typename Scalar=double>
+  inline Eigen::Matrix<Scalar, 4, 1> MultHomogeneous(
+      const Sophus::SE3Group<Scalar>& lhs,
+      const Eigen::Matrix<Scalar, 4, 1>& rhs )
+  {
+    Eigen::Matrix<Scalar, 4, 1> out;
+    out.head<3>() =
+        lhs.so3() * (Eigen::Matrix<Scalar, 3, 1>)rhs.head<3>() +
+        lhs.translation()*rhs[3];
+    out[3] = rhs[3];
+    return out;
+  }
+
+
+  template<typename Scalar = double>
+  inline Scalar powi(const Scalar x, const int y) {
+    if (y == 0) {
+      return 1.0;
+    } else if (y < 0) {
+      return 1.0 / powi(x, -y);
+    } else if (y == 0) {
+      return 1.0;
+    } else {
+      Scalar ret = x;
+      for (int ii = 1; ii < y; ii++) {
+        ret *= x;
+      }
+      return ret;
+    }
+  }
 
   inline int hsv2rgb(const Eigen::Vector3d& hsv, Eigen::Vector3d& rgb) {
     /*

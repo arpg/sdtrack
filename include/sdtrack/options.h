@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 
-namespace rslam
+namespace sdtrack
 {
   struct KeypointOptions
   {

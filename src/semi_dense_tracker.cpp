@@ -1,7 +1,7 @@
-#include "semi_dense_tracker.h"
+#include <sdtrack/semi_dense_tracker.h>
 #define CENTER_WEIGHT 500
 #define MIN_OBS_FOR_CAM_LOCALIZATION 3
-using namespace rslam;
+using namespace sdtrack;
 
 
 void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
@@ -101,7 +101,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
   uint32_t cell_width = image.cols / tracker_options_.feature_cells;
   uint32_t cell_height = image.rows / tracker_options_.feature_cells;
   uint32_t cells_hit = 0;
-  const double time = hal::Tic();
+  const double time = Tic();
   for (uint32_t ii = 0  ; ii < tracker_options_.feature_cells ; ++ii) {
     for (uint32_t jj = 0  ; jj < tracker_options_.feature_cells ; ++jj) {
       if (feature_cells_(jj, ii) >= lm_per_cell_) {
@@ -134,7 +134,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
               tracker_options_.patch_dim, keypoints);
   std::cerr << "extract feature detection for " << keypoints.size() <<
                " and "  << cells_hit << " cells " <<  " keypoints took " <<
-               hal::Toc(time) << " seconds." << std::endl;
+               Toc(time) << " seconds." << std::endl;
 }
 
 bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
@@ -486,7 +486,7 @@ void SemiDenseTracker::TransformTrackTabs(const Sophus::SE3d &t_cb)
 
 void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
 {
-  const double time = hal::Tic();
+  const double time = Tic();
   OptimizationStats stats;
   OptimizationOptions options;
   if (level == -1) {
@@ -574,7 +574,7 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
 
 
   // Print pre-post errors
-  std::cerr << "Level " << level << " solve took " << hal::Toc(time) << "s" <<
+  std::cerr << "Level " << level << " solve took " << Toc(time) << "s" <<
                " with delta_p_norm: " << stats.delta_pose_norm << " and delta "
                "lm norm: " << stats.delta_lm_norm << std::endl;
 }
@@ -691,7 +691,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     if (transfer_jacobians) {
       ray.head<3>() = corner_ray;
       ray[3] = ref_kp.rho;
-      const Eigen::Vector4d ray_b = Sophus::MultHomogeneous(t_ba, ray);
+      const Eigen::Vector4d ray_b = MultHomogeneous(t_ba, ray);
       corner_dprojections[ii] =
           cam->dTransfer3d_dray(Sophus::SE3d(), ray_b.head<3>(), ray_b[3]);
     }
@@ -943,7 +943,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
       // need 2x6 transfer residual
       ray.head<3>() = ref_patch.rays[ii] + ref_kp.ray_delta;
       ray[3] = ref_kp.rho;
-      const Eigen::Vector4d ray_v = Sophus::MultHomogeneous(
+      const Eigen::Vector4d ray_v = MultHomogeneous(
             t_ba_ * track->t_ba * t_vc, ray);
 
       dprojection_dray = transfer.dprojections[kk];

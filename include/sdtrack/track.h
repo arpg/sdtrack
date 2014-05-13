@@ -4,7 +4,7 @@
 #include "keypoint.h"
 #include <sophus/se3.hpp>
 
-namespace rslam
+namespace sdtrack
 {
   struct Track
   {
