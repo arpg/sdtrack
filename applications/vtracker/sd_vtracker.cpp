@@ -26,8 +26,6 @@
 
 #include <sdtrack/semi_dense_tracker.h>
 
-#include "online_calibrator.h"
-
 
 static bool& do_keyframing =
     CVarUtils::CreateCVar<>("sd.DoKeyframing", true, "");
@@ -38,12 +36,6 @@ static int& num_ba_iterations =
 uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
-// Self calibration params
-bool unknown_calibration = true;
-bool compare_self_cal_with_batch = false;
-bool do_self_cal = true;
-uint32_t num_self_cal_segments = 5;
-uint32_t self_cal_segment_length = 10;
 
 const int window_width = 640;
 const int window_height = 480;
@@ -61,10 +53,6 @@ calibu::CameraRigT<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 sdtrack::SemiDenseTracker tracker;
-sdtrack::OnlineCalibrator online_calib;
-std::vector<pangolin::DataLog> plot_logs;
-std::vector<pangolin::View*> plot_views;
-
 
 pangolin::View* camera_view, *grid_view;
 pangolin::View patch_view;
@@ -232,113 +220,9 @@ void BaAndStartNewLandmarks()
   }
 
   uint32_t keyframe_id = poses.size();
-  if (unknown_calibration && poses.size() > 2) {
-    sdtrack::CalibrationWindow batch_window;
-    online_calib.AnalyzeCalibrationWindow(poses, current_tracks,
-          0, poses.size(), batch_window, 50, true);
-    for (uint32_t ii = 0 ; ii < poses.size() ; ++ii) {
-      for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
-        if (track->external_id == UINT_MAX) {
-          continue;
-        }
-        // We also have to backproject this track again.
-        tracker.BackProjectTrack(track);
-      }
-    }
-
-    const double score =
-        online_calib.GetWindowScore(batch_window);
-    // Write this to the batch file.
-    std::ofstream("batch.txt", std::ios_base::app) << keyframe_id << ", " <<
-      batch_window.covariance.diagonal().transpose().format(
-      sdtrack::kLongCsvFmt) << ", " << score << ", " <<
-      batch_window.mean.transpose().format(sdtrack::kLongCsvFmt) << std::endl;
-
-    std::cerr << "Batch means are: " << batch_window.mean.transpose() <<
-                 std::endl;
-    std::cerr << "Batch sigmas are:\n" <<
-                 batch_window.covariance << std::endl;
-    std::cerr << "Batch score: " << score << std::endl;
-
-    // If the determinant is smaller than a heuristic, switch to self_cal.
-    if (score < 1e5 && score != 0) {
-      std::cerr << "Determinant small enough, switching to self-cal" <<
-                   std::endl;
-      unknown_calibration = false;
-    }
-  }
 
   if (do_bundle_adjustment) {
     DoBundleAdjustment();
-
-    if (do_self_cal && poses.size() >= self_cal_segment_length) {
-      uint32_t start_pose =
-          std::max(0, (int)poses.size() - (int)self_cal_segment_length);
-      uint32_t end_pose = poses.size();
-      sdtrack::CalibrationWindow window;
-      online_calib.AnalyzeCalibrationWindow(poses, current_tracks,
-                                            start_pose, end_pose, window, 20);
-
-      std::ofstream("sigmas.txt", std::ios_base::app) << keyframe_id << ", " <<
-        window.covariance.diagonal(). transpose().format(
-          sdtrack::kLongCsvFmt) << ", " << window.score << std::endl;
-
-      // Now potentially add this to the priority queue.
-      bool added = online_calib.AnalyzeCalibrationWindow(window);
-
-      // If the priority queue was modified, calculate the new results for it.
-      if (added) {
-        sdtrack::CalibrationWindow pq_window;
-        bool apply_results = !unknown_calibration;
-        online_calib.AnalyzePriorityQueue(poses, current_tracks,
-                                          pq_window, 50, apply_results);
-        if (apply_results) {
-          for (size_t ii = 0; ii < poses.size(); ++ii) {
-            for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
-              tracker.BackProjectTrack(track);
-            }
-          }
-        }
-        std::cerr << "Analyzed priority queue with mean " <<
-                     pq_window.mean.transpose() << " and cov\n " <<
-                     pq_window.covariance << std::endl;
-        online_calib.SetPriorityQueueDistribution(pq_window.covariance,
-                                                  pq_window.mean);
-
-
-        const double score =
-            online_calib.GetWindowScore(pq_window);
-
-        // Write this to the pq file.
-        std::ofstream("pq.txt", std::ios_base::app) << keyframe_id << ", " <<
-          pq_window.covariance.diagonal().transpose().format(
-            sdtrack::kLongCsvFmt) << ", " << score << ", " <<
-          pq_window.mean.transpose().format(sdtrack::kLongCsvFmt) << std::endl;
-
-        if (compare_self_cal_with_batch && !unknown_calibration) {
-          // Also analyze the full batch solution.
-          sdtrack::CalibrationWindow batch_window;
-          online_calib.AnalyzeCalibrationWindow(poses, current_tracks,
-                0, poses.size(), batch_window, 50);
-
-          const double batch_score =
-              online_calib.GetWindowScore(batch_window);
-
-          // Write this to the batch file.
-          std::ofstream("batch.txt", std::ios_base::app) << keyframe_id << ", " <<
-            batch_window.covariance.diagonal().transpose().format(
-            sdtrack::kLongCsvFmt) << ", " << batch_score << ", " <<
-            batch_window.mean.transpose().format(sdtrack::kLongCsvFmt) <<
-            std::endl;
-
-          std::cerr << "Batch means are: " << batch_window.mean.transpose() <<
-                       std::endl;
-          std::cerr << "Batch sigmas are:\n" <<
-                       batch_window.covariance << std::endl;
-          std::cerr << "Batch score: " << batch_score << std::endl;
-        }
-      }
-    }
   }
 
   if (do_start_new_landmarks) {
@@ -443,13 +327,6 @@ void ProcessImage(cv::Mat& image)
 
   if (!is_manual_mode) {
     BaAndStartNewLandmarks();
-  }
-
-  if (do_self_cal || unknown_calibration) {
-    for (size_t ii = 0; ii < rig.cameras_[0]->NumParams() ; ++ii) {
-      plot_logs[ii].Log(rig.cameras_[0]->GetParams()[ii],
-          old_rig.cameras[0].camera.GenericParams()[ii]);
-    }
   }
 
   if (is_keyframe) {
@@ -621,10 +498,6 @@ void InitGui()
     is_running = !is_running;
   });
 
-  pangolin::RegisterKeyPressCallback('c', [&]() {
-    do_self_cal = !do_self_cal;
-  });
-
   pangolin::RegisterKeyPressCallback('b', [&]() {
     last_optimization_level = 0;
     tracker.OptimizeTracks();
@@ -702,54 +575,12 @@ void InitGui()
   patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
 
   CreatePatchGrid(3, 3,  patches, patch_view);
-
-  // set up the plotters.
-  if (do_self_cal) {
-    plot_views.resize(rig.cameras_[0]->NumParams());
-    plot_logs.resize(rig.cameras_[0]->NumParams());
-    double bottom = 0;
-    for (size_t ii = 0; ii < rig.cameras_[0]->NumParams(); ++ii) {
-      plot_views[ii] = &pangolin::CreatePlotter("plot", &plot_logs[ii])
-              .SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
-      bottom += 0.1;
-      pangolin::DisplayBase().AddDisplay(*plot_views[ii]);
-    }
-  }
 }
 
 bool LoadCameras(GetPot& cl)
 {
   LoadCameraAndRig(cl, camera_device, old_rig);
-  // If we require self-calibration from an unknown initial calibration, then
-  // perturb the values.
   calibu::CreateFromOldRig(&old_rig, &rig);
-  if (unknown_calibration) {
-    Eigen::VectorXd params = old_rig.cameras[0].camera.GenericParams();
-    // fov in rads.
-    const double fov_rads = 90 * M_PI / 180.0;
-    const double f_x =
-        0.5 * old_rig.cameras[0].camera.Height() / tan(fov_rads / 2);
-    std::cerr << "Changing fx from " << params[0] << " to " << f_x << std::endl;
-    std::cerr << "Changing fy from " << params[1] << " to " << f_x << std::endl;
-    params[0] = f_x;
-    params[1] = f_x;
-    params[2] = old_rig.cameras[0].camera.Width() / 2;
-    params[3] = old_rig.cameras[0].camera.Height() / 2;
-    if (params.rows() > 4) {
-      params[4] = 1.0;
-    }
-    for (size_t ii = 0; ii < rig.cameras_[0]->NumParams() ; ++ii) {
-      rig.cameras_[0]->GetParams()[ii] = params[ii];
-    }
-
-    // Add a marker in the batch file for this initial, unknown calibration.
-    Eigen::VectorXd initial_covariance(params.rows());
-    initial_covariance.setOnes();
-    std::ofstream("batch.txt", std::ios_base::app) << 0 << ", " <<
-      initial_covariance.transpose().format(sdtrack::kLongCsvFmt) <<
-      ", " << 0 << ", " << params.transpose().format(sdtrack::kLongCsvFmt) <<
-      std::endl;
-  }
   return true;
 }
 
@@ -786,18 +617,6 @@ int main(int argc, char** argv) {
   tracker_options.dense_ncc_threshold = 0.85;
   tracker_options.harris_score_threshold = 2e6;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
-
-  // Initialize the online calibration component.
-  Eigen::VectorXd weights(rig.cameras_[0]->NumParams());
-  if (weights.rows() > 4) {
-    weights << 1.0, 1.0, 1.7, 1.7, 320000;
-    //weights << 1.0, 1.0, 1.0, 1.0, 1.0;
-  } else {
-    weights << 1.0, 1.0, 1.7, 1.7;
-  }
-
-  online_calib.Init(&rig, num_self_cal_segments,
-                    self_cal_segment_length, weights);
 
   InitGui();
 

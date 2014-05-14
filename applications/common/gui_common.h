@@ -74,6 +74,36 @@ inline Eigen::Vector2d ImageToWindowCoords(int image_width, int image_height,
   return p_win;
 }
 
+void DrawTrackPatches(
+    std::shared_ptr<sdtrack::DenseTrack>& track,
+    std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>>& patches) {
+  sdtrack::DenseKeypoint& kp = track->ref_keypoint;
+  for (uint32_t ii = 0; ii < kp.patch_pyramid.size() &&
+       ii <= 2 ; ++ii) {
+    const sdtrack::Patch& ref_patch = kp.patch_pyramid[ii];
+    std::vector<unsigned char> disp_values;
+    std::vector<unsigned char> disp_proj_values;
+    std::vector<unsigned char> res_values;
+    disp_values.reserve(ref_patch.values.size());
+    disp_proj_values.reserve(disp_values.size());
+    res_values.reserve(disp_values.size());
+
+    for (uint32_t jj = 0; jj < ref_patch.values.size() ; ++jj) {
+      disp_values.push_back(ref_patch.values[jj]);
+      disp_proj_values.push_back(ref_patch.projected_values[jj]);
+      res_values.push_back(fabs(ref_patch.residuals[jj]));
+    }
+    patches[ii][0]->SetImage(&disp_values[0], ref_patch.dim, ref_patch.dim,
+        GL_LUMINANCE8, GL_LUMINANCE);
+
+    patches[ii][1]->SetImage(&disp_proj_values[0], ref_patch.dim,
+        ref_patch.dim, GL_LUMINANCE8, GL_LUMINANCE);
+
+    patches[ii][2]->SetImage(&res_values[0], ref_patch.dim, ref_patch.dim,
+        GL_LUMINANCE8,GL_LUMINANCE);
+  }
+}
+
 void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,
                    uint32_t image_width, uint32_t image_height,
                    uint32_t opt_level, Eigen::Vector2d& center)

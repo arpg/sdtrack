@@ -1,4 +1,4 @@
 cmake_minimum_required( VERSION 2.8 )
 include_directories(common)
 add_subdirectory(self_cal)
-#add_subdirectory(tracker) 
+add_subdirectory(vtracker) 
