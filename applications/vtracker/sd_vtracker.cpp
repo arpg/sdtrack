@@ -86,27 +86,16 @@ void DoBundleAdjustment(uint32_t num_active_poses)
   uint32_t start_pose = poses.size();
   for (uint32_t ii = start_active_pose ; ii < poses.size() ; ++ii) {
     std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-    std::cerr << "Start id: " << start_pose << " pose longest track " <<
-                 pose->longest_track << " for pose id " << ii << std::endl;
+    // std::cerr << "Start id: " << start_pose << " pose longest track " <<
+    //              pose->longest_track << " for pose id " << ii << std::endl;
     start_pose = std::min(ii - (pose->longest_track - 1), start_pose);
   }
-  std::cerr << "Final start id: " << start_pose << std::endl;
-  // Find the earliest pose touched by the current tracks.
-//  size_t max_poses = 0;
-//  std::list<std::shared_ptr<sdtrack::DenseTrack>>& curr_tracks =
-//      tracker.GetCurrentTracks();
-//  for (std::shared_ptr<sdtrack::DenseTrack> track : curr_tracks) {
-//    max_poses = std::max(max_poses, track->keypoints.size());
-//  }
+  // std::cerr << "Final start id: " << start_pose << std::endl;
 
   if (start_pose == poses.size()) {
     return;
   }
 
-//  const uint32_t start_pose = poses.size() - max_poses;
-//  const uint32_t start_active_pose =
-//      poses.size() - start_pose > num_active_poses ?
-//        poses.size() - num_active_poses : start_pose;
   std::cerr << "Num poses: " << poses.size() << " start pose " <<
                start_pose << " start active pose " << start_active_pose <<
                std::endl;
