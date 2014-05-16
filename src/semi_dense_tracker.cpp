@@ -168,7 +168,7 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
   return true;
 }
 
-bool SemiDenseTracker::IsReprojectionValid(const Eigen::Vector2d &pix,
+bool SemiDenseTracker::IsReprojectionValid(const Eigen::Vector2t &pix,
                                            const cv::Mat& image)
 {
   if (pix[0] <= 2 || pix[0] > (image.cols - 2) ) {
@@ -214,7 +214,7 @@ void SemiDenseTracker::BackProjectTrack(std::shared_ptr<DenseTrack> track,
     for (double yy = patch.center[1] - extent; yy <= y_max ; ++yy) {
       for (double xx = patch.center[0] - extent; xx <= x_max ; ++xx) {
         // Calculate this pixel in the 0th level image
-        Eigen::Vector2d px_level0(xx / pyramid_coord_ratio_[ii][0],
+        Eigen::Vector2t px_level0(xx / pyramid_coord_ratio_[ii][0],
             yy / pyramid_coord_ratio_[ii][1]);
         patch.rays[array_dim] =
             camera_rig_->cameras_[0]->Unproject(px_level0).normalized() *
@@ -312,7 +312,7 @@ uint32_t SemiDenseTracker::StartNewTracks(std::vector<cv::Mat> &image_pyrmaid,
     new_kp.rho = distribution(generator_);
     //    }
     new_kp.response = kp.response;
-    new_kp.center_px = Eigen::Vector2d(kp.pt.x, kp.pt.y);
+    new_kp.center_px = Eigen::Vector2t(kp.pt.x, kp.pt.y);
 
     new_track->keypoints.push_back(new_kp.center_px);
     new_track->keypoint_external_data.push_back(UINT_MAX);
@@ -409,10 +409,10 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
     // and not in inverse depth mode.
 #if (LM_DIM == 3)
     if (!track->inverse_depth_ray && track->opt_id != UINT_MAX) {
-      const Eigen::Vector2d center_pix = transfer.center_projection;
+      const Eigen::Vector2t center_pix = transfer.center_projection;
       const double center_weight = CENTER_WEIGHT;
       // Form the residual between the center pix and the original pixel loc.
-      const Eigen::Vector2d c_res = (center_pix - ref_kp.center_px);
+      const Eigen::Vector2t c_res = (center_pix - ref_kp.center_px);
       track->center_error = c_res.norm();
       residual += c_res.transpose() * center_weight * c_res;
     }
@@ -440,7 +440,7 @@ void SemiDenseTracker::ReprojectTrackCenters()
     const Sophus::SE3d track_t_ba = t_cv * t_ba_ * track->t_ba * t_vc;
     const DenseKeypoint& ref_kp = track->ref_keypoint;
     // Transfer the center ray. This is used for 2d tracking.
-    const Eigen::Vector2d center_pix =
+    const Eigen::Vector2t center_pix =
         cam.Transfer3d(track_t_ba, ref_kp.ray + ref_kp.ray_delta, ref_kp.rho);
     if (IsReprojectionValid(center_pix, image_pyrmaid_[0])) {
       track->keypoints.back() = center_pix;
@@ -664,7 +664,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
                                      PatchTransfer& result,
                                      bool transfer_jacobians)
 {
-  Eigen::Vector4d ray;
+  Eigen::Vector4t ray;
   DenseKeypoint& ref_kp = track->ref_keypoint;
   Patch& ref_patch = ref_kp.patch_pyramid[level];
   result.valid_projections.clear();
@@ -680,10 +680,10 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
   // If we are doing simplified (4 corner) patch transfer, transfer the four
   // corners.
   bool corners_project = true;
-  Eigen::Vector2d corner_projections[4];
+  Eigen::Vector2t corner_projections[4];
   Eigen::Matrix<double, 2, 4> corner_dprojections[4];
   for (int ii = 0 ; ii < 4 ; ++ii) {
-    const Eigen::Vector3d& corner_ray =
+    const Eigen::Vector3t& corner_ray =
         ref_patch.rays[pyramid_patch_corner_dims_[level][ii]] +
         ref_kp.ray_delta;
     corner_projections[ii] = cam->Transfer3d(t_ba, corner_ray, ref_kp.rho);
@@ -691,7 +691,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     if (transfer_jacobians) {
       ray.head<3>() = corner_ray;
       ray[3] = ref_kp.rho;
-      const Eigen::Vector4d ray_b = MultHomogeneous(t_ba, ray);
+      const Eigen::Vector4t ray_b = MultHomogeneous(t_ba, ray);
       corner_dprojections[ii] =
           cam->dTransfer3d_dray(Sophus::SE3d(), ray_b.head<3>(), ray_b[3]);
     }
@@ -711,7 +711,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
   }
 
   // Transfer the center ray.
-  const Eigen::Vector3d center_ray = ref_kp.ray + ref_kp.ray_delta;
+  const Eigen::Vector3t center_ray = ref_kp.ray + ref_kp.ray_delta;
   // Reproject the center and form a residual.
   result.center_projection =
       cam->Transfer3d(Sophus::SE3d(), center_ray, ref_kp.rho);
@@ -733,7 +733,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     const double br_factor = pyramid_patch_interp_factors_[level][ii][3];
 
     // First transfer this pixel over to our current image.
-    Eigen::Vector2d pix;// = cam->Transfer3d(t_ba, ref_patch.rays[ii],
+    Eigen::Vector2t pix;// = cam->Transfer3d(t_ba, ref_patch.rays[ii],
     //                    ref_kp.rho);
 
     if (corners_project) {
@@ -762,7 +762,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     } else {
       // ray.head<3>() = ref_patch.rays[ii] + ref_kp.ray_delta;
       // ray[3] = ref_kp.rho;
-      // const Eigen::Vector4d ray_b = Sophus::MultHomogeneous(t_ba, ray);
+      // const Eigen::Vector4t ray_b = Sophus::MultHomogeneous(t_ba, ray);
 
       // Eigen::Matrix<double, 2, 4> dprojection_dray =
       //     cam->dTransfer3d_dray(Sophus::SE3d(), ray_b.head<3>(), ray_b[3]);
@@ -849,7 +849,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
 
   Eigen::Matrix<double, 2, 6> dp_dx;
   Eigen::Matrix<double, 2, 4> dp_dray;
-  Eigen::Vector4d ray;
+  Eigen::Vector4t ray;
   Eigen::Matrix<double, 2, 4> dprojection_dray;
   static std::vector<Eigen::Matrix<double, 1, 6>> di_dx;
   static std::vector<Eigen::Matrix<double, 1, LM_DIM>> di_dray;
@@ -861,7 +861,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
   Eigen::Matrix<double, 1, LM_DIM> mean_di_dray;
   Eigen::Matrix<double, 1, 6> final_di_dx;
   Eigen::Matrix<double, 1, LM_DIM> final_di_dray;
-  // std::vector<Eigen::Vector2d> valid_projections;
+  // std::vector<Eigen::Vector2t> valid_projections;
   // std::vector<unsigned int> valid_rays;
 
   uint32_t track_id = 0;
@@ -938,12 +938,12 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
     {
       const size_t ii = transfer.valid_rays[kk];
       // First transfer this pixel over to our current image.
-      const Eigen::Vector2d pix = transfer.valid_projections[kk];
+      const Eigen::Vector2t pix = transfer.valid_projections[kk];
 
       // need 2x6 transfer residual
       ray.head<3>() = ref_patch.rays[ii] + ref_kp.ray_delta;
       ray[3] = ref_kp.rho;
-      const Eigen::Vector4d ray_v = MultHomogeneous(
+      const Eigen::Vector4t ray_v = MultHomogeneous(
             t_ba_ * track->t_ba * t_vc, ray);
 
       dprojection_dray = transfer.dprojections[kk];
@@ -1073,9 +1073,9 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
 #if (LM_DIM == 3)
         const double center_weight = CENTER_WEIGHT;
         // Reproject the center and form a residual.
-        const Eigen::Vector2d& center_pix = transfer.center_projection;
+        const Eigen::Vector2t& center_pix = transfer.center_projection;
         // Form the residual between the center pix and the original pixel loc.
-        const Eigen::Vector2d c_res = (center_pix - ref_kp.center_px);
+        const Eigen::Vector2t c_res = (center_pix - ref_kp.center_px);
         track->center_error = c_res.norm();
         // std::cerr << " Center error for " << track_id << ": " <<
         //              (center_pix - ref_kp.center_px).transpose() << std::endl;
@@ -1087,7 +1087,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
         // Add contribution for the subraction term on the rhs.
         r_l += dp_dray3d.transpose() * center_weight * c_res;
 
-        const Eigen::Vector3d eivals =
+        const Eigen::Vector3t eivals =
             v.selfadjointView<Eigen::Lower>().eigenvalues();
         const double cond = eivals.maxCoeff() / eivals.minCoeff();
         // Skip this track if it's not observable.
@@ -1234,7 +1234,7 @@ void SemiDenseTracker::AddImage(const cv::Mat &image,
 #if (LM_DIM == 3)
       track->ref_keypoint.ray_delta.setZero();
 #endif
-      track->keypoints.push_back(Eigen::Vector2d());
+      track->keypoints.push_back(Eigen::Vector2t());
       track->keypoint_external_data.push_back(UINT_MAX);
       track->keypoints_tracked.push_back(false);
 

@@ -6,12 +6,8 @@
 #include <HAL/Camera/CameraDevice.h>
 #include <miniglog/logging.h>
 #include <calibu/utils/Xml.h>
-// #include <Utils/MathTypes.h>
-// #include <Utils/PrintMatrix.h>
-// #include <Utils/Utils.h>
 #include "GetPot"
 #include <sdtrack/TicToc.h>
-// #include <HAL/Utils/TicToc.h>
 #include <unistd.h>
 #include <SceneGraph/SceneGraph.h>
 #include <pangolin/pangolin.h>
@@ -77,31 +73,43 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
-void DoBundleAdjustment()
+void DoBundleAdjustment(uint32_t num_active_poses)
 {
   ba::Options<double> options;
   options.projection_outlier_threshold = 1.0;
   options.trust_region_size = 10;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
-  // Find the earliest pose touched by the current tracks.
-  size_t max_poses = 0;
-  std::list<std::shared_ptr<sdtrack::DenseTrack>>& curr_tracks =
-      tracker.GetCurrentTracks();
-  for (std::shared_ptr<sdtrack::DenseTrack> track : curr_tracks) {
-    max_poses = std::max(max_poses, track->keypoints.size());
-  }
+  const uint32_t start_active_pose = poses.size() > num_active_poses ?
+      poses.size() - num_active_poses : 0;
 
-  if (max_poses == 0) {
+  uint32_t start_pose = poses.size();
+  for (uint32_t ii = start_active_pose ; ii < poses.size() ; ++ii) {
+    std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
+    std::cerr << "Start id: " << start_pose << " pose longest track " <<
+                 pose->longest_track << " for pose id " << ii << std::endl;
+    start_pose = std::min(ii - (pose->longest_track - 1), start_pose);
+  }
+  std::cerr << "Final start id: " << start_pose << std::endl;
+  // Find the earliest pose touched by the current tracks.
+//  size_t max_poses = 0;
+//  std::list<std::shared_ptr<sdtrack::DenseTrack>>& curr_tracks =
+//      tracker.GetCurrentTracks();
+//  for (std::shared_ptr<sdtrack::DenseTrack> track : curr_tracks) {
+//    max_poses = std::max(max_poses, track->keypoints.size());
+//  }
+
+  if (start_pose == poses.size()) {
     return;
   }
 
-  const uint32_t start_pose = poses.size() - max_poses;
-  const uint32_t start_active_pose = poses.size() - start_pose > 10 ?
-        poses.size() - 10 : start_pose;
+//  const uint32_t start_pose = poses.size() - max_poses;
+//  const uint32_t start_active_pose =
+//      poses.size() - start_pose > num_active_poses ?
+//        poses.size() - num_active_poses : start_pose;
   std::cerr << "Num poses: " << poses.size() << " start pose " <<
                start_pose << " start active pose " << start_active_pose <<
-               " max_poses" << max_poses << std::endl;
+               std::endl;
 
   bool all_poses_active = start_active_pose == start_pose;
 
@@ -117,7 +125,10 @@ void DoBundleAdjustment()
       pose->opt_id = bundle_adjuster.AddPose(pose->t_wp,
                                              ii >= start_active_pose );
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
-        if (track->num_good_tracked_frames == 1 || track->is_outlier) {
+        bool constrains_active =
+            track->keypoints.size() + ii > start_active_pose;
+        if (track->num_good_tracked_frames == 1 || track->is_outlier ||
+            !constrains_active) {
           track->external_id = UINT_MAX;
           continue;
         }
@@ -211,6 +222,16 @@ void UpdateCurrentPose()
   if (poses.size() > 1) {
     new_pose->t_wp = poses[poses.size() - 2]->t_wp * tracker.t_ba().inverse();
   }
+
+  // Also use the current tracks to update the index of the earliest covisible
+  // pose.
+  size_t max_track_length = 0;
+  for (std::shared_ptr<sdtrack::DenseTrack>& track : tracker.GetCurrentTracks()) {
+    max_track_length = std::max(track->keypoints.size(), max_track_length);
+  }
+  new_pose->longest_track = max_track_length;
+  std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
+               new_pose->longest_track << std::endl;
 }
 
 void BaAndStartNewLandmarks()
@@ -222,7 +243,7 @@ void BaAndStartNewLandmarks()
   uint32_t keyframe_id = poses.size();
 
   if (do_bundle_adjustment) {
-    DoBundleAdjustment();
+    DoBundleAdjustment(10);
   }
 
   if (do_start_new_landmarks) {
@@ -285,7 +306,6 @@ void ProcessImage(cv::Mat& image)
 
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks);
-
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.

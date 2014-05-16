@@ -37,8 +37,6 @@ struct TrackerHandler : pangolin::Handler3D
       Eigen::Vector2d center = track_centers[ii].first;
       const double dist = sqrt(sdtrack::powi(x_val - center[0], 2) +
           sdtrack::powi(y_val - center[1], 2));
-      std::cerr << "Dist is " << dist << " w " << image_width << " h " <<
-                   image_height << std::endl;
       if (dist < 4) {
         // Then this is the selected track.
         selected_track = track_centers[ii].second;

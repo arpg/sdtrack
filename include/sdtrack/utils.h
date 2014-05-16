@@ -8,6 +8,32 @@ typedef REAL_TYPE Scalar;
 typedef double Scalar;
 #endif // REAL_TYPE
 
+namespace Sophus
+{
+
+typedef Sophus::SO3Group<Scalar> SO3t;
+typedef Sophus::SE3Group<Scalar> SE3t;
+}
+
+namespace Eigen
+{
+  template<typename EigenT>
+  using aligned_vector = std::vector<EigenT, Eigen::aligned_allocator<EigenT> >;
+
+  #define USING_VECTOR_ARRAY(size)                                        \
+    using Vector##size##tArray = aligned_vector<Matrix<Scalar, size, 1> >
+
+  USING_VECTOR_ARRAY(2);
+  USING_VECTOR_ARRAY(3);
+  USING_VECTOR_ARRAY(4);
+  USING_VECTOR_ARRAY(5);
+  USING_VECTOR_ARRAY(6);
+  typedef Matrix<Scalar, Eigen::Dynamic, 1> VectorXt;
+  typedef Matrix<Scalar, 2, 1> Vector2t;
+  typedef Matrix<Scalar, 3, 1> Vector3t;
+  typedef Matrix<Scalar, 4, 1> Vector4t;
+  typedef Matrix<Scalar, 6, 1> Vector6t;
+}
 namespace sdtrack
 {
   static Eigen::IOFormat kCleanFmt(4, 0, ", ", ";\n", "", "");

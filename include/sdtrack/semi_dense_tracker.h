@@ -24,8 +24,12 @@ namespace sdtrack
   struct TrackerPose
   {
     std::list<std::shared_ptr<DenseTrack>> tracks;
-    Sophus::SE3d t_wp;
+    Sophus::SE3t t_wp;
+    Eigen::Vector3t v_w;
+    Eigen::Vector6t b;
     uint32_t opt_id;
+    double time;
+    uint32_t longest_track;
   };
 
   class SemiDenseTracker
@@ -45,7 +49,7 @@ namespace sdtrack
         bool transfer_jacobians = false,
         bool optimized_tracks_only = false);
 
-    void TransformTrackTabs(const Sophus::SE3d& t_cb);
+    void TransformTrackTabs(const Sophus::SE3t& t_cb);
 
     void OptimizeTracks(int level = -1, bool optimize_landmarks = true);
 
@@ -58,7 +62,7 @@ namespace sdtrack
         OptimizationStats &stats);
 
     void AddImage(const cv::Mat &image,
-                  const Sophus::SE3d& t_ab_guess);
+                  const Sophus::SE3t& t_ab_guess);
     void AddKeyframe() { last_image_was_keyframe_ = true; }
 
     std::vector<cv::Mat>& GetImagePyramid() { return image_pyrmaid_; }
@@ -67,8 +71,8 @@ namespace sdtrack
       { return current_tracks_; }
     std::list<std::shared_ptr<DenseTrack>>& GetNewTracks()
       { return new_tracks_; }
-    const Sophus::SE3d& t_ba() { return t_ba_; }
-    void set_t_ba(const Sophus::SE3d& t_ba) { t_ba_ = t_ba; }
+    const Sophus::SE3t& t_ba() { return t_ba_; }
+    void set_t_ba(const Sophus::SE3t& t_ba) { t_ba_ = t_ba; }
     uint32_t num_successful_tracks() { return num_successful_tracks_; }
     uint32_t longest_track_id() { return longest_track_id_; }
 
@@ -83,7 +87,7 @@ namespace sdtrack
 
     void TransferPatch(std::shared_ptr<DenseTrack> track,
                        uint32_t level,
-                       const Sophus::SE3d& t_ba,
+                       const Sophus::SE3t& t_ba,
                        calibu::CameraInterface<Scalar>* cam,
                        PatchTransfer &result, bool transfer_jacobians);
 
@@ -98,9 +102,9 @@ namespace sdtrack
     bool IsKeypointValid(const cv::KeyPoint& kp,
                          uint32_t image_width, uint32_t image_height);
 
-    bool IsReprojectionValid(const Eigen::Vector2d& pix, const cv::Mat &image);
+    bool IsReprojectionValid(const Eigen::Vector2t& pix, const cv::Mat &image);
 
-    Sophus::SE3d t_ba_;
+    Sophus::SE3t t_ba_;
     bool last_image_was_keyframe_ = true;
     double lm_per_cell_;
     double average_track_length;
@@ -117,7 +121,7 @@ namespace sdtrack
     std::vector<uint32_t> pyramid_patch_dims_;
     std::vector<std::vector<uint32_t>> pyramid_patch_corner_dims_;
     std::vector<std::vector<std::vector<double>>> pyramid_patch_interp_factors_;
-    std::vector<Eigen::Vector2d> pyramid_coord_ratio_;
+    std::vector<Eigen::Vector2t> pyramid_coord_ratio_;
     std::vector<cv::Mat> image_pyrmaid_;
     std::vector<double> pyramid_error_thresholds_;
     Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> feature_cells_;
