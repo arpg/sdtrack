@@ -19,6 +19,7 @@
 #include <sdtrack/utils.h>
 #include "math_types.h"
 #include "gui_common.h"
+#include "etc_common.h"
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
 #endif
@@ -26,6 +27,10 @@
 #include <sdtrack/semi_dense_tracker.h>
 
 
+static int& num_ba_poss =
+    CVarUtils::CreateCVar<>("sd.NumBaPoses", 20, "");
+static bool& regularize_biases_in_batch =
+    CVarUtils::CreateCVar<>("sd.RegularizeBiasesInBatch", true, "");
 static bool& do_keyframing =
     CVarUtils::CreateCVar<>("sd.DoKeyframing", true, "");
 static int& num_ba_iterations =
@@ -100,26 +105,17 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
   ba::Options<double> options;
   options.projection_outlier_threshold = 1.0;
   options.trust_region_size = 10;
+  options.regularize_biases_in_batch = regularize_biases_in_batch;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
   // Find the earliest pose touched by the current tracks.
-  size_t max_poses = 0;
-  std::list<std::shared_ptr<sdtrack::DenseTrack>>& curr_tracks =
-      tracker.GetCurrentTracks();
-  for (std::shared_ptr<sdtrack::DenseTrack> track : curr_tracks) {
-    max_poses = std::max(max_poses, track->keypoints.size());
-  }
+  uint32_t start_active_pose, start_pose;
 
-  if (max_poses == 0) {
+  GetBaPoseRange(poses, num_active_poses, start_pose, start_active_pose);
+
+  if (start_pose == poses.size()) {
     return;
   }
-
-  const uint32_t start_pose = poses.size() - max_poses;
-  const uint32_t start_active_pose = poses.size() - start_pose > num_active_poses ?
-        poses.size() - num_active_poses : start_pose;
-  std::cerr << "Num poses: " << poses.size() << " start pose " <<
-               start_pose << " start active pose " << start_active_pose <<
-               " max_poses" << max_poses << std::endl;
 
   bool all_poses_active = start_active_pose == start_pose;
 
@@ -151,10 +147,14 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
               ba.AddImuResidual(poses[ii - 1]->opt_id, pose->opt_id, meas));
       }
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
-        if (track->num_good_tracked_frames == 1 || track->is_outlier) {
+        const bool constrains_active =
+            track->keypoints.size() + ii > start_active_pose;
+        if (track->num_good_tracked_frames == 1 || track->is_outlier ||
+            !constrains_active) {
           track->external_id = UINT_MAX;
           continue;
         }
+
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
@@ -202,6 +202,14 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
       const ba::PoseT<double>& ba_pose = ba.GetPose(pose->opt_id);
 
       pose->t_wp = ba_pose.t_wp;
+      if (use_imu) {
+        pose->v_w = ba_pose.v_w;
+        pose->b = ba_pose.b;
+        // if (!regularize_biases_in_batch) {
+          std::cerr << "b for pose " << ii << " is " << pose->b.transpose() <<
+                       std::endl;
+        // }
+      }
       // Here the last pose is actually t_wb and the current pose t_wa.
       last_t_ba = t_ba;
       t_ba = last_pose->t_wp.inverse() * pose->t_wp;
@@ -245,6 +253,16 @@ void UpdateCurrentPose()
   if (poses.size() > 1) {
     new_pose->t_wp = poses[poses.size() - 2]->t_wp * tracker.t_ba().inverse();
   }
+
+  // Also use the current tracks to update the index of the earliest covisible
+  // pose.
+  size_t max_track_length = 0;
+  for (std::shared_ptr<sdtrack::DenseTrack>& track : tracker.GetCurrentTracks()) {
+    max_track_length = std::max(track->keypoints.size(), max_track_length);
+  }
+  new_pose->longest_track = max_track_length;
+  std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
+               new_pose->longest_track << std::endl;
 }
 
 void BaAndStartNewLandmarks()
@@ -257,9 +275,9 @@ void BaAndStartNewLandmarks()
 
   if (do_bundle_adjustment) {
     if (poses.size() > min_poses_for_imu) {
-      DoBundleAdjustment(vi_bundle_adjuster, true, 10);
+      DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poss);
     } else {
-      DoBundleAdjustment(bundle_adjuster, false, 10);
+      DoBundleAdjustment(bundle_adjuster, false, num_ba_poss);
     }
   }
 
@@ -312,6 +330,8 @@ void ProcessImage(cv::Mat& image, double timestamp)
       // 0 through the SE3 default constructor.
       new_pose->v_w.setZero();
       new_pose->b.setZero();
+      new_pose->b << -0.0107279, 0.0125927, 0.00212173,
+          0.0933186, 0.517752, 0.63016;
     }
     poses.push_back(new_pose);
     axes_.push_back(std::unique_ptr<SceneGraph::GLAxis>(
@@ -729,7 +749,7 @@ int main(int argc, char** argv) {
 
   InitGui();
 
-  ba::debug_level_threshold = -1;
+  ba::debug_level_threshold = 0;
 
   Run();
 

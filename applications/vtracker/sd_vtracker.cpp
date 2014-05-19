@@ -16,6 +16,7 @@
 #include <sdtrack/utils.h>
 #include "math_types.h"
 #include "gui_common.h"
+#include "etc_common.h"
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
 #endif
@@ -73,6 +74,7 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
+
 void DoBundleAdjustment(uint32_t num_active_poses)
 {
   ba::Options<double> options;
@@ -80,25 +82,13 @@ void DoBundleAdjustment(uint32_t num_active_poses)
   options.trust_region_size = 10;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
-  const uint32_t start_active_pose = poses.size() > num_active_poses ?
-      poses.size() - num_active_poses : 0;
+  uint32_t start_active_pose, start_pose;
 
-  uint32_t start_pose = poses.size();
-  for (uint32_t ii = start_active_pose ; ii < poses.size() ; ++ii) {
-    std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-    // std::cerr << "Start id: " << start_pose << " pose longest track " <<
-    //              pose->longest_track << " for pose id " << ii << std::endl;
-    start_pose = std::min(ii - (pose->longest_track - 1), start_pose);
-  }
-  // std::cerr << "Final start id: " << start_pose << std::endl;
+  GetBaPoseRange(poses, num_active_poses, start_pose, start_active_pose);
 
   if (start_pose == poses.size()) {
     return;
   }
-
-  std::cerr << "Num poses: " << poses.size() << " start pose " <<
-               start_pose << " start active pose " << start_active_pose <<
-               std::endl;
 
   bool all_poses_active = start_active_pose == start_pose;
 
@@ -114,7 +104,7 @@ void DoBundleAdjustment(uint32_t num_active_poses)
       pose->opt_id = bundle_adjuster.AddPose(pose->t_wp,
                                              ii >= start_active_pose );
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
-        bool constrains_active =
+        const bool constrains_active =
             track->keypoints.size() + ii > start_active_pose;
         if (track->num_good_tracked_frames == 1 || track->is_outlier ||
             !constrains_active) {

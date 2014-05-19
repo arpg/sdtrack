@@ -142,9 +142,9 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
                                        uint32_t image_height)
 {
   // Only for the car dataset.
-//    if (kp.pt.x < 410 && kp.pt.y > 300) {
-//      return false;
-//    }
+  //  if (kp.pt.x < 410 && kp.pt.y > 300) {
+  //    return false;
+  //  }
 
   if (kp.response < tracker_options_.harris_score_threshold) {
     return false;
