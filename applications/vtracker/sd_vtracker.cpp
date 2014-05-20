@@ -600,16 +600,17 @@ int main(int argc, char** argv) {
 
   sdtrack::DescriptorOptions descriptor_options;
   sdtrack::KeypointOptions keypoint_options;
-  keypoint_options.gftt_feature_block_size = 9;
+  keypoint_options.gftt_feature_block_size = 7;
   keypoint_options.max_num_features = 1000;
-  keypoint_options.gftt_absolute_strength_threshold = 0.005;
+  keypoint_options.gftt_min_distance_between_features = 3;
+  keypoint_options.gftt_absolute_strength_threshold = 0.05;
   sdtrack::TrackerOptions tracker_options;
   tracker_options.pyramid_levels = 3;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = 150;
+  tracker_options.num_active_tracks = 128;
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
-  tracker_options.patch_dim = 9;
+  tracker_options.patch_dim = 7;
   tracker_options.default_rho = 1.0/5.0;
   tracker_options.feature_cells = 6;
   tracker_options.iteration_exponent = 2;

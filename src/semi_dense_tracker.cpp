@@ -130,8 +130,23 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
 
   // std::cerr << "total " << keypoints.size() << " keypoints " << std::endl;
   //  detector_->detect(image, keypoints);
-  HarrisScore(image.data, image.cols, image.rows,
-              tracker_options_.patch_dim, keypoints);
+  // HarrisScore(image.data, image.cols, image.rows,
+  //             tracker_options_.patch_dim, keypoints);
+  if (tracker_options_.do_corner_subpixel_refinement) {
+    std::vector<cv::Point2f> subpixel_centers(keypoints.size());
+    for (size_t ii = 0 ; ii < keypoints.size() ; ++ii) {
+      subpixel_centers[ii] = keypoints[ii].pt;
+    }
+    cv::TermCriteria criteria(cv::TermCriteria::COUNT, 10, 0);
+    cv::cornerSubPix(image, subpixel_centers, cv::Size(4, 4), cv::Size(-1, -1),
+                     criteria);
+    for (size_t ii = 0 ; ii < keypoints.size() ; ++ii) {
+      // std::cerr << "kp " << ii << " refined from " << keypoints[ii].pt.x << ", "
+      //           << keypoints[ii].pt.y << " to " << subpixel_centers[ii].x <<
+      //              ", " << subpixel_centers[ii].y << std::endl;
+      keypoints[ii].pt = subpixel_centers[ii];
+    }
+  }
   std::cerr << "extract feature detection for " << keypoints.size() <<
                " and "  << cells_hit << " cells " <<  " keypoints took " <<
                Toc(time) << " seconds." << std::endl;
@@ -142,13 +157,13 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
                                        uint32_t image_height)
 {
   // Only for the car dataset.
-  //  if (kp.pt.x < 410 && kp.pt.y > 300) {
-  //    return false;
-  //  }
-
-  if (kp.response < tracker_options_.harris_score_threshold) {
+  if (kp.pt.x < 410 && kp.pt.y > 300) {
     return false;
   }
+
+  // if (kp.response < tracker_options_.harris_score_threshold) {
+  //   return false;
+  // }
 
   uint32_t margin =
       tracker_options_.patch_dim * tracker_options_.pyramid_levels;

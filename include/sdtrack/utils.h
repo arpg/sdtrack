@@ -33,6 +33,7 @@ namespace Eigen
   typedef Matrix<Scalar, 3, 1> Vector3t;
   typedef Matrix<Scalar, 4, 1> Vector4t;
   typedef Matrix<Scalar, 6, 1> Vector6t;
+  typedef Matrix<Scalar, 4, 4> Matrix4t;
 }
 namespace sdtrack
 {

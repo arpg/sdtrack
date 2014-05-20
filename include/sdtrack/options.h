@@ -11,9 +11,9 @@ namespace sdtrack
     int fast_threshold = 10;
     bool fast_nonmax_suppression = true;
 
-    double gftt_absolute_strength_threshold = 0.1;
-    int gftt_min_distance_between_features = 10;
+    double gftt_absolute_strength_threshold = 0.5;
     int gftt_feature_block_size = 9;
+    int gftt_min_distance_between_features = 4;
     bool gftt_use_harris = true;
 
 
@@ -83,6 +83,7 @@ namespace sdtrack
     double dense_rmse_threshold = 15;
     double dense_ncc_threshold = 0.75;
     double harris_score_threshold = 10000;
+    bool do_corner_subpixel_refinement = true;
     uint32_t feature_cells = 8;
   };
 }
