@@ -271,12 +271,12 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         double ratio = ba.LandmarkOutlierRatio(track->external_id);
         auto landmark =
             ba.GetLandmarkObj(track->external_id);
-        if (ratio > 0.4) {
-          num_outliers++;
-          track->is_outlier = true;
-        } else {
-          track->is_outlier = false;
-        }
+//        if (ratio > 0.4) {
+//          num_outliers++;
+//          track->is_outlier = true;
+//        } else {
+//          track->is_outlier = false;
+//        }
         Eigen::Vector4d prev_ray;
         prev_ray.head<3>() = track->ref_keypoint.ray;
         prev_ray[3] = track->ref_keypoint.rho;
@@ -321,7 +321,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         chi2inv(adaptive_threshold, BaType::kPoseDim);
     const Scalar active_chi2_dist = chi2inv(adaptive_threshold, active_dims);
     plot_logs[0].Log(cond_i_chi2_dist, cond_inertial_error);
-    plot_logs[1].Log(cond_v_chi2_dist, summary.cond_proj_error);
+    // plot_logs[1].Log(cond_v_chi2_dist, summary.cond_proj_error);
     plot_logs[2].Log(cond_chi2_dist, cond_error);
 
     std::cerr << "chi2inv(" << adaptive_threshold << ", " << cond_dims <<
@@ -365,7 +365,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         const double inertial_ratio = cond_inertial_error / cond_i_chi2_dist;
         const double visual_ratio = summary.cond_proj_error / cond_v_chi2_dist;
         if (inertial_ratio > 1.0 /*|| visual_ratio > 1.0*/ &&
-            /*((prev_cond_error - cond_inertial_error) / prev_cond_error) > 0.01*/ cond_inertial_error <= prev_cond_error) {
+            ((prev_cond_error - cond_inertial_error) / prev_cond_error) > 0.005 /*cond_inertial_error <= prev_cond_error*/) {
           num_ba_poses += 30;//(start_active_pose - start_pose);
           std::cerr << "INCREASING WINDOW SIZE TO " << num_ba_poses << std::endl;
         } else /*if (ratio < 0.3)*/ {
@@ -376,6 +376,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         num_ba_poses = std::max(num_ba_poses, min_ba_poses);
       }
     }
+    plot_logs[1].Log(num_ba_poses);
   }
 }
 
@@ -477,8 +478,8 @@ void ProcessImage(cv::Mat& image, double timestamp)
            0.471269, 0.692546;
 
       // gw_block
-      new_pose->b << 0.00120166,0.00212318,0.00224065, 0.462431,
-          0.170941, 0.16629;
+      new_pose->b << 0.00199148, 0.00352766, 0.00282686,
+          -0.248894, 0.26402, 0.232317;
     }
     poses.push_back(new_pose);
     axes_.push_back(std::unique_ptr<SceneGraph::GLAxis>(
@@ -765,10 +766,19 @@ void InitGui()
         [&]() {
     // write all the poses to a file.
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
+    Sophus::SE3d last_pose = poses.front()->t_wp;
+    double total_dist = 0;
     for (auto pose : poses) {
       pose_file << pose->t_wp.translation().transpose().format(
       sdtrack::kLongCsvFmt) << std::endl;
+      total_dist += (pose->t_wp.translation() - last_pose.translation()).norm();
+      last_pose = pose->t_wp;
     }
+    const double error = (poses.back()->t_wp.translation() -
+        poses.front()->t_wp.translation()).norm();
+    std::cerr << "Total distance travelled: " << total_dist << " error: " <<
+                 error << " percentage error: " << error / total_dist * 100 <<
+                 std::endl;
   });
 
   pangolin::RegisterKeyPressCallback(' ', [&]() {
@@ -925,10 +935,10 @@ int main(int argc, char** argv) {
   tracker_options.robust_norm_threshold_ = 30;
   tracker_options.patch_dim = 9;
   tracker_options.default_rho = 1.0/5.0;
-  tracker_options.feature_cells = 6;
+  tracker_options.feature_cells = 4;
   tracker_options.iteration_exponent = 2;
-  tracker_options.dense_ncc_threshold = 0.85;
-  tracker_options.harris_score_threshold = 2e6;
+  tracker_options.dense_ncc_threshold = 0.95;
+  tracker_options.harris_score_threshold = 1e6;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
 
   InitGui();

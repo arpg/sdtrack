@@ -128,10 +128,6 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
     }
   }
 
-  // std::cerr << "total " << keypoints.size() << " keypoints " << std::endl;
-  //  detector_->detect(image, keypoints);
-  // HarrisScore(image.data, image.cols, image.rows,
-  //             tracker_options_.patch_dim, keypoints);
   if (tracker_options_.do_corner_subpixel_refinement) {
     std::vector<cv::Point2f> subpixel_centers(keypoints.size());
     for (size_t ii = 0 ; ii < keypoints.size() ; ++ii) {
@@ -147,6 +143,11 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
       keypoints[ii].pt = subpixel_centers[ii];
     }
   }
+
+  // std::cerr << "total " << keypoints.size() << " keypoints " << std::endl;
+  //  detector_->detect(image, keypoints);
+  HarrisScore(image.data, image.cols, image.rows,
+              tracker_options_.patch_dim, keypoints);
   std::cerr << "extract feature detection for " << keypoints.size() <<
                " and "  << cells_hit << " cells " <<  " keypoints took " <<
                Toc(time) << " seconds." << std::endl;
@@ -161,9 +162,9 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
 //    return false;
 //  }
 
-  // if (kp.response < tracker_options_.harris_score_threshold) {
-  //   return false;
-  // }
+   if (kp.response < tracker_options_.harris_score_threshold) {
+     return false;
+   }
 
   uint32_t margin =
       tracker_options_.patch_dim * tracker_options_.pyramid_levels;
@@ -305,27 +306,16 @@ uint32_t SemiDenseTracker::StartNewTracks(std::vector<cv::Mat> &image_pyrmaid,
     mask_.SetMask(0, kp.pt.x, kp.pt.y);
     feature_cells_(addressy, addressx)++;
 
+
     // Otherwise extract pyramid for this keypoint, and also backproject all
     // pixels as the rays will not change.
-    std::shared_ptr<DenseTrack> new_track(new DenseTrack(
-                                            tracker_options_.pyramid_levels, pyramid_patch_dims_));
+    std::shared_ptr<DenseTrack> new_track(
+          new DenseTrack(tracker_options_.pyramid_levels, pyramid_patch_dims_));
     new_track->id = next_track_id_++;
     current_tracks_.push_back(new_track);
     new_tracks_.push_back(new_track);
     DenseKeypoint& new_kp = new_track->ref_keypoint;
-    // Get the default rho from this cell, if available:
-    //    if (feature_cell_rho_(addressy, addressx) != 0) {
-    //      new_kp.rho = feature_cell_rho_(addressy, addressx);
-    //    } else {
 
-    // const double rand_0_1 =
-    //     static_cast <double>(rand()) / static_cast<double>(RAND_MAX);
-    // const double variance = tracker_options_.default_rho * 0.1;
-    // This makes the rho vary by +- the amount specified by variance.
-    // new_kp.rho = tracker_options_.default_rho; /* + rand_0_1 * 2 * variance -
-    //    variance;*/
-    new_kp.rho = distribution(generator_);
-    //    }
     new_kp.response = kp.response;
     new_kp.center_px = Eigen::Vector2t(kp.pt.x, kp.pt.y);
 
@@ -334,6 +324,24 @@ uint32_t SemiDenseTracker::StartNewTracks(std::vector<cv::Mat> &image_pyrmaid,
     new_track->keypoints_tracked.push_back(true);
     new_track->num_good_tracked_frames++;
     new_track->rmse = 0;
+
+    // inherit the depth of this track from the closeset track.
+    std::shared_ptr<DenseTrack> closest_track = nullptr;
+    double min_distance = DBL_MAX;
+    for (std::shared_ptr<DenseTrack> track : current_tracks_) {
+      const double dist =
+          (track->keypoints.back() - new_kp.center_px).norm();
+      if (dist < min_distance && track->keypoints.size() > 2) {
+        min_distance = dist;
+        closest_track = track;
+      }
+    }
+
+    if (closest_track != nullptr && min_distance < 20) {
+      new_kp.rho = closest_track->ref_keypoint.rho;
+    } else {
+      new_kp.rho = distribution(generator_);
+    }
 
     BackProjectTrack(new_track, true);
 
