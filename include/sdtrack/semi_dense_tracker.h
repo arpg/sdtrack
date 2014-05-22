@@ -125,6 +125,7 @@ namespace sdtrack
     std::vector<cv::Mat> image_pyrmaid_;
     std::vector<double> pyramid_error_thresholds_;
     Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> feature_cells_;
+    Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> prev_feature_cells_;
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> feature_cell_rho_;
     calibu::Rig<Scalar>* camera_rig_;
     Eigen::Matrix4d generators_[6];

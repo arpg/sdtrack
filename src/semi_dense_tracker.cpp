@@ -157,9 +157,9 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
                                        uint32_t image_height)
 {
   // Only for the car dataset.
-  if (kp.pt.x < 410 && kp.pt.y > 300) {
-    return false;
-  }
+//  if (kp.pt.x < 410 && kp.pt.y > 300) {
+//    return false;
+//  }
 
   // if (kp.response < tracker_options_.harris_score_threshold) {
   //   return false;
@@ -263,10 +263,10 @@ uint32_t SemiDenseTracker::StartNewTracks(std::vector<cv::Mat> &image_pyrmaid,
                                       uint32_t num_to_start)
 {
   // Initialize the random inverse depth generator.
-  const double range = tracker_options_.default_ray_depth * 0.1;
+  const double range = tracker_options_.default_rho * 0.1;
   std::uniform_real_distribution<double> distribution(
-        tracker_options_.default_ray_depth - range,
-        tracker_options_.default_ray_depth + range);
+        tracker_options_.default_rho - range,
+        tracker_options_.default_rho + range);
 
   uint32_t num_started = 0;
   // const CameraInterface& cam = *camera_rig_->cameras[0];
@@ -349,6 +349,7 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
     bool transfer_jacobians,
     bool optimized_tracks_only)
 {
+  prev_feature_cells_ = feature_cells_;
   feature_cells_.setZero();
   feature_cell_rho_.setZero();
 
@@ -820,9 +821,26 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
 
 void SemiDenseTracker::StartNewLandmarks()
 {
-  // Figure out the number of landmarks per cell that's required.
-  lm_per_cell_ = tracker_options_.num_active_tracks /
-      powi(tracker_options_.feature_cells, 2);
+  // Figure out the number of landmarks per cell that's required. For this we
+  // will look at the previous cells to see how many active cells there were.
+  const uint32_t num_cells = powi(tracker_options_.feature_cells, 2);
+//  const double default_lm_per_cell =
+//      (double) tracker_options_.num_active_tracks / num_cells;
+//  uint32_t num_active_cells = 0;
+//  for (int ii = 0; ii < feature_cells_.rows() ; ++ii) {
+//    for (int jj = 0; jj < feature_cells_.cols() ; ++jj) {
+//      if (feature_cells_(ii, jj) > default_lm_per_cell / 2.0) {
+//        num_active_cells++;
+//      }
+//    }
+//  }
+//  if (num_active_cells == 0) {
+//    num_active_cells = powi(tracker_options_.feature_cells, 2);
+//  }
+  lm_per_cell_ = tracker_options_.num_active_tracks / num_cells;
+
+  //std::cerr << "Num active cells " << num_active_cells << " lm per cell " <<
+  //             lm_per_cell_ << std::endl;
 
   std::vector<cv::KeyPoint> cv_keypoints;
   // Extract features and descriptors from this image

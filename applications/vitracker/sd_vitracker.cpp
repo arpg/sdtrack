@@ -28,18 +28,31 @@
 #include <sdtrack/semi_dense_tracker.h>
 
 
+static double& gyro_uncertainty =
+    CVarUtils::CreateCVar<>("sd.GyroUncertainty", IMU_GYRO_UNCERTAINTY, "");
+static double& gyro_bias_uncertainty =
+    CVarUtils::CreateCVar<>("sd.GyroBiasUncertainty",
+                            IMU_GYRO_BIAS_UNCERTAINTY * 0.001, "");
+static double& accel_uncertainty =
+    CVarUtils::CreateCVar<>("sd.AccelUncertainty", IMU_ACCEL_UNCERTAINTY, "");
+static double& accel_bias_uncertainty =
+    CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty",
+                            IMU_ACCEL_BIAS_UNCERTAINTY * 0.001, "");
+
 static int& num_ba_poses =
     CVarUtils::CreateCVar<>("sd.NumBAPoses", 15, "");
 static int& min_ba_poses =
     CVarUtils::CreateCVar<>("sd.MinBAPoses", 15, "");
 static bool& regularize_biases_in_batch =
-    CVarUtils::CreateCVar<>("sd.RegularizeBiasesInBatch", true, "");
+    CVarUtils::CreateCVar<>("sd.RegularizeBiasesInBatch", false, "");
 static bool& do_keyframing =
     CVarUtils::CreateCVar<>("sd.DoKeyframing", true, "");
 static bool& do_adaptive =
     CVarUtils::CreateCVar<>("sd.DoAdaptiveConditioning", true, "");
+static bool& use_imu_for_guess =
+    CVarUtils::CreateCVar<>("sd.UseImuForGuess", true, "");
 static double& adaptive_threshold =
-    CVarUtils::CreateCVar<>("sd.AdaptiveThreshold", 0.5, "");
+    CVarUtils::CreateCVar<>("sd.AdaptiveThreshold", 0.95, "");
 static int& num_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumBAIterations", 200, "");
 static int& min_poses_for_imu =
@@ -89,6 +102,10 @@ ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
 ba::BundleAdjuster<double, 1, 15, 0> vi_bundle_adjuster;
 ba::InterpolationBufferT<ba::ImuMeasurementT<Scalar>, Scalar> imu_buffer;
 std::vector<uint32_t> imu_residual_ids;
+int orig_num_ba_poses = num_ba_poses;
+double prev_cond_error;
+int imu_cond_start_pose_id = -1;
+int imu_cond_residual_id = -1;
 
 TrackerHandler *handler;
 pangolin::OpenGlRenderState render_state;
@@ -114,13 +131,13 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
 {
   imu_residual_ids.clear();
   ba::Options<double> options;
-  // options.gyro_uncertainty = IMU_GYRO_UNCERTAINTY;
-  // options.accel_uncertainty = IMU_ACCEL_UNCERTAINTY;
-  options.accel_bias_uncertainty = IMU_ACCEL_BIAS_UNCERTAINTY * 0.1;
-  options.gyro_bias_uncertainty = IMU_GYRO_BIAS_UNCERTAINTY * 0.1;
+  options.gyro_uncertainty = gyro_uncertainty;
+  options.accel_uncertainty = accel_uncertainty;
+  options.accel_bias_uncertainty = accel_bias_uncertainty;
+  options.gyro_bias_uncertainty = gyro_bias_uncertainty;
   // options.param_change_threshold = 1e-6;
   // options.error_change_threshold = 1e-4;
-  options.projection_outlier_threshold = 1.0;
+  options.projection_outlier_threshold = 1.5;
   options.trust_region_size = 10;
   options.regularize_biases_in_batch = regularize_biases_in_batch;
   uint32_t num_outliers = 0;
@@ -162,6 +179,18 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
                      */
         imu_residual_ids.push_back(
               ba.AddImuResidual(poses[ii - 1]->opt_id, pose->opt_id, meas));
+        // Store the conditioning edge of the IMU.
+        if (imu_cond_start_pose_id == -1 &&
+            !ba.GetPose(poses[ii - 1]->opt_id).is_active &&
+            ba.GetPose(pose->opt_id).is_active) {
+          std::cerr << "Setting cond pose id to " << ii - 1 << std::endl;
+          imu_cond_start_pose_id = ii - 1;
+          imu_cond_residual_id = imu_residual_ids.back();
+          std::cerr << "Setting cond residual id to " << imu_cond_residual_id << std::endl;
+        } else if (imu_cond_start_pose_id == ii - 1) {
+          imu_cond_residual_id = imu_residual_ids.back();
+          std::cerr << "Setting cond residual id to " << imu_cond_residual_id << std::endl;
+        }
       }
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         const bool constrains_active =
@@ -198,7 +227,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
             const Eigen::Vector2d& z = track->keypoints[jj];
             const uint32_t res_id =
                 ba.AddProjectionResidual(
-                  z, pose->opt_id + jj, track->external_id, 0);
+                  z, pose->opt_id + jj, track->external_id, 0, 1.0);
           }
         }
       }
@@ -222,10 +251,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
       if (use_imu) {
         pose->v_w = ba_pose.v_w;
         pose->b = ba_pose.b;
-        // if (!regularize_biases_in_batch) {
-          std::cerr << "b for pose " << ii << " is " << pose->b.transpose() <<
-                       std::endl;
-        // }
+        if (ii == start_pose) {
+           std::cerr << "b for pose " << ii << " is " << pose->b.transpose() <<
+                        std::endl;
+        }
       }
       // Here the last pose is actually t_wb and the current pose t_wa.
       last_t_ba = t_ba;
@@ -266,8 +295,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
   const ba::SolutionSummary<Scalar>& summary = ba.GetSolutionSummary();
   std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
 
-  if (do_adaptive && use_imu && summary.num_cond_inertial_residuals > 0 &&
-      summary.num_cond_proj_residuals > 0) {
+  if (use_imu && imu_cond_start_pose_id != -1) {
     const uint32_t cond_dims =
         summary.num_cond_inertial_residuals * BaType::kPoseDim +
         summary.num_cond_proj_residuals * 2;
@@ -278,57 +306,75 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
     const Scalar active_error =
         summary.inertial_error + summary.proj_error_ - cond_error;
 
+    const double cond_inertial_error =
+        vi_bundle_adjuster.GetImuResidual(
+          imu_cond_residual_id).mahalanobis_distance;
 
-    if (cond_error == 0 || cond_dims == 0) {
-      // status = OptStatus_NoChange;
-    } else {
-      const Scalar cond_chi2_dist = chi2inv(adaptive_threshold, cond_dims);
-      const Scalar cond_v_chi2_dist =
-          chi2inv(adaptive_threshold, summary.num_cond_proj_residuals * 2);
-      const Scalar cond_i_chi2_dist =
-          chi2inv(adaptive_threshold, BaType::kPoseDim);
-      const Scalar active_chi2_dist = chi2inv(adaptive_threshold, active_dims);
-      plot_logs[0].Log(cond_i_chi2_dist, summary.cond_inertial_error);
-      plot_logs[1].Log(cond_v_chi2_dist, summary.cond_proj_error);
-      plot_logs[2].Log(cond_chi2_dist, cond_error);
+    if (prev_cond_error == -1) {
+      prev_cond_error = DBL_MAX;
+    }
 
-      const double ratio = summary.cond_inertial_error / cond_i_chi2_dist;
-      if (ratio > 1.2) {
-        num_ba_poses += 2;
-        std::cerr << "INCREASING WINDOW SIZE TO " << num_ba_poses << std::endl;
-      } else if (ratio < 0.8) {
-        num_ba_poses -= 1;
-        std::cerr << "DECREASING WINDOW SIZE TO " << num_ba_poses << std::endl;
+    const Scalar cond_chi2_dist = chi2inv(adaptive_threshold, cond_dims);
+    const Scalar cond_v_chi2_dist =
+        chi2inv(adaptive_threshold, summary.num_cond_proj_residuals * 2);
+    const Scalar cond_i_chi2_dist =
+        chi2inv(adaptive_threshold, BaType::kPoseDim);
+    const Scalar active_chi2_dist = chi2inv(adaptive_threshold, active_dims);
+    plot_logs[0].Log(cond_i_chi2_dist, cond_inertial_error);
+    plot_logs[1].Log(cond_v_chi2_dist, summary.cond_proj_error);
+    plot_logs[2].Log(cond_chi2_dist, cond_error);
+
+    std::cerr << "chi2inv(" << adaptive_threshold << ", " << cond_dims <<
+                 "): " << cond_chi2_dist << " vs. " << cond_error <<
+                 std::endl;
+
+    std::cerr << "v_chi2inv(" << adaptive_threshold << ", " <<
+                 summary.num_cond_proj_residuals * 2 << "): " <<
+                 cond_v_chi2_dist << " vs. " <<
+                 summary.cond_proj_error << std::endl;
+
+    std::cerr << "i_chi2inv(" << adaptive_threshold << ", " <<
+                 BaType::kPoseDim << "):" << cond_i_chi2_dist << " vs. " <<
+                 cond_inertial_error << std::endl;
+
+    std::cerr << "ec/Xc: " << cond_error / cond_chi2_dist << " ea/Xa: " <<
+                 active_error / active_chi2_dist << std::endl;
+
+    std::cerr << summary.num_cond_proj_residuals * 2 << " cond proj residuals "
+                 " with dist: " << summary.cond_proj_error << " vs. " <<
+                 summary.num_proj_residuals * 2 <<
+                 " total proj residuals with dist: " <<
+                 summary.proj_error_ << " and " <<
+                 summary.num_cond_inertial_residuals * BaType::kPoseDim <<
+                 " total cond imu residuals with dist: " <<
+                 summary.cond_inertial_error <<
+                 " vs. " << summary.num_inertial_residuals *
+                 BaType::kPoseDim << " total imu residuals with dist : " <<
+                 summary.inertial_error << std::endl;
+
+    if (do_adaptive) {
+      if (num_ba_poses >= poses.size()) {
+        num_ba_poses = orig_num_ba_poses;
+        std::cerr << "Reached batch solution. resetting number of poses to " <<
+                  num_ba_poses << std::endl;
       }
-      num_ba_poses = std::max(num_ba_poses, min_ba_poses);
 
-      std::cerr << "chi2inv(" << adaptive_threshold << ", " << cond_dims <<
-                   "): " << cond_chi2_dist << " vs. " << cond_error <<
-                   std::endl;
-
-      std::cerr << "v_chi2inv(" << adaptive_threshold << ", " <<
-                   summary.num_cond_proj_residuals * 2 << "): " <<
-                   cond_v_chi2_dist << " vs. " <<
-                   summary.cond_proj_error << std::endl;
-
-      std::cerr << "i_chi2inv(" << adaptive_threshold << ", " <<
-                   BaType::kPoseDim << "):" << cond_i_chi2_dist << " vs. " <<
-                   summary.cond_inertial_error << std::endl;
-
-      std::cerr << "ec/Xc: " << cond_error / cond_chi2_dist << " ea/Xa: " <<
-                   active_error / active_chi2_dist << std::endl;
-
-      std::cerr << summary.num_cond_proj_residuals * 2 << " cond proj residuals "
-                   " with dist: " << summary.cond_proj_error << " vs. " <<
-                   summary.num_proj_residuals * 2 <<
-                   " total proj residuals with dist: " <<
-                   summary.proj_error_ << " and " <<
-                   summary.num_cond_inertial_residuals * BaType::kPoseDim <<
-                   " total cond imu residuals with dist: " <<
-                   summary.cond_inertial_error <<
-                   " vs. " << summary.num_inertial_residuals *
-                   BaType::kPoseDim << " total imu residuals with dist : " <<
-                   summary.inertial_error << std::endl;
+      if (cond_error == 0 || cond_dims == 0) {
+        // status = OptStatus_NoChange;
+      } else {
+        const double inertial_ratio = cond_inertial_error / cond_i_chi2_dist;
+        const double visual_ratio = summary.cond_proj_error / cond_v_chi2_dist;
+        if (inertial_ratio > 1.0 /*|| visual_ratio > 1.0*/ &&
+            /*((prev_cond_error - cond_inertial_error) / prev_cond_error) > 0.01*/ cond_inertial_error <= prev_cond_error) {
+          num_ba_poses += 30;//(start_active_pose - start_pose);
+          std::cerr << "INCREASING WINDOW SIZE TO " << num_ba_poses << std::endl;
+        } else /*if (ratio < 0.3)*/ {
+          num_ba_poses = orig_num_ba_poses;
+          std::cerr << "RESETTING WINDOW SIZE TO " << num_ba_poses << std::endl;
+        }
+        prev_cond_error = cond_inertial_error;
+        num_ba_poses = std::max(num_ba_poses, min_ba_poses);
+      }
     }
   }
 }
@@ -361,17 +407,20 @@ void BaAndStartNewLandmarks()
 
   if (do_bundle_adjustment) {
     while (true) {
-      uint32_t pre_num_ba_poses = num_ba_poses;
       if (poses.size() > min_poses_for_imu) {
         DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses);
       } else {
         DoBundleAdjustment(bundle_adjuster, false, num_ba_poses);
       }
 
-      if (pre_num_ba_poses == num_ba_poses || !do_adaptive) {
+      if (num_ba_poses == orig_num_ba_poses || !do_adaptive) {
         break;
       }
     }
+
+    std::cerr << "Resetting conditioning edge. " << std::endl;
+    imu_cond_start_pose_id = -1;
+    prev_cond_error = -1;
   }
 
   if (do_start_new_landmarks) {
@@ -423,8 +472,13 @@ void ProcessImage(cv::Mat& image, double timestamp)
       // align the gravity plane
       new_pose->v_w.setZero();
       new_pose->b.setZero();
-      new_pose->b << 0.00182373, 0.000576344, 0.00148578, 0.139276,
-          0.471269, 0.692546;
+      // corridor
+       new_pose->b << 0.00182373, 0.000576344, 0.00148578, 0.139276,
+           0.471269, 0.692546;
+
+      // gw_block
+      new_pose->b << 0.00120166,0.00212318,0.00224065, 0.462431,
+          0.170941, 0.16629;
     }
     poses.push_back(new_pose);
     axes_.push_back(std::unique_ptr<SceneGraph::GLAxis>(
@@ -439,6 +493,29 @@ void ProcessImage(cv::Mat& image, double timestamp)
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
     guess.translation() = Eigen::Vector3d(0,0,0.01);
+  }
+
+  if (use_imu_for_guess && poses.size() >= num_ba_poses) {
+    std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[poses.size() - 2];
+    std::shared_ptr<sdtrack::TrackerPose> pose2 = poses.back();
+    std::vector<ba::ImuPoseT<Scalar>> poses;
+    ba::PoseT<Scalar> start_pose;
+    start_pose.t_wp = pose1->t_wp;
+    start_pose.b = pose1->b;
+    start_pose.v_w = pose1->v_w;
+    start_pose.time = pose1->time;
+    // Integrate the measurements since the last frame.
+    std::vector<ba::ImuMeasurementT<Scalar> > meas =
+        imu_buffer.GetRange(pose1->time, pose2->time);
+    decltype(vi_bundle_adjuster)::ImuResidual::IntegrateResidual(
+          start_pose, meas, start_pose.b.head<3>(), start_pose.b.tail<3>(),
+          vi_bundle_adjuster.GetImuCalibration().g_vec, poses);
+
+    if (poses.size() > 1) {
+      // std::cerr << "Prev guess t_ab is\n" << guess.matrix3x4() << std::endl;
+      guess = poses.back().t_wp.inverse() * poses.front().t_wp;
+      // std::cerr << "Imu guess t_ab is\n" << guess.matrix3x4() << std::endl;
+    }
   }
 
   tracker.AddImage(image, guess);
@@ -835,11 +912,11 @@ int main(int argc, char** argv) {
   vi_bundle_adjuster.SetGravity(Eigen::Vector3t(0, 0, -1) * ba::Gravity);
 
 
-  sdtrack::DescriptorOptions descriptor_options;
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = 9;
   keypoint_options.max_num_features = 1000;
-  keypoint_options.gftt_absolute_strength_threshold = 0.005;
+  keypoint_options.gftt_min_distance_between_features = 3;
+  keypoint_options.gftt_absolute_strength_threshold = 0.05;
   sdtrack::TrackerOptions tracker_options;
   tracker_options.pyramid_levels = 3;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;

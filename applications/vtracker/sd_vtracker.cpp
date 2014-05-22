@@ -173,7 +173,7 @@ void DoBundleAdjustment(uint32_t num_active_poses)
         double ratio = bundle_adjuster.LandmarkOutlierRatio(track->external_id);
         auto landmark =
             bundle_adjuster.GetLandmarkObj(track->external_id);
-        if (ratio > 0.4) {
+        if (ratio > 0.3) {
           num_outliers++;
           track->is_outlier = true;
         }
@@ -598,7 +598,6 @@ int main(int argc, char** argv) {
   LOG(INFO) << "Initializing camera...";
   LoadCameras(cl);
 
-  sdtrack::DescriptorOptions descriptor_options;
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = 7;
   keypoint_options.max_num_features = 1000;
