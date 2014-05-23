@@ -215,7 +215,9 @@ namespace sdtrack
       int        row,           //< Input: Feature row position
       int        col,           //< Input: Feature col position
       uint32_t   patch_dim,
-      double     k              //< Input: Harris constant
+      double     k,              //< Input: Harris constant
+      double&    l1,
+      double&    l2
       )
   {
 
@@ -225,7 +227,10 @@ namespace sdtrack
 
     double det   = dHessian[0]*dHessian[3] - dHessian[1]*dHessian[1];
     double trace = dHessian[0] + dHessian[3];
-    return det - k * trace * trace;
+    /*double */l1 = trace / 2 + sqrt((trace * trace) / 4 -det);
+    /*double */l2 = trace / 2 - sqrt((trace * trace) / 4 -det);
+    //return det - k * trace * trace;
+    return std::min(l1, l2);
   }
 
   ///////////////////////////////////////////////////////////////////////////////
@@ -246,9 +251,11 @@ namespace sdtrack
           it->pt.y < patch_dim || it->pt.y > max_y) {
         continue;
       }
+      double l1, l2;
       it->response = ComputeScore(image, image_width, image_height,
                                   it->pt.y, it->pt.x,
-                                  patch_dim, k);
+                                  patch_dim, k, l1, l2);
+      it->angle = std::max(l1, l2);
     }
   }
 

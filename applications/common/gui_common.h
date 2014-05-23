@@ -45,7 +45,8 @@ struct TrackerHandler : pangolin::Handler3D
         const double ncc = sdtrack::ScorePatchesNCC(
               p.values, p.projected_values, 9, 9);
         std::cerr << "selected kp " << selected_track->id <<
-                     "with response: " << kp.response << " rmse " <<
+                     "with response: " << kp.response << " response2 " <<
+                     kp.response2 << " rmse " <<
                      selected_track->rmse << " ncc: " << ncc << " track ncc " <<
                      selected_track->ncc << std::endl;
         break;

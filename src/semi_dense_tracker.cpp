@@ -147,7 +147,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
   // std::cerr << "total " << keypoints.size() << " keypoints " << std::endl;
   //  detector_->detect(image, keypoints);
   HarrisScore(image.data, image.cols, image.rows,
-              tracker_options_.patch_dim, keypoints);
+            tracker_options_.patch_dim, keypoints);
   std::cerr << "extract feature detection for " << keypoints.size() <<
                " and "  << cells_hit << " cells " <<  " keypoints took " <<
                Toc(time) << " seconds." << std::endl;
@@ -162,8 +162,9 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
 //    return false;
 //  }
 
-   if (kp.response < tracker_options_.harris_score_threshold) {
-     return false;
+   if (kp.response < 700 || (kp.angle / kp.response) > 5.0
+       /*tracker_options_.harris_score_threshold*/) {
+      return false;
    }
 
   uint32_t margin =
@@ -317,6 +318,7 @@ uint32_t SemiDenseTracker::StartNewTracks(std::vector<cv::Mat> &image_pyrmaid,
     DenseKeypoint& new_kp = new_track->ref_keypoint;
 
     new_kp.response = kp.response;
+    new_kp.response2 = kp.angle;
     new_kp.center_px = Eigen::Vector2t(kp.pt.x, kp.pt.y);
 
     new_track->keypoints.push_back(new_kp.center_px);
@@ -625,12 +627,14 @@ void SemiDenseTracker::PruneTracks()
     track->ref_keypoint.rho /= ratio;
 #endif
 
+    const double dist = sqrt(powi(track->keypoints.back()[0] - camera_rig_->cameras_[0]->GetParams()[2], 2) +
+         powi(track->keypoints.back()[1] - camera_rig_->cameras_[0]->GetParams()[3], 2));
     const double percent_tracked =
         ((double)track->tracked_pixels / (double)track->pixels_attempted);
     // std::cerr << "rmse for track " << track->rmse << " tracked: " <<
     //             percent_tracked << std::endl;
     if (track->ncc > tracker_options_.dense_ncc_threshold &&
-        percent_tracked == 1.0 /*&& track->center_error < 1.0*/) {
+        percent_tracked == 1.0 /*&& dist < 270*/ /*&& track->center_error < 1.0*/) {
       track->tracked = true;
       track->keypoints_tracked.back() = true;
       track->num_good_tracked_frames++;

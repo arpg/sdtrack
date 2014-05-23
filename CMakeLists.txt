@@ -6,7 +6,7 @@ if( ANDROID )
 else()
   set(REAL_TYPE double CACHE STRING "Floating point type")
 endif()
-
+add_definitions(-DCHECK_NANS)
 # Add to module path, so we can find our cmake modules
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules)
 

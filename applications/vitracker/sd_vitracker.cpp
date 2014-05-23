@@ -365,7 +365,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         const double inertial_ratio = cond_inertial_error / cond_i_chi2_dist;
         const double visual_ratio = summary.cond_proj_error / cond_v_chi2_dist;
         if (inertial_ratio > 1.0 /*|| visual_ratio > 1.0*/ &&
-            ((prev_cond_error - cond_inertial_error) / prev_cond_error) > 0.005 /*cond_inertial_error <= prev_cond_error*/) {
+            ((prev_cond_error - cond_inertial_error) / prev_cond_error) > 0.01 /*cond_inertial_error <= prev_cond_error*/) {
           num_ba_poses += 30;//(start_active_pose - start_pose);
           std::cerr << "INCREASING WINDOW SIZE TO " << num_ba_poses << std::endl;
         } else /*if (ratio < 0.3)*/ {
@@ -376,7 +376,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         num_ba_poses = std::max(num_ba_poses, min_ba_poses);
       }
     }
-    plot_logs[1].Log(num_ba_poses);
+    plot_logs[1].Log(num_ba_poses, poses.size());
   }
 }
 
@@ -407,6 +407,7 @@ void BaAndStartNewLandmarks()
   uint32_t keyframe_id = poses.size();
 
   if (do_bundle_adjustment) {
+    orig_num_ba_poses = num_ba_poses;
     while (true) {
       if (poses.size() > min_poses_for_imu) {
         DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses);
@@ -925,10 +926,11 @@ int main(int argc, char** argv) {
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = 9;
   keypoint_options.max_num_features = 1000;
+  keypoint_options.gftt_use_harris = false;
   keypoint_options.gftt_min_distance_between_features = 3;
   keypoint_options.gftt_absolute_strength_threshold = 0.05;
   sdtrack::TrackerOptions tracker_options;
-  tracker_options.pyramid_levels = 3;
+  tracker_options.pyramid_levels = 4;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
   tracker_options.num_active_tracks = 150;
   tracker_options.use_robust_norm_ = false;
@@ -943,7 +945,7 @@ int main(int argc, char** argv) {
 
   InitGui();
 
-  ba::debug_level_threshold = -1;
+  ba::debug_level_threshold = 1;
 
   Run();
 
