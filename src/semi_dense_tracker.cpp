@@ -1,5 +1,5 @@
 #include <sdtrack/semi_dense_tracker.h>
-#define CENTER_WEIGHT 500
+#define CENTER_WEIGHT 1000
 #define MIN_OBS_FOR_CAM_LOCALIZATION 3
 using namespace sdtrack;
 
