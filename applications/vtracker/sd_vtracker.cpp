@@ -80,6 +80,9 @@ void DoBundleAdjustment(uint32_t num_active_poses)
   ba::Options<double> options;
   options.projection_outlier_threshold = 1.0;
   options.trust_region_size = 10;
+  options.param_change_threshold = 1e-10;
+  // options.error_change_threshold = 1e-3;
+  // options.use_sparse_solver = false;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
   uint32_t start_active_pose, start_pose;
@@ -173,7 +176,7 @@ void DoBundleAdjustment(uint32_t num_active_poses)
         double ratio = bundle_adjuster.LandmarkOutlierRatio(track->external_id);
         auto landmark =
             bundle_adjuster.GetLandmarkObj(track->external_id);
-        if (ratio > 0.3) {
+        if (ratio > 0.4) {
           num_outliers++;
           track->is_outlier = true;
         }
@@ -606,14 +609,14 @@ int main(int argc, char** argv) {
   sdtrack::TrackerOptions tracker_options;
   tracker_options.pyramid_levels = 3;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = 128;
+  tracker_options.num_active_tracks = 160;
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
   tracker_options.patch_dim = 7;
   tracker_options.default_rho = 1.0/5.0;
-  tracker_options.feature_cells = 6;
+  tracker_options.feature_cells = 4;
   tracker_options.iteration_exponent = 2;
-  tracker_options.dense_ncc_threshold = 0.85;
+  tracker_options.dense_ncc_threshold = 0.9;
   tracker_options.harris_score_threshold = 2e6;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
 
