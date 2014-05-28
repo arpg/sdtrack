@@ -162,7 +162,7 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
 //    return false;
 //  }
 
-   if (kp.response < 700 || (kp.angle / kp.response) > 5.0
+   if (kp.response < 500 || (kp.angle / kp.response) > 3.0
        /*tracker_options_.harris_score_threshold*/) {
       return false;
    }
@@ -339,7 +339,7 @@ uint32_t SemiDenseTracker::StartNewTracks(std::vector<cv::Mat> &image_pyrmaid,
       }
     }
 
-    if (closest_track != nullptr && min_distance < 20) {
+    if (closest_track != nullptr && min_distance < 100) {
       new_kp.rho = closest_track->ref_keypoint.rho;
     } else {
       new_kp.rho = distribution(generator_);
@@ -492,7 +492,9 @@ void SemiDenseTracker::ReprojectTrackCenters()
             (track->keypoints.back() - track->keypoints.front()).norm();
       }
     } else {
-      track->is_outlier = true;
+      // remove this latest keypoint.
+      track->keypoints.resize(track->keypoints.size() - 1);
+      track->tracked_pixels = 0;
     }
   }
 
@@ -568,7 +570,8 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
          //             post_error << std::endl;
         post_error = stats.pre_solve_error;
         iterations++;
-      } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm > 1e-4);
+      } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm >
+               1e-3 * current_tracks_.size());
 
        // std::cerr << "Optimized level " << ii << " for " << iterations <<
        //              " iterations with optimize_lm = " <<
@@ -662,6 +665,7 @@ void SemiDenseTracker::PruneTracks()
     } else {
       // std::cerr << "deleting track with opt_id " << (*iter)->opt_id <<
       //              std::endl;
+      track->tracked = false;
       iter = current_tracks_.erase(iter);
     }
   }
@@ -1104,7 +1108,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
     // If this landmark is the longest track, we omit it to fix scale.
     if (options.optimize_landmarks && track->id != longest_track_id_) {
       track->opt_id = track_id;
-      double regularizer = level >= 2 ? 1e3 : level == 1 ? 1e2 : 1e1;
+      double regularizer = level >= 2 ? 1e3 : level == 1 ? 1e2 : 1e2;
       if (track->inverse_depth_ray) {
         v(0) += regularizer;
         const double v_inv = 1.0 / v(0);
@@ -1150,8 +1154,9 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
         u -= w * v_inv_vec[track_id] * w.transpose();
         r_p -= w * v_inv_vec[track_id] * r_l;
       }
-
       track_id++;
+    } else {
+      track->opt_id = UINT_MAX;
     }
 
     // Add to the overal residual here, as we're sure the track will be
