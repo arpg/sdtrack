@@ -21,73 +21,13 @@
 #include "etc_common.h"
 #include "CVars/CVar.h"
 #include "chi2inv.h"
+#include "vitrack-cvars.h"
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
 #endif
 
 #include <sdtrack/semi_dense_tracker.h>
 
-
-//static double& gyro_sigma =
-//    CVarUtils::CreateCVar<>("sd.GyroUncertainty", sqrt(7.15584993e-5), "");
-//static double& gyro_bias_sigma =
-//    CVarUtils::CreateCVar<>("sd.GyroBiasUncertainty", sqrt(1.8119e-4 * 0.001), "");
-//static double& accel_sigma =
-//    CVarUtils::CreateCVar<>("sd.AccelUncertainty", sqrt(0.0159855109), "");
-//static double& accel_bias_sigma =
-//    CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", sqrt(0.0159855109 * 0.001), "");
-
-static double& gyro_sigma =
-    CVarUtils::CreateCVar<>("sd.GyroUncertainty", IMU_GYRO_SIGMA, "");
-static double& gyro_bias_sigma =
-    CVarUtils::CreateCVar<>("sd.GyroBiasUncertainty", IMU_GYRO_BIAS_SIGMA, "");
-static double& accel_sigma =
-    CVarUtils::CreateCVar<>("sd.AccelUncertainty", IMU_ACCEL_SIGMA, "");
-static double& accel_bias_sigma =
-    CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", IMU_ACCEL_BIAS_SIGMA, "");
-
-static int& ba_debug_level =
-    CVarUtils::CreateCVar<>("debug.BaDebugLevel",-1, "");
-static int& num_ba_poses =
-    CVarUtils::CreateCVar<>("sd.NumBAPoses",15, "");
-static int& min_ba_poses =
-    CVarUtils::CreateCVar<>("sd.MinBAPoses",15  , "");
-static bool& draw_landmarks =
-    CVarUtils::CreateCVar<>("sd.DrawLandmarks", true, "");
-static bool& use_imu =
-    CVarUtils::CreateCVar<>("sd.UseImu", true, "");
-static bool& do_outlier_rejection =
-    CVarUtils::CreateCVar<>("sd.DoOutlierRejection", true, "");
-static bool& reset_outliers =
-    CVarUtils::CreateCVar<>("sd.ResetOutliers", false, "");
-static double& outlier_threshold =
-    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 2.0, "");
-static bool& use_dogleg =
-    CVarUtils::CreateCVar<>("sd.UseDogleg", true, "");
-static bool& regularize_biases_in_batch =
-    CVarUtils::CreateCVar<>("sd.RegularizeBiasesInBatch", false, "");
-static bool& do_keyframing =
-    CVarUtils::CreateCVar<>("sd.DoKeyframing", true, "");
-static bool& do_adaptive =
-    CVarUtils::CreateCVar<>("sd.DoAdaptiveConditioning", true, "");
-static bool& use_imu_for_guess =
-    CVarUtils::CreateCVar<>("sd.UseImuForGuess", true, "");
-static bool& use_robust_norm_for_proj =
-    CVarUtils::CreateCVar<>("sd.UseRobustNormForProj", true, "");
-static double& adaptive_threshold =
-    CVarUtils::CreateCVar<>("sd.AdaptiveThreshold", 0.1, "");
-static int& num_ba_iterations =
-    CVarUtils::CreateCVar<>("sd.NumBAIterations", 200, "");
-static int& min_poses_for_imu =
-    CVarUtils::CreateCVar<>("sd.MinPosesForImu", 15, "");
-static double& imu_extra_integration_time =
-    CVarUtils::CreateCVar<>("sd.ImuExtraIntegrationTime", 0.3, "");
-static double& imu_time_offset =
-    CVarUtils::CreateCVar<>("sd.ImuTimeOffset", 0.0, "");
-static Eigen::Vector3d& gravity_vector =
-    CVarUtils::CreateCVar<>("sd.Gravity",
-                            (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)
-                            , "");
 
 
 uint32_t keyframe_tracks = UINT_MAX;
@@ -805,7 +745,7 @@ void Run()
         glBegin(GL_POINTS);
         for (std::shared_ptr<sdtrack::TrackerPose> pose: poses) {
           for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
-            if (pose->tracks.size() < 2) {
+            if (pose->tracks.size() < min_lm_measurements_for_drawing) {
               continue;
             }
             Eigen::Vector4d ray;
