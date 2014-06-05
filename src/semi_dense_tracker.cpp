@@ -1011,15 +1011,29 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
       // need 2x4 transfer w.r.t. reference ray
       dp_dray = dprojection_dray * track_t_ba_matrix;
 
-      double eps = 1e-9;
-      const double val_pix = ref_patch.projected_values[ii];
-      const double valx_pix = GetSubPix(image_pyrmaid[level],
-                                        pix[0] + eps, pix[1]);
-      const double valy_pix = GetSubPix(image_pyrmaid[level],
-                                        pix[0], pix[1] + eps);
-      Eigen::Matrix<double, 1, 2> di_dp;
-      di_dp[0] = (valx_pix - val_pix)/(eps);
-      di_dp[1] = (valy_pix - val_pix)/(eps);
+//      double eps = 1e-9;
+//      const double val_pix = ref_patch.projected_values[ii];
+//      const double valx_pix = GetSubPix(image_pyrmaid[level],
+//                                        pix[0] + eps, pix[1]);
+//      const double valy_pix = GetSubPix(image_pyrmaid[level],
+//                                        pix[0], pix[1] + eps);
+//      Eigen::Matrix<double, 1, 2> di_dp;
+//      di_dp[0] = (valx_pix - val_pix)/(eps);
+//      di_dp[1] = (valy_pix - val_pix)/(eps);
+
+        double eps = 1e-9;
+        const double val_pix = ref_patch.projected_values[ii];
+        const double valx_pix = GetSubPix(image_pyrmaid[level],
+                                          pix[0] + eps, pix[1]);
+        const double valnx_pix = GetSubPix(image_pyrmaid[level],
+                                           pix[0] - eps, pix[1]);
+        const double valy_pix = GetSubPix(image_pyrmaid[level],
+                                          pix[0], pix[1] + eps);
+        const double valny_pix = GetSubPix(image_pyrmaid[level],
+                                           pix[0], pix[1] - eps);
+        Eigen::Matrix<double, 1, 2> di_dp;
+        di_dp[0] = (valx_pix - valnx_pix)/(2 * eps);
+        di_dp[1] = (valy_pix - valny_pix)/(2 * eps);
 
       di_dx[kk] = di_dp * dp_dx;
 #if (LM_DIM == 1)
