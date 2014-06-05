@@ -623,20 +623,20 @@ void SemiDenseTracker::PruneTracks()
     std::shared_ptr<DenseTrack> track = *iter;
 #if (LM_DIM == 3)
     // Update the track rho based on the new 3d point.
-    const double ratio =
-        (track->ref_keypoint.ray + track->ref_keypoint.ray_delta).norm() /
-        track->ref_keypoint.ray.norm();
-    track->ref_keypoint.rho /= ratio;
+    if (!track->inverse_depth_ray) {
+      const double ratio =
+          (track->ref_keypoint.ray + track->ref_keypoint.ray_delta).norm() /
+          track->ref_keypoint.ray.norm();
+      track->ref_keypoint.rho /= ratio;
+    }
 #endif
 
-    const double dist = sqrt(powi(track->keypoints.back()[0] - camera_rig_->cameras_[0]->GetParams()[2], 2) +
-         powi(track->keypoints.back()[1] - camera_rig_->cameras_[0]->GetParams()[3], 2));
     const double percent_tracked =
         ((double)track->tracked_pixels / (double)track->pixels_attempted);
     // std::cerr << "rmse for track " << track->rmse << " tracked: " <<
     //             percent_tracked << std::endl;
     if (track->ncc > tracker_options_.dense_ncc_threshold &&
-        percent_tracked == 1.0 /*&& dist < 270*/ /*&& track->center_error < 1.0*/) {
+        percent_tracked == 1.0) {
       track->tracked = true;
       track->keypoints_tracked.back() = true;
       track->num_good_tracked_frames++;
