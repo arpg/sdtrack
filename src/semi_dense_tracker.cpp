@@ -516,13 +516,17 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
   const double time = Tic();
   OptimizationStats stats;
   OptimizationOptions options;
+  bool roll_back = false;
+  Sophus::SE3d t_ba_old_;
+  int last_level = level;
   if (level == -1) {
     // Initialize the dense matrices that will be used to solve the problem.
     for (int ii = tracker_options_.pyramid_levels - 1 ; ii >= 0 ; ii--) {
-      options.optimize_landmarks = !(ii > 1 && average_track_length > 10);
+      last_level = ii;
+      options.optimize_landmarks = !(ii > 2 && average_track_length > 10);
       uint32_t iterations = 0;
       do {
-        Sophus::SE3d t_ba_old_ = t_ba_;
+        t_ba_old_ = t_ba_;
         OptimizePyramidLevel(ii, image_pyrmaid_, current_tracks_,
                              options, stats);
 
@@ -535,33 +539,19 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
         //              post_error << std::endl;
 
         if (post_error > stats.pre_solve_error) {
-           // std::cerr << "Exiting due to " << post_error << " > " <<
-           //              stats.pre_solve_error << " rolling back. " <<
-           //              std::endl;
+            std::cerr << "Exiting due to " << post_error << " > " <<
+                         stats.pre_solve_error << " rolling back. " <<
+                         std::endl;
 
-          // Roll back the changes.
-          t_ba_ = t_ba_old_;
-          for (std::shared_ptr<DenseTrack> track : current_tracks_) {
-           // Only roll back tracks that were in the optimization.
-           if (track->opt_id == UINT_MAX) {
-             continue;
-           }
-
-           if (track->inverse_depth_ray) {
-             track->ref_keypoint.rho = track->ref_keypoint.old_rho;
-           } else {
-             track->ref_keypoint.ray_delta =
-                 track->ref_keypoint.old_ray_delta;
-           }
-          }
-          break;
+            roll_back = true;
+            break;
         }
         const double change = post_error == 0 ? 0 :
           fabs(stats.pre_solve_error - post_error) / post_error;
-        if (change < 0.01) {
-           // std::cerr << "Exiting due to change% = " << change <<
-           //              " prev error " << stats.pre_solve_error <<
-           //              " post : " << post_error << std::endl;
+        if (change < 0.001) {
+            std::cerr << "Exiting due to change% = " << change <<
+                         " prev error " << stats.pre_solve_error <<
+                         " post : " << post_error << std::endl;
           break;
         }
 
@@ -572,14 +562,15 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
       } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm >
                1e-3 * current_tracks_.size());
 
-       // std::cerr << "Optimized level " << ii << " for " << iterations <<
-       //              " iterations with optimize_lm = " <<
-       //             options.optimize_landmarks << " logest track: " <<
-       //               longest_track_id_ << std::endl;
+        std::cerr << "Optimized level " << ii << " for " << iterations <<
+                     " iterations with optimize_lm = " <<
+                    options.optimize_landmarks << " logest track: " <<
+                      longest_track_id_ << std::endl;
 
     }
   } else {
     options.optimize_landmarks = optimize_landmarks;
+    t_ba_old_ = t_ba_;
     OptimizePyramidLevel(level, image_pyrmaid_, current_tracks_,
                          options, stats);
     ///zzzzzz evaluate residuals at all levels so we can see
@@ -594,6 +585,34 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks)
           level, image_pyrmaid_, current_tracks_, false, true);
     std::cerr << "post rmse: " << post_error << " " << "pre : " <<
                  stats.pre_solve_error << std::endl;
+    if (post_error > stats.pre_solve_error) {
+        std::cerr << "Exiting due to " << post_error << " > " <<
+                     stats.pre_solve_error << " rolling back. " <<
+                     std::endl;
+
+        roll_back = true;
+    }
+  }
+
+  if (roll_back) {
+    // Roll back the changes.
+    t_ba_ = t_ba_old_;
+    for (std::shared_ptr<DenseTrack> track : current_tracks_) {
+     // Only roll back tracks that were in the optimization.
+     if (track->opt_id == UINT_MAX) {
+       continue;
+     }
+
+     if (track->inverse_depth_ray) {
+       track->ref_keypoint.rho = track->ref_keypoint.old_rho;
+     } else {
+       track->ref_keypoint.ray_delta =
+           track->ref_keypoint.old_ray_delta;
+     }
+    }
+
+    double post_error = EvaluateTrackResiduals(
+          last_level, image_pyrmaid_, current_tracks_, false, true);
   }
 
   // Reproject patch centers. This will add to the keypoints vector in each
