@@ -30,6 +30,7 @@ namespace sdtrack
   {
     bool transfer_patchs = true;
     bool optimize_landmarks = true;
+    bool opimize_pose = true;
   };
 
   struct DescriptorOptions

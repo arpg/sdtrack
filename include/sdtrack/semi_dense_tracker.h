@@ -17,7 +17,7 @@
 #include <Eigen/Eigenvalues>
 #include <random>
 
-#define LM_DIM 3
+#define LM_DIM 1
 
 namespace sdtrack
 {
