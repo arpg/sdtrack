@@ -1261,7 +1261,13 @@ void SemiDenseTracker::AddImage(const cv::Mat &image,
   mask_.Clear();
   t_ba_ = t_ba_guess;
   // Create the image pyramid for the incoming image
-  cv::buildPyramid(image, image_pyrmaid_, tracker_options_.pyramid_levels);
+  // cv::buildPyramid(image, image_pyrmaid_, tracker_options_.pyramid_levels);
+  image_pyrmaid_.resize(tracker_options_.pyramid_levels);
+  image_pyrmaid_[0] = image;
+  for (uint32_t ii = 1 ; ii < tracker_options_.pyramid_levels ; ++ii) {
+    cv::resize(image_pyrmaid_[ii - 1],
+        image_pyrmaid_[ii], cv::Size(0, 0), 0.5, 0.5);
+  }
 
   for (uint32_t ii = 0 ; ii < tracker_options_.pyramid_levels ; ++ii) {
     pyramid_coord_ratio_[ii][0] =
