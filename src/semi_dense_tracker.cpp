@@ -1123,10 +1123,18 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
       residual_id++;
     }
 
+    bool omit_track = false;
+    if (track->id == longest_track_id_ && track->keypoints.size() <= 2) {
+      std::cerr << "omitting longest track id " << longest_track_id_ <<
+                   std::endl;
+      omit_track = true;
+    }
+
     // If this landmark is the longest track, we omit it to fix scale.
-    if (options.optimize_landmarks && track->id != longest_track_id_) {
+    if (options.optimize_landmarks && !omit_track) {
       track->opt_id = track_id;
-      double regularizer = level >= 2 ? 1e3 : level == 1 ? 1e2 : 1e2;
+      double regularizer = level >= 2 ? 1e3 : level == 1 ? 1e2 : 1e1;
+      // regularizer *= 0;
       if (track->inverse_depth_ray) {
         v(0) += regularizer;
         const double v_inv = 1.0 / v(0);
