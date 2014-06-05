@@ -45,6 +45,10 @@ static double& imu_extra_integration_time =
     CVarUtils::CreateCVar<>("sd.ImuExtraIntegrationTime", 0.3, "");
 static double& imu_time_offset =
     CVarUtils::CreateCVar<>("sd.ImuTimeOffset", 0.0, "");
+static double& tracker_center_weight =
+    CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 5000.0, "");
+static double& ncc_threshold =
+    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.95, "");
 static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
                             (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)
@@ -54,3 +58,5 @@ static bool& draw_landmarks =
     CVarUtils::CreateCVar<>("gui.DrawLandmarks", true, "");
 static int& min_lm_measurements_for_drawing =
     CVarUtils::CreateCVar<>("gui.MinLmMeasurementsForDrawing", 2, "");
+static int& selected_track_id =
+    CVarUtils::CreateCVar<>("gui.SelectedTrackId", -1, "");
