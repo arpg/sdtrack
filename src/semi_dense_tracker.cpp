@@ -491,8 +491,8 @@ void SemiDenseTracker::ReprojectTrackCenters()
             (track->keypoints.back() - track->keypoints.front()).norm();
       }
     } else {
-      // remove this latest keypoint.
-      track->keypoints.resize(track->keypoints.size() - 1);
+      // invalidate this latest keypoint.
+      track->keypoints_tracked.back() = false;
       track->tracked_pixels = 0;
     }
   }
