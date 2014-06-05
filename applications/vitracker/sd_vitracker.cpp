@@ -52,6 +52,7 @@ calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 hal::IMU imu_device;
 sdtrack::SemiDenseTracker tracker;
+std::shared_ptr<GetPot> cl;
 
 pangolin::View* camera_view, *grid_view;
 pangolin::View patch_view;
@@ -310,8 +311,14 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses,
         // Normalize the xyz component of the ray to compare to the original
         // ray.
         x_r /= x_r.head<3>().norm();
+        /*
+        if (track->keypoints.size() >= min_lm_measurements_for_drawing) {
+          std::cerr << "Setting rho for track " << track->id << " with " <<
+                       track->keypoints.size() << " kps from " <<
+                       track->ref_keypoint.rho << " to " << x_r[3] << std::endl;
+        }
+        */
         track->ref_keypoint.rho = x_r[3];
-        // track->ref_keypoint.rho_ba = track->ref_keypoint.rho;
       }
     }
 
@@ -543,7 +550,7 @@ void ProcessImage(cv::Mat& image, double timestamp)
   guess = prev_delta_t_ba * prev_t_ba;
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0,0,0.01);
+    guess.translation() = Eigen::Vector3d(0,0,0.1);
   }
 
   if (use_imu_for_guess && poses.size() >= min_poses_for_imu) {
@@ -565,8 +572,10 @@ void ProcessImage(cv::Mat& image, double timestamp)
     if (imu_poses.size() > 1) {
       // std::cerr << "Prev guess t_ab is\n" << guess.matrix3x4() << std::endl;
       ba::ImuPoseT<Scalar>& last_pose = imu_poses.back();
-      guess.so3() = last_pose.t_wp.so3().inverse() *
-          imu_poses.front().t_wp.so3();
+//      guess.so3() = last_pose.t_wp.so3().inverse() *
+//          imu_poses.front().t_wp.so3();
+      guess = last_pose.t_wp.inverse() *
+          imu_poses.front().t_wp;
       pose2->t_wp = last_pose.t_wp;
       pose2->v_w = last_pose.v_w;
       // std::cerr << "Imu guess t_ab is\n" << guess.matrix3x4() << std::endl;
@@ -762,7 +771,13 @@ void Run()
         glBegin(GL_POINTS);
         for (std::shared_ptr<sdtrack::TrackerPose> pose: poses) {
           for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
-            if (pose->tracks.size() < min_lm_measurements_for_drawing) {
+            if (selected_track_id == track->id) {
+              handler->selected_track = track;
+              selected_track_id = -1;
+            }
+
+            if (track->num_good_tracked_frames <
+                min_lm_measurements_for_drawing) {
               continue;
             }
             Eigen::Vector4d ray;
@@ -770,8 +785,10 @@ void Run()
             ray[3] = track->ref_keypoint.rho;
             ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
             ray /= ray[3];
-            if (track->is_outlier) {
-              glColor3f(0.5, 0.2, 0.1);
+            if (handler->selected_track == track) {
+              glColor3f(1.0, 1.0, 0.2);
+            } else if (track->is_outlier) {
+              glColor3f(1.0, 0.2, 0.1);
             } else {
               glColor3f(1.0, 1.0, 1.0);
             }
@@ -784,6 +801,53 @@ void Run()
     }
     pangolin::FinishFrame();
   }
+}
+
+void InitTracker()
+{
+  sdtrack::KeypointOptions keypoint_options;
+  keypoint_options.gftt_feature_block_size = 9;
+  keypoint_options.max_num_features = 1000;
+  keypoint_options.gftt_min_distance_between_features = 3;
+  keypoint_options.gftt_absolute_strength_threshold = 0.0005;
+  sdtrack::TrackerOptions tracker_options;
+  tracker_options.pyramid_levels = 2;
+  tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
+  tracker_options.num_active_tracks = 128;
+  tracker_options.use_robust_norm_ = false;
+  tracker_options.robust_norm_threshold_ = 30;
+  tracker_options.patch_dim = 9;
+  tracker_options.default_rho = 1.0/5.0;
+  tracker_options.feature_cells = 4;
+  tracker_options.iteration_exponent = 2;
+  tracker_options.center_weight = tracker_center_weight;
+  tracker_options.dense_ncc_threshold = ncc_threshold;
+  tracker_options.harris_score_threshold = 2e6;
+  tracker_options.gn_scaling = 1.0;
+  tracker.Initialize(keypoint_options, tracker_options, &rig);
+}
+
+bool LoadCameras()
+{
+  LoadCameraAndRig(*cl, camera_device, old_rig);
+  calibu::CreateFromOldRig(&old_rig, &rig);
+
+  // Load the imu
+ std::string imu_str = cl->follow("","-imu");
+ if (!imu_str.empty()) {
+   try {
+     imu_device = hal::IMU(imu_str);
+   } catch (hal::DeviceException& e) {
+     LOG(ERROR) << "Error loading imu device: " << e.what()
+                << " ... proceeding without.";
+   }
+   imu_device.RegisterIMUDataCallback(&ImuCallback);
+ }
+ // Capture an image so we have some IMU data.
+ std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+ camera_device.Capture(*images);
+
+  return true;
 }
 
 void InitGui()
@@ -841,6 +905,22 @@ void InitGui()
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
         [&]() {
     is_stepping = true;
+  });
+
+  pangolin::RegisterKeyPressCallback(
+        pangolin::PANGO_CTRL + 'r',
+        [&]() {
+    is_keyframe = true;
+    is_prev_keyframe = true;
+    is_running = false;
+    InitTracker();
+    poses.clear();
+    imu_residual_ids.clear();
+    imu_buffer.Clear();
+    scene_graph.Clear();
+    scene_graph.AddChild(&grid);
+    axes_.clear();
+    LoadCameras();
   });
 
   pangolin::RegisterKeyPressCallback(
@@ -966,67 +1046,27 @@ void InitGui()
   }
 }
 
-bool LoadCameras(GetPot& cl)
-{
-  LoadCameraAndRig(cl, camera_device, old_rig);
-  calibu::CreateFromOldRig(&old_rig, &rig);
-  return true;
-}
-
 int main(int argc, char** argv) {
   srand(0);
-  GetPot cl(argc, argv);
-  if (cl.search("--help")) {
+  cl = std::shared_ptr<GetPot>(new GetPot(argc, argv));
+  if (cl->search("--help")) {
     LOG(INFO) << g_usage;
     exit(-1);
   }
 
-  if (cl.search("-startnow")) {
+  if (cl->search("-startnow")) {
     is_running = true;
   }
 
   LOG(INFO) << "Initializing camera...";
-  LoadCameras(cl);
-
-   // Load the imu
-  std::string imu_str = cl.follow("","-imu");
-  if (!imu_str.empty()) {
-    try {
-      imu_device = hal::IMU(imu_str);
-    } catch (hal::DeviceException& e) {
-      LOG(ERROR) << "Error loading imu device: " << e.what()
-                 << " ... proceeding without.";
-    }
-    imu_device.RegisterIMUDataCallback(&ImuCallback);
-  }
-  // Capture an image so we have some IMU data.
-  std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
-  camera_device.Capture(*images);
+  LoadCameras();
 
   // Set the initial gravity from the first bit of IMU data.
   if (imu_buffer.elements.size() == 0) {
     LOG(ERROR) << "No initial IMU measurements were found.";
   }
 
-
-  sdtrack::KeypointOptions keypoint_options;
-  keypoint_options.gftt_feature_block_size = 7;
-  keypoint_options.max_num_features = 1000;
-  keypoint_options.gftt_min_distance_between_features = 3;
-  keypoint_options.gftt_absolute_strength_threshold = 0.0005;
-  sdtrack::TrackerOptions tracker_options;
-  tracker_options.pyramid_levels = 3;
-  tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = 256;
-  tracker_options.use_robust_norm_ = false;
-  tracker_options.robust_norm_threshold_ = 30;
-  tracker_options.patch_dim = 7;
-  tracker_options.default_rho = 1.0/5.0;
-  tracker_options.feature_cells = 4;
-  tracker_options.iteration_exponent = 2;
-  tracker_options.dense_ncc_threshold = 0.9;
-  tracker_options.harris_score_threshold = 2e6;
-  tracker.Initialize(keypoint_options, tracker_options, &rig);
+  InitTracker();
 
   InitGui();
 
