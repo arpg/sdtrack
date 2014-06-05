@@ -97,8 +97,13 @@ void ImuCallback(const pb::ImuMsg& ref) {
 }
 
 template <typename BaType>
-void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
+void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses,
+                        bool initialize_lm)
 {
+  if (initialize_lm) {
+    use_imu = false;
+  }
+
   if (reset_outliers) {
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
@@ -116,9 +121,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
   options.accel_bias_sigma = accel_bias_sigma;
   options.gyro_bias_sigma = gyro_bias_sigma;
   options.use_dogleg = use_dogleg;
+  options.use_sparse_solver = true;
   options.param_change_threshold = 1e-10;
   options.error_change_threshold = 1e-3;
-  options.use_robust_norm_for_proj_residuals = use_robust_norm_for_proj;
+  options.use_robust_norm_for_proj_residuals =
+      use_robust_norm_for_proj && !initialize_lm;
   options.projection_outlier_threshold = outlier_threshold;
   options.trust_region_size = num_active_poses * 10;
   options.regularize_biases_in_batch = regularize_biases_in_batch;
@@ -147,7 +154,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
     // First add all the poses and landmarks to ba.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-      const bool is_active = ii >= start_active_pose;
+      const bool is_active = ii >= start_active_pose && !initialize_lm;
       if (use_imu) {
         pose->opt_id = ba.AddPose(pose->t_wp, Sophus::SE3t(), Eigen::VectorXt(),
                                   pose->v_w, pose->b, is_active,
@@ -182,19 +189,25 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         const bool constrains_active =
             track->keypoints.size() + ii >= start_active_pose;
-        if (track->num_good_tracked_frames == 1 || track->is_outlier ||
+        if (track->num_good_tracked_frames <= 1 || track->is_outlier ||
             !constrains_active) {
+          /*
+          std::cerr << "ignoring track " << track->id << " with " <<
+                       track->keypoints.size() << "keypoints with ngf " <<
+                       track->num_good_tracked_frames << " outlier: " <<
+                       track->is_outlier << " constraints " << constrains_active <<
+                       std::endl;
+                       */
           track->external_id = UINT_MAX;
           continue;
         }
 
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
-        ray[3] = track->keypoints.size() < 3 ? track->ref_keypoint.rho :
-            track->ref_keypoint.rho;
+        ray[3] = track->ref_keypoint.rho;
         ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
         bool active = track->id != tracker.longest_track_id() ||
-            !all_poses_active || use_imu;
+            !all_poses_active || use_imu || initialize_lm;
         if (!active) {
           std::cerr << "Landmark " << track->id << " inactive. outlier = " <<
                        track->is_outlier << " length: " <<
@@ -237,11 +250,14 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
       const ba::PoseT<double>& ba_pose = ba.GetPose(pose->opt_id);
 
-      pose->t_wp = ba_pose.t_wp;
-      if (use_imu) {
-        pose->v_w = ba_pose.v_w;
-        pose->b = ba_pose.b;
+      if (!initialize_lm) {
+        pose->t_wp = ba_pose.t_wp;
+        if (use_imu) {
+          pose->v_w = ba_pose.v_w;
+          pose->b = ba_pose.b;
+        }
       }
+
       // Here the last pose is actually t_wb and the current pose t_wa.
       last_t_ba = t_ba;
       t_ba = last_pose->t_wp.inverse() * pose->t_wp;
@@ -249,7 +265,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
         if (track->external_id == UINT_MAX) {
           continue;
         }
-        track->t_ba = t_ba;
+
+        if (!initialize_lm) {
+          track->t_ba = t_ba;
+        }
 
         // Get the landmark location in the world frame.
         const Eigen::Vector4d& x_w =
@@ -274,7 +293,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
 //          track->is_outlier = false;
 //        }
 
-        if (do_outlier_rejection) {
+        if (do_outlier_rejection && !initialize_lm) {
           if (ratio > 0.3 && track->tracked == false &&
               (poses.size() >= min_poses_for_imu || !use_imu)) {
             num_outliers++;
@@ -284,9 +303,6 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses)
           }
         }
 
-        Eigen::Vector4d prev_ray;
-        prev_ray.head<3>() = track->ref_keypoint.ray;
-        prev_ray[3] = track->ref_keypoint.rho;
         // Make the ray relative to the pose.
         Eigen::Vector4d x_r =
             sdtrack::MultHomogeneous(
@@ -411,12 +427,13 @@ void UpdateCurrentPose()
 
 void DoAAC()
 {
+  DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true);
   orig_num_ba_poses = num_ba_poses;
   while (true) {
     if (poses.size() > min_poses_for_imu && use_imu) {
-      DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses);
+      DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses, false);
     } else {
-      DoBundleAdjustment(bundle_adjuster, false, num_ba_poses);
+      DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, false);
     }
 
     if (num_ba_poses == orig_num_ba_poses || !do_adaptive) {
