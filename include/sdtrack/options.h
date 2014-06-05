@@ -76,7 +76,9 @@ namespace sdtrack
     uint32_t patch_dim = 9;
     uint32_t num_active_tracks = 10;
     uint32_t iteration_exponent = 2;
+    double center_weight = 100;
     bool use_robust_norm_ = false;
+    double gn_scaling = 1.0;
     double robust_norm_threshold_ = 5;
     double default_ray_depth = 1.0;
     double default_rho = 1.0;

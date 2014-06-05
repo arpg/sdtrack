@@ -1,5 +1,4 @@
 #include <sdtrack/semi_dense_tracker.h>
-#define CENTER_WEIGHT 1000
 #define MIN_OBS_FOR_CAM_LOCALIZATION 3
 using namespace sdtrack;
 
@@ -436,7 +435,7 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
 #if (LM_DIM == 3)
     if (!track->inverse_depth_ray && track->opt_id != UINT_MAX) {
       const Eigen::Vector2t center_pix = transfer.center_projection;
-      const double center_weight = CENTER_WEIGHT;
+      const double center_weight = tracker_options_.center_weight;
       // Form the residual between the center pix and the original pixel loc.
       const Eigen::Vector2t c_res = (center_pix - ref_kp.center_px);
       track->center_error = c_res.norm();
@@ -942,7 +941,12 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
     // If there are only two keypoints, we want to optimize this landmark in
     // inverse depth, as the epipolar line can be directly optimize to yield the
     // minimum appearance error.
+#if (LM_DIM == 3)
     track->inverse_depth_ray = track->keypoints.size() == 2;
+#else
+    track->inverse_depth_ray = true;
+#endif
+
     PatchTransfer& transfer = track->transfer;
 
     const Sophus::SE3d track_t_ba = t_cv * t_ba_ * track->t_ba * t_vc;
@@ -1134,7 +1138,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
         r_p -= w.col(0) * v_inv * r_l(0);
       } else {
 #if (LM_DIM == 3)
-        const double center_weight = CENTER_WEIGHT;
+        const double center_weight = tracker_options_.center_weight;
         // Reproject the center and form a residual.
         const Eigen::Vector2t& center_pix = transfer.center_projection;
         // Form the residual between the center pix and the original pixel loc.
@@ -1193,7 +1197,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
   solver.compute(u);
   Eigen::Matrix<double, 6, 1> delta_p = solver.solve(r_p);
   // std::cerr << "delta_p: " << delta_p.transpose() << std::endl;
-  t_ba_ = Sophus::SE3d::exp(-delta_p) * t_ba_;
+  t_ba_ = Sophus::SE3d::exp(-delta_p * tracker_options_.gn_scaling) * t_ba_;
   // std::cerr << "t_ba = " << std::endl << t_ba_.matrix() <<
   //              std::endl;
 
@@ -1209,7 +1213,8 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
         if (track->inverse_depth_ray) {
           double delta_ray = v_inv_vec[track->opt_id](0) *
               (r_l_vec(track->residual_offset) -
-               w_vec[track->opt_id].col(0).transpose() * delta_p);
+               w_vec[track->opt_id].col(0).transpose() * delta_p) *
+              tracker_options_.gn_scaling;
           track->ref_keypoint.old_rho = track->ref_keypoint.rho;
           track->ref_keypoint.rho -= delta_ray;
           stats.delta_lm_norm += fabs(delta_ray);
@@ -1222,17 +1227,19 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
           }
 
           if (track->ref_keypoint.rho < 0) {
-            /*std::cerr << "rho negative: " << track->ref_keypoint.rho <<
-                         "inverse depth: " << track->inverse_depth_ray <<
+            std::cerr << "rho negative: " << track->ref_keypoint.rho <<
                          " from : " << track->ref_keypoint.old_rho <<
-                         std::endl;*/
-            track->ref_keypoint.rho = 1e-3;
+                         " id " << track->id << std::endl;
+            track->ref_keypoint.rho = track->ref_keypoint.old_rho;//1e-3;
           }
-        } else {
+        }
+#if (LM_DIM == 3)
+        else {
           Eigen::Matrix<double, 3, 1> delta_lm =
               v_inv_vec[track->opt_id] *
               (r_l_vec.segment<3>(track->residual_offset) -
-               w_vec[track->opt_id].transpose() * delta_p);
+              w_vec[track->opt_id].transpose() * delta_p) *
+              tracker_options_.gn_scaling;
           // Store the old ray delta in case we need to roll back.
           track->ref_keypoint.old_ray_delta = track->ref_keypoint.ray_delta;
           track->ref_keypoint.ray_delta -= delta_lm;
@@ -1248,6 +1255,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
                          "\ndp : " << delta_p.transpose() << std::endl;
           }
         }
+#endif
       }
     }
   }
