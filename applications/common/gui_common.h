@@ -105,12 +105,15 @@ void DrawTrackPatches(
 
 void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,
                    uint32_t image_width, uint32_t image_height,
-                   uint32_t opt_level, Eigen::Vector2d& center)
+                   uint32_t opt_level, Eigen::Vector2d& center,
+                   bool is_selected)
 {
   Eigen::Vector3d rgb;
   // const double error = std::min(1.0, track->rmse / 15.0) * 0.7 + 0.3;
   // hsv2rgb(Eigen::Vector3d(1.0 - error, 1.0, 1.0), rgb);
-  if (track->is_outlier == false) {
+  if (is_selected) {
+    rgb = Eigen::Vector3d(1.0, 1.0, 0.2);
+  } else if (track->is_outlier == false) {
     const double error =  (1.0 - (std::max(track->ncc - 0.8, 0.0) / 0.2))
         * 0.7 + 0.3;
     sdtrack::hsv2rgb(Eigen::Vector3d(1.0 - error, 1.0, 1.0), rgb);

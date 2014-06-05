@@ -363,7 +363,7 @@ void DrawImageData()
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
     Eigen::Vector2d center;
     DrawTrackData(track, image_width, image_height, last_optimization_level,
-                  center);
+                  center, handler->selected_track == track);
     handler->track_centers.push_back(
           std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
             center, track));
