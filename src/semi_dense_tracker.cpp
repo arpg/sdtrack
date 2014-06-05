@@ -89,6 +89,9 @@ void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
       rig->cameras_[0]->ImageSize()[1]);
 
   pyramid_coord_ratio_.resize(tracker_options_.pyramid_levels);
+  current_tracks_.clear();
+  new_tracks_.clear();
+  previous_keypoints_.clear();
 }
 
 void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
@@ -161,7 +164,7 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
 //    return false;
 //  }
 
-   if (kp.response < 500 || (kp.angle / kp.response) > 3.0
+   if (kp.response < 20 || (kp.angle / kp.response) > 3.0
        /*tracker_options_.harris_score_threshold*/) {
       return false;
    }
@@ -783,19 +786,19 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     const double br_factor = pyramid_patch_interp_factors_[level][ii][3];
 
     // First transfer this pixel over to our current image.
-    Eigen::Vector2t pix;// = cam->Transfer3d(t_ba, ref_patch.rays[ii],
-    //                    ref_kp.rho);
+    Eigen::Vector2t pix = cam->Transfer3d(
+          t_ba, ref_patch.rays[ii] + ref_kp.ray_delta, ref_kp.rho);
 
-    if (corners_project) {
-      // std::cerr << "prev pix: " << pix.transpose() << std::endl;
-      // linearly interpolate this
-      pix =
-          tl_factor * corner_projections[0] +
-          tr_factor * corner_projections[1] +
-          bl_factor * corner_projections[2] +
-          br_factor * corner_projections[3];
-      // std::cerr << "post pix: " << pix.transpose() << "\n" << std::endl;
-    }
+//    if (corners_project) {
+//      // std::cerr << "prev pix: " << pix.transpose() << std::endl;
+//      // linearly interpolate this
+//      pix =
+//          tl_factor * corner_projections[0] +
+//          tr_factor * corner_projections[1] +
+//          bl_factor * corner_projections[2] +
+//          br_factor * corner_projections[3];
+//      // std::cerr << "post pix: " << pix.transpose() << "\n" << std::endl;
+//    }
 
     result.pixels_attempted++;
     // Check bounds
@@ -814,18 +817,21 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
       // ray[3] = ref_kp.rho;
       // const Eigen::Vector4t ray_b = Sophus::MultHomogeneous(t_ba, ray);
 
-      // Eigen::Matrix<double, 2, 4> dprojection_dray =
-      //     cam->dTransfer3d_dray(Sophus::SE3d(), ray_b.head<3>(), ray_b[3]);
 
       if (corners_project && transfer_jacobians) {
+        ray.head<3>() = ref_patch.rays[ii] + ref_kp.ray_delta;
+        ray[3] = ref_kp.rho;
+        const Eigen::Vector4t ray_b = MultHomogeneous(t_ba, ray);
+        result.dprojections.push_back(
+              cam->dTransfer3d_dray(Sophus::SE3d(), ray_b.head<3>(), ray_b[3]));
         // std::cerr << "Prev dprojection: " << std::endl << dprojection_dray <<
         //              std::endl;
-        result.dprojections.push_back(
-              tl_factor * corner_dprojections[0] +
-            tr_factor * corner_dprojections[1] +
-            bl_factor * corner_dprojections[2] +
-            br_factor * corner_dprojections[3]
-            );
+//        result.dprojections.push_back(
+//              tl_factor * corner_dprojections[0] +
+//            tr_factor * corner_dprojections[1] +
+//            bl_factor * corner_dprojections[2] +
+//            br_factor * corner_dprojections[3]
+//            );
         //  std::cerr << "new dprojection: " << std::endl <<
         //               result.dprojections.back() << "\n" <<  std::endl;
       }
@@ -1186,6 +1192,8 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
         const double cond = eivals.maxCoeff() / eivals.minCoeff();
         // Skip this track if it's not observable.
         if (fabs(cond) > 1e6) {
+          std::cerr << "Skipping 3d track " << track->id << " due to cond : " <<
+                       cond << std::endl;
           track->opt_id = UINT_MAX;
           continue;
         }
