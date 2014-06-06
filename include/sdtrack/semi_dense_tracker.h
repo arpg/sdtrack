@@ -51,7 +51,8 @@ namespace sdtrack
 
     void TransformTrackTabs(const Sophus::SE3t& t_cb);
 
-    void OptimizeTracks(int level = -1, bool optimize_landmarks = true);
+    void OptimizeTracks(int level = -1, bool optimize_landmarks = true,
+                        bool optimize_pose = true);
 
     void PruneTracks();
 

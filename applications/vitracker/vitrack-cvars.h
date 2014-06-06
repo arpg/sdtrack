@@ -9,13 +9,15 @@ static double& accel_sigma =
 static double& accel_bias_sigma =
     CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", IMU_ACCEL_BIAS_SIGMA, "");
 
+static int& pyramid_levels =
+    CVarUtils::CreateCVar<>("debug.PyramidLevels",3, "");
 static int& ba_debug_level =
     CVarUtils::CreateCVar<>("debug.BaDebugLevel",-1, "");
 static int& num_ba_poses =
     CVarUtils::CreateCVar<>("sd.NumBAPoses",15, "");
 static int& min_ba_poses =
     CVarUtils::CreateCVar<>("sd.MinBAPoses",15  , "");
-static bool& use_imu =
+static bool& use_imu_measurements =
     CVarUtils::CreateCVar<>("sd.UseImu", true, "");
 static bool& do_outlier_rejection =
     CVarUtils::CreateCVar<>("sd.DoOutlierRejection", true, "");
@@ -46,9 +48,9 @@ static double& imu_extra_integration_time =
 static double& imu_time_offset =
     CVarUtils::CreateCVar<>("sd.ImuTimeOffset", 0.0, "");
 static double& tracker_center_weight =
-    CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 5000.0, "");
+    CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
-    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.95, "");
+    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.9, "");
 static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
                             (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)

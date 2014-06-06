@@ -40,6 +40,7 @@ const char* g_usage = "";
 bool is_keyframe = true, is_prev_keyframe = true;
 bool include_new_landmarks = true;
 bool optimize_landmarks = true;
+bool optimize_pose = true;
 bool is_running = false;
 bool is_stepping = false;
 bool is_manual_mode = false;
@@ -294,6 +295,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses,
 //          track->is_outlier = false;
 //        }
 
+
         if (do_outlier_rejection && !initialize_lm) {
           if (ratio > 0.3 && track->tracked == false &&
               (poses.size() >= min_poses_for_imu || !use_imu)) {
@@ -434,10 +436,10 @@ void UpdateCurrentPose()
 
 void DoAAC()
 {
-  DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true);
+  // DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true);
   orig_num_ba_poses = num_ba_poses;
   while (true) {
-    if (poses.size() > min_poses_for_imu && use_imu) {
+    if (poses.size() > min_poses_for_imu && use_imu_measurements) {
       DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses, false);
     } else {
       DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, false);
@@ -806,17 +808,17 @@ void Run()
 void InitTracker()
 {
   sdtrack::KeypointOptions keypoint_options;
-  keypoint_options.gftt_feature_block_size = 9;
+  keypoint_options.gftt_feature_block_size = 7;
   keypoint_options.max_num_features = 1000;
   keypoint_options.gftt_min_distance_between_features = 3;
-  keypoint_options.gftt_absolute_strength_threshold = 0.0005;
+  keypoint_options.gftt_absolute_strength_threshold = 0.05;
   sdtrack::TrackerOptions tracker_options;
-  tracker_options.pyramid_levels = 2;
+  tracker_options.pyramid_levels = pyramid_levels;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = 128;
+  tracker_options.num_active_tracks = 160;
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
-  tracker_options.patch_dim = 9;
+  tracker_options.patch_dim = 7;
   tracker_options.default_rho = 1.0/5.0;
   tracker_options.feature_cells = 4;
   tracker_options.iteration_exponent = 2;
@@ -979,34 +981,37 @@ void InitGui()
   pangolin::RegisterKeyPressCallback('2', [&]() {
     last_optimization_level = 2;
     tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks);
+                           optimize_landmarks, optimize_pose);
     UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('3', [&]() {
     last_optimization_level = 3;
     tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks);
+                           optimize_landmarks, optimize_pose);
     UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('1', [&]() {
     last_optimization_level = 1;
     tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks);
+                           optimize_landmarks,
+                           optimize_pose);
     UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('0', [&]() {
     last_optimization_level = 0;
     tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks);
+                           optimize_landmarks,
+                           optimize_pose);
     UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('9', [&]() {
     last_optimization_level = 0;
-    tracker.OptimizeTracks(-1, optimize_landmarks);
+    tracker.OptimizeTracks(-1, optimize_landmarks,
+                           optimize_pose);
     UpdateCurrentPose();
   });
 
@@ -1020,6 +1025,11 @@ void InitGui()
   pangolin::RegisterKeyPressCallback('l', [&]() {
     optimize_landmarks = !optimize_landmarks;
     std::cerr << "optimize landmarks: " << optimize_landmarks << std::endl;
+  });
+
+  pangolin::RegisterKeyPressCallback('c', [&]() {
+    optimize_pose = !optimize_pose;
+    std::cerr << "optimize pose: " << optimize_pose << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('m', [&]() {
