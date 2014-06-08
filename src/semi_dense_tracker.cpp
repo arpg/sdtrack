@@ -656,12 +656,15 @@ void SemiDenseTracker::PruneTracks()
     }
 #endif
 
+    const double dim_ratio =
+        track->transfer.dimension / tracker_options_.patch_dim;
     const double percent_tracked =
         ((double)track->tracked_pixels / (double)track->pixels_attempted);
     // std::cerr << "rmse for track " << track->rmse << " tracked: " <<
     //             percent_tracked << std::endl;
     if (track->ncc > tracker_options_.dense_ncc_threshold &&
-        percent_tracked == 1.0) {
+        percent_tracked == 1.0 &&
+        !(track->transfer.level == 0 && (dim_ratio > 1.3 || dim_ratio < 0.7))) {
       track->tracked = true;
       track->keypoints_tracked.back() = true;
       track->num_good_tracked_frames++;
