@@ -24,6 +24,8 @@ namespace sdtrack
     std::vector<Eigen::Matrix<double, 2, 4>> dprojections;
     uint32_t pixels_attempted;
     double mean_value;
+    uint32_t level;
+    double dimension;
   };
 
   struct DenseTrack

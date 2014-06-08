@@ -227,9 +227,9 @@ namespace sdtrack
 
     double det   = dHessian[0]*dHessian[3] - dHessian[1]*dHessian[1];
     double trace = dHessian[0] + dHessian[3];
-    /*double */l1 = trace / 2 + sqrt((trace * trace) / 4 -det);
-    /*double */l2 = trace / 2 - sqrt((trace * trace) / 4 -det);
-    //return det - k * trace * trace;
+    l1 = trace / 2 + sqrt((trace * trace) / 4 -det);
+    l2 = trace / 2 - sqrt((trace * trace) / 4 -det);
+    // return det - k * trace * trace;
     return std::min(l1, l2);
   }
 

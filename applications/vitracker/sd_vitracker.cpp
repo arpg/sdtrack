@@ -232,7 +232,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses,
             const Eigen::Vector2d& z = track->keypoints[jj];
             const uint32_t res_id =
                 ba.AddProjectionResidual(
-                  z, pose->opt_id + jj, track->external_id, 0, 1.0);
+                  z, pose->opt_id + jj, track->external_id, 0, 2.0);
           }
         }
       }
@@ -281,14 +281,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses,
 
 //        if (landmark.proj_residuals.size() > 15 &&
 //            ratio > 0.3) {
-//          std::cerr << "Rejecting landmark with outliers : ";
-//          for (int id: landmark.proj_residuals) {
-//            typename BaType::ProjectionResidual res =
-//                ba.GetProjectionResidual(id);
-//            std::cerr << res.residual.transpose() << "(" << res.residual.norm() <<
-//                         "), ";
-//          }
-//          std::cerr << std::endl;
+
 //          num_outliers++;
 //          track->is_outlier = true;
 //        } else {
@@ -299,6 +292,16 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t num_active_poses,
         if (do_outlier_rejection && !initialize_lm) {
           if (ratio > 0.3 && track->tracked == false &&
               (poses.size() >= min_poses_for_imu || !use_imu)) {
+            /*
+            std::cerr << "Rejecting landmark with outliers : ";
+            for (int id: landmark.proj_residuals) {
+              typename BaType::ProjectionResidual res =
+                  ba.GetProjectionResidual(id);
+              std::cerr << res.residual.transpose() << "(" << res.residual.norm() <<
+                           "), ";
+            }
+            std::cerr << std::endl;
+            */
             num_outliers++;
             track->is_outlier = true;
           } else {
@@ -436,7 +439,7 @@ void UpdateCurrentPose()
 
 void DoAAC()
 {
-  // DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true);
+  DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true);
   orig_num_ba_poses = num_ba_poses;
   while (true) {
     if (poses.size() > min_poses_for_imu && use_imu_measurements) {
@@ -555,7 +558,8 @@ void ProcessImage(cv::Mat& image, double timestamp)
     guess.translation() = Eigen::Vector3d(0,0,0.1);
   }
 
-  if (use_imu_for_guess && poses.size() >= min_poses_for_imu) {
+  if (use_imu_measurements &&
+      use_imu_for_guess && poses.size() >= min_poses_for_imu) {
     std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[poses.size() - 2];
     std::shared_ptr<sdtrack::TrackerPose> pose2 = poses.back();
     std::vector<ba::ImuPoseT<Scalar>> imu_poses;
@@ -590,7 +594,8 @@ void ProcessImage(cv::Mat& image, double timestamp)
 
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks);
-
+    tracker.Do2dAlignment(tracker.GetImagePyramid(),
+                          tracker.GetCurrentTracks());
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
@@ -808,18 +813,18 @@ void Run()
 void InitTracker()
 {
   sdtrack::KeypointOptions keypoint_options;
-  keypoint_options.gftt_feature_block_size = 7;
+  keypoint_options.gftt_feature_block_size = 9;
   keypoint_options.max_num_features = 1000;
   keypoint_options.gftt_min_distance_between_features = 3;
-  keypoint_options.gftt_absolute_strength_threshold = 0.05;
+  keypoint_options.gftt_absolute_strength_threshold = 0.005;
   sdtrack::TrackerOptions tracker_options;
   tracker_options.pyramid_levels = pyramid_levels;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = 160;
+  tracker_options.num_active_tracks = 128;
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
-  tracker_options.patch_dim = 7;
-  tracker_options.default_rho = 1.0/5.0;
+  tracker_options.patch_dim = 9;
+  tracker_options.default_rho = 1.0/10.0;
   tracker_options.feature_cells = 4;
   tracker_options.iteration_exponent = 2;
   tracker_options.center_weight = tracker_center_weight;
@@ -958,14 +963,14 @@ void InitGui()
     DoAAC();
   });
 
+  pangolin::RegisterKeyPressCallback('k', [&]() {
+    tracker.Do2dAlignment(tracker.GetImagePyramid(),
+                          tracker.GetCurrentTracks());
+  });
+
   pangolin::RegisterKeyPressCallback('B', [&]() {
     do_bundle_adjustment = !do_bundle_adjustment;
     std::cerr << "Do BA:" << do_bundle_adjustment << std::endl;
-  });
-
-  pangolin::RegisterKeyPressCallback('k', [&]() {
-    is_keyframe = !is_keyframe;
-    std::cerr << "is_keyframe:" << is_keyframe << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('i', [&]() {

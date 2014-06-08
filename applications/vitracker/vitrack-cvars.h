@@ -24,7 +24,7 @@ static bool& do_outlier_rejection =
 static bool& reset_outliers =
     CVarUtils::CreateCVar<>("sd.ResetOutliers", false, "");
 static double& outlier_threshold =
-    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 1.0, "");
+    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 2.0, "");
 static bool& use_dogleg =
     CVarUtils::CreateCVar<>("sd.UseDogleg", true, "");
 static bool& regularize_biases_in_batch =
@@ -50,7 +50,7 @@ static double& imu_time_offset =
 static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
-    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.9, "");
+    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.925, "");
 static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
                             (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)

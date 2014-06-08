@@ -80,6 +80,8 @@ namespace sdtrack
     void BackProjectTrack(std::shared_ptr<DenseTrack> track,
                           bool initialize_pixel_vals = false);
 
+    void Do2dAlignment(const std::vector<cv::Mat>& image_pyrmaid,
+                       std::list<std::shared_ptr<DenseTrack>> &tracks);
   private:
     uint32_t StartNewTracks(std::vector<cv::Mat>& image_pyrmaid,
                            std::vector<cv::KeyPoint>& cv_keypoints,
@@ -104,6 +106,8 @@ namespace sdtrack
                          uint32_t image_width, uint32_t image_height);
 
     bool IsReprojectionValid(const Eigen::Vector2t& pix, const cv::Mat &image);
+    void GetImageDerivative(const cv::Mat &image, const Eigen::Vector2d &pix,
+                            Eigen::Matrix<double, 1, 2> &di_dpix);
 
     Sophus::SE3t t_ba_;
     bool last_image_was_keyframe_ = true;
@@ -131,5 +135,6 @@ namespace sdtrack
     calibu::Rig<Scalar>* camera_rig_;
     Eigen::Matrix4d generators_[6];
     std::default_random_engine generator_;
+
   };
 }
