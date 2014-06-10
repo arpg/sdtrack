@@ -52,7 +52,7 @@ namespace sdtrack
     void TransformTrackTabs(const Sophus::SE3t& t_cb);
 
     void OptimizeTracks(int level = -1, bool optimize_landmarks = true,
-                        bool optimize_pose = true);
+                        bool optimize_pose = true, bool trust_guess = false);
 
     void PruneTracks();
 
@@ -92,7 +92,8 @@ namespace sdtrack
                        uint32_t level,
                        const Sophus::SE3t& t_ba,
                        calibu::CameraInterface<Scalar>* cam,
-                       PatchTransfer &result, bool transfer_jacobians);
+                       PatchTransfer &result, bool transfer_jacobians,
+                       bool use_approximation = true);
 
 
     inline double GetSubPix(const cv::Mat& image, double x, double y);

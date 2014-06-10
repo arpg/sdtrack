@@ -10,13 +10,19 @@ static double& accel_bias_sigma =
     CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", IMU_ACCEL_BIAS_SIGMA, "");
 
 static int& pyramid_levels =
-    CVarUtils::CreateCVar<>("debug.PyramidLevels",3, "");
+    CVarUtils::CreateCVar<>("sd.PyramidLevels", 4, "");
+static int& patch_size =
+    CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
 static int& ba_debug_level =
     CVarUtils::CreateCVar<>("debug.BaDebugLevel",-1, "");
 static int& num_ba_poses =
-    CVarUtils::CreateCVar<>("sd.NumBAPoses",15, "");
+    CVarUtils::CreateCVar<>("sd.NumBAPoses",16, "");
+static int& num_features =
+    CVarUtils::CreateCVar<>("sd.NumFeatures",128, "");
+static int& feature_cells =
+    CVarUtils::CreateCVar<>("sd.FeatureCells",8, "");
 static int& min_ba_poses =
-    CVarUtils::CreateCVar<>("sd.MinBAPoses",15  , "");
+    CVarUtils::CreateCVar<>("sd.MinBAPoses",16  , "");
 static bool& use_imu_measurements =
     CVarUtils::CreateCVar<>("sd.UseImu", true, "");
 static bool& do_outlier_rejection =
@@ -37,12 +43,14 @@ static bool& use_imu_for_guess =
     CVarUtils::CreateCVar<>("sd.UseImuForGuess", true, "");
 static bool& use_robust_norm_for_proj =
     CVarUtils::CreateCVar<>("sd.UseRobustNormForProj", true, "");
+static bool& use_only_imu =
+    CVarUtils::CreateCVar<>("sd.UseOnlyImu", false, "");
 static double& adaptive_threshold =
     CVarUtils::CreateCVar<>("sd.AdaptiveThreshold", 0.1, "");
 static int& num_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumBAIterations", 200, "");
 static int& min_poses_for_imu =
-    CVarUtils::CreateCVar<>("sd.MinPosesForImu", 15, "");
+    CVarUtils::CreateCVar<>("sd.MinPosesForImu", num_ba_poses - 1, "");
 static double& imu_extra_integration_time =
     CVarUtils::CreateCVar<>("sd.ImuExtraIntegrationTime", 0.3, "");
 static double& imu_time_offset =
