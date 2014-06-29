@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../common/common_cvars.h"
+
 static double& gyro_sigma =
     CVarUtils::CreateCVar<>("sd.GyroUncertainty", IMU_GYRO_SIGMA, "");
 static double& gyro_bias_sigma =
@@ -15,14 +17,14 @@ static int& patch_size =
     CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
 static int& ba_debug_level =
     CVarUtils::CreateCVar<>("debug.BaDebugLevel",-1, "");
-static int& num_ba_poses =
-    CVarUtils::CreateCVar<>("sd.NumBAPoses",16, "");
+static uint32_t& num_ba_poses =
+    CVarUtils::CreateCVar<>("sd.NumBAPoses",10u, "");
+static uint32_t& num_aac_poses =
+    CVarUtils::CreateCVar<>("sd.NumAACPoses",20u, "");
 static int& num_features =
     CVarUtils::CreateCVar<>("sd.NumFeatures",128, "");
 static int& feature_cells =
     CVarUtils::CreateCVar<>("sd.FeatureCells",8, "");
-static int& min_ba_poses =
-    CVarUtils::CreateCVar<>("sd.MinBAPoses",16  , "");
 static bool& use_imu_measurements =
     CVarUtils::CreateCVar<>("sd.UseImu", true, "");
 static bool& do_outlier_rejection =
@@ -39,6 +41,8 @@ static bool& do_keyframing =
     CVarUtils::CreateCVar<>("sd.DoKeyframing", true, "");
 static bool& do_adaptive =
     CVarUtils::CreateCVar<>("sd.DoAdaptiveConditioning", true, "");
+static bool& do_async_ba =
+    CVarUtils::CreateCVar<>("sd.DoAsyncBA", true, "");
 static bool& use_imu_for_guess =
     CVarUtils::CreateCVar<>("sd.UseImuForGuess", true, "");
 static bool& use_robust_norm_for_proj =
@@ -49,8 +53,8 @@ static double& adaptive_threshold =
     CVarUtils::CreateCVar<>("sd.AdaptiveThreshold", 0.1, "");
 static int& num_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumBAIterations", 200, "");
-static int& min_poses_for_imu =
-    CVarUtils::CreateCVar<>("sd.MinPosesForImu", num_ba_poses - 1, "");
+static uint32_t& min_poses_for_imu =
+    CVarUtils::CreateCVar<>("sd.MinPosesForImu", num_ba_poses - 1u, "");
 static double& imu_extra_integration_time =
     CVarUtils::CreateCVar<>("sd.ImuExtraIntegrationTime", 0.3, "");
 static double& imu_time_offset =
@@ -63,10 +67,3 @@ static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
                             (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)
                             , "");
-
-static bool& draw_landmarks =
-    CVarUtils::CreateCVar<>("gui.DrawLandmarks", true, "");
-static int& min_lm_measurements_for_drawing =
-    CVarUtils::CreateCVar<>("gui.MinLmMeasurementsForDrawing", 2, "");
-static int& selected_track_id =
-    CVarUtils::CreateCVar<>("gui.SelectedTrackId", -1, "");

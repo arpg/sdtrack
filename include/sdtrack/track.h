@@ -35,6 +35,7 @@ namespace sdtrack
       ref_keypoint(num_pyrmaid_levels, pyramid_dims)
     {
       ref_keypoint.track = this;
+      external_id.resize(2);
     }
 
     PatchTransfer transfer;
@@ -46,7 +47,7 @@ namespace sdtrack
     double center_error = 0;
     uint32_t opt_id;
     uint32_t residual_offset;
-    uint32_t external_id;
+    std::vector<uint32_t> external_id;
     uint32_t id;
     uint32_t num_good_tracked_frames = 0;
     DenseKeypoint ref_keypoint;

@@ -9,6 +9,7 @@
 #include "math_types.h"
 #include <sdtrack/keypoint.h>
 #include <sdtrack/track.h>
+#include <sdtrack/semi_dense_tracker.h>
 
 typedef std::shared_ptr<sdtrack::DenseTrack> TrackPtr ;
 typedef std::vector<std::pair<Eigen::Vector2d, TrackPtr>> TrackCenterMap;
@@ -101,6 +102,42 @@ void DrawTrackPatches(
     patches[ii][2]->SetImage(&res_values[0], ref_patch.dim, ref_patch.dim,
         GL_LUMINANCE8,GL_LUMINANCE);
   }
+}
+
+void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
+                   std::vector<std::shared_ptr<sdtrack::TrackerPose>>& poses,
+                   calibu::Rig<Scalar>& rig,
+                   TrackerHandler *handler,
+                   int& selected_track_id)
+{
+  glBegin(GL_POINTS);
+  for (std::shared_ptr<sdtrack::TrackerPose> pose: poses) {
+    for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
+      if (selected_track_id == track->id) {
+        handler->selected_track = track;
+        selected_track_id = -1;
+      }
+
+      if (track->num_good_tracked_frames <
+          min_lm_measurements_for_drawing) {
+        continue;
+      }
+      Eigen::Vector4d ray;
+      ray.head<3>() = track->ref_keypoint.ray;
+      ray[3] = track->ref_keypoint.rho;
+      ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
+      ray /= ray[3];
+      if (handler->selected_track == track) {
+        glColor3f(1.0, 1.0, 0.2);
+      } else if (track->is_outlier) {
+        glColor3f(1.0, 0.2, 0.1);
+      } else {
+        glColor3f(1.0, 1.0, 1.0);
+      }
+      glVertex3f(ray[0], ray[1], ray[2]);
+    }
+  }
+  glEnd();
 }
 
 void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,

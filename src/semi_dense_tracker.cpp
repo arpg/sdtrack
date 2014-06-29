@@ -162,7 +162,7 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
                                        uint32_t image_height)
 {
   // Only for the car dataset.
-//  if (kp.pt.x < 410 && kp.pt.y > 300) {
+//  if (kp.pt.y > 400) {
 //    return false;
 //  }
 
@@ -564,6 +564,10 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks,
         double post_error = EvaluateTrackResiduals(
               last_level, image_pyrmaid_, current_tracks_, false, true);
 
+        std::cerr << "Level : " << last_level << " it: " << iterations <<
+                     " p: " << options.optimize_pose << " l: " <<
+                     options.optimize_landmarks << std::endl;
+
         // std::cerr << "deltap: " << stats.delta_pose_norm << " deltal: " <<
         //              stats.delta_lm_norm << " prev rmse: " <<
         //              stats.pre_solve_error << " post rmse: " <<
@@ -692,7 +696,7 @@ void SemiDenseTracker::PruneTracks()
     //             percent_tracked << std::endl;
     if (track->ncc > tracker_options_.dense_ncc_threshold &&
         percent_tracked == 1.0 &&
-        !(track->transfer.level == 0 && (dim_ratio > 1.3 || dim_ratio < 0.7))) {
+        !(track->transfer.level == 0 && (dim_ratio > 2.0 || dim_ratio < 0.5))) {
       track->tracked = true;
       track->keypoints_tracked.back() = true;
       track->num_good_tracked_frames++;
@@ -721,6 +725,7 @@ void SemiDenseTracker::PruneTracks()
       // std::cerr << "deleting track with opt_id " << (*iter)->opt_id <<
       //              std::endl;
       track->tracked = false;
+      track->ref_keypoint.patch_pyramid.clear();
       iter = current_tracks_.erase(iter);
     }
   }

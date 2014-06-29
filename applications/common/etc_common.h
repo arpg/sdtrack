@@ -189,7 +189,8 @@ void GetBaPoseRange(
     start_pose = std::min(ii - (pose->longest_track - 1), start_pose);
   }
 
+  /*
   std::cerr << "Num poses: " << poses.size() << " start pose " <<
                start_pose << " start active pose " << start_active_pose <<
-               std::endl;
+               std::endl;*/
 }

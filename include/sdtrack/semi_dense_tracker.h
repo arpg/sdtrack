@@ -23,11 +23,16 @@ namespace sdtrack
 {
   struct TrackerPose
   {
+    TrackerPose()
+    {
+      opt_id.resize(2);
+    }
+
     std::list<std::shared_ptr<DenseTrack>> tracks;
     Sophus::SE3t t_wp;
     Eigen::Vector3t v_w;
     Eigen::Vector6t b;
-    uint32_t opt_id;
+    std::vector<uint32_t> opt_id;
     double time;
     uint32_t longest_track;
   };
