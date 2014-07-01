@@ -49,7 +49,8 @@ struct TrackerHandler : pangolin::Handler3D
                      "with response: " << kp.response << " response2 " <<
                      kp.response2 << " rmse " <<
                      selected_track->rmse << " ncc: " << ncc << " track ncc " <<
-                     selected_track->ncc << std::endl;
+                     selected_track->ncc << " rho " <<
+                     selected_track->ref_keypoint.rho << std::endl;
         break;
       }
     }

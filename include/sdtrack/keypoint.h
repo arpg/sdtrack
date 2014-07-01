@@ -87,15 +87,12 @@ namespace sdtrack
       {
         patch_pyramid.push_back(Patch(pyramid_dims[ii]));
       }
-      ray_delta.setZero();
     }
 
     double rho = 1.0; // inverse depth
     double old_rho = 1.0;
     double response = 0;
     double response2 = 0;
-    Eigen::Vector3d ray_delta;
-    Eigen::Vector3d old_ray_delta;
     Eigen::Vector2d center_px;
     Eigen::Vector3d ray;
     DenseTrack* track = nullptr;

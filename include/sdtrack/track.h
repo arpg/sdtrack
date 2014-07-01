@@ -58,7 +58,6 @@ namespace sdtrack
     bool tracked = false;
     bool is_new = true;
     bool is_outlier = false;
-    bool inverse_depth_ray = false;
     Sophus::SE3d t_ba;
 
     uint32_t external_data = UINT_MAX;

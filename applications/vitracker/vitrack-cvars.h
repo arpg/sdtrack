@@ -32,7 +32,7 @@ static bool& do_outlier_rejection =
 static bool& reset_outliers =
     CVarUtils::CreateCVar<>("sd.ResetOutliers", false, "");
 static double& outlier_threshold =
-    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 2.0, "");
+    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 1.0, "");
 static bool& use_dogleg =
     CVarUtils::CreateCVar<>("sd.UseDogleg", true, "");
 static bool& regularize_biases_in_batch =

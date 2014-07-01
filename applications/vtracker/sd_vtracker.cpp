@@ -188,7 +188,9 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
             bundle_adjuster.GetLandmarkObj(track->external_id[id]);
 
         if (do_outlier_rejection) {
-          if (ratio > 0.3 && track->tracked == false) {
+          if (ratio > 0.3 &&
+              ((track->keypoints.size() == num_ba_poses - 1) ||
+               track->tracked == false)) {
             num_outliers++;
             track->is_outlier = true;
           } else {
@@ -460,6 +462,31 @@ void Run()
   }
 }
 
+void InitTracker()
+{
+  patch_size = 9;
+  sdtrack::KeypointOptions keypoint_options;
+  keypoint_options.gftt_feature_block_size = patch_size;
+  keypoint_options.max_num_features = num_features * 2;
+  keypoint_options.gftt_min_distance_between_features = 3;
+  keypoint_options.gftt_absolute_strength_threshold = 0.005;
+  sdtrack::TrackerOptions tracker_options;
+  tracker_options.pyramid_levels = pyramid_levels;
+  tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
+  tracker_options.num_active_tracks = num_features;
+  tracker_options.use_robust_norm_ = false;
+  tracker_options.robust_norm_threshold_ = 30;
+  tracker_options.patch_dim = patch_size;
+  tracker_options.default_rho = 1.0/5.0;
+  tracker_options.feature_cells = feature_cells;
+  tracker_options.iteration_exponent = 2;
+  tracker_options.center_weight = tracker_center_weight;
+  tracker_options.dense_ncc_threshold = ncc_threshold;
+  tracker_options.harris_score_threshold = 2e6;
+  tracker_options.gn_scaling = 1.0;
+  tracker.Initialize(keypoint_options, tracker_options, &rig);
+}
+
 void InitGui()
 {
   pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
@@ -523,6 +550,7 @@ void InitGui()
     is_keyframe = true;
     is_prev_keyframe = true;
     is_running = false;
+    InitTracker();
     poses.clear();
     scene_graph.Clear();
     scene_graph.AddChild(&grid);
@@ -650,27 +678,7 @@ int main(int argc, char** argv) {
   LOG(INFO) << "Initializing camera...";
   LoadCameras();
 
-  patch_size = 7;
-  sdtrack::KeypointOptions keypoint_options;
-  keypoint_options.gftt_feature_block_size = patch_size;
-  keypoint_options.max_num_features = 1000;
-  keypoint_options.gftt_min_distance_between_features = 3;
-  keypoint_options.gftt_absolute_strength_threshold = 0.005;
-  sdtrack::TrackerOptions tracker_options;
-  tracker_options.pyramid_levels = pyramid_levels;
-  tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = num_features;
-  tracker_options.use_robust_norm_ = false;
-  tracker_options.robust_norm_threshold_ = 30;
-  tracker_options.patch_dim = patch_size;
-  tracker_options.default_rho = 1.0/10.0;
-  tracker_options.feature_cells = feature_cells;
-  tracker_options.iteration_exponent = 2;
-  tracker_options.center_weight = tracker_center_weight;
-  tracker_options.dense_ncc_threshold = ncc_threshold;
-  tracker_options.harris_score_threshold = 2e6;
-  tracker_options.gn_scaling = 1.0;
-  tracker.Initialize(keypoint_options, tracker_options, &rig);
+  InitTracker();
 
   InitGui();
 

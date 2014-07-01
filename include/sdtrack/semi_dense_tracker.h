@@ -17,7 +17,6 @@
 #include <Eigen/Eigenvalues>
 #include <random>
 
-#define LM_DIM 1
 
 namespace sdtrack
 {
@@ -112,8 +111,8 @@ namespace sdtrack
                          uint32_t image_width, uint32_t image_height);
 
     bool IsReprojectionValid(const Eigen::Vector2t& pix, const cv::Mat &image);
-    void GetImageDerivative(const cv::Mat &image, const Eigen::Vector2d &pix,
-                            Eigen::Matrix<double, 1, 2> &di_dpix);
+    inline void GetImageDerivative(const cv::Mat &image, const Eigen::Vector2d &pix,
+        Eigen::Matrix<double, 1, 2> &di_dpix, double val_pix);
 
     Sophus::SE3t t_ba_;
     bool last_image_was_keyframe_ = true;

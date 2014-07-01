@@ -660,7 +660,7 @@ void ProcessImage(cv::Mat& image, double timestamp)
                                    tracker.GetCurrentTracks());
 
     if (!is_manual_mode) {
-      tracker.OptimizeTracks(-1, optimize_landmarks, true, used_imu_for_guess);
+      tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
       tracker.Do2dAlignment(tracker.GetImagePyramid(),
                             tracker.GetCurrentTracks());
       tracker.PruneTracks();
@@ -890,10 +890,10 @@ void Run()
 
 void InitTracker()
 {
-  patch_size = 7;
+  patch_size = 9;
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = patch_size;
-  keypoint_options.max_num_features = 1000;
+  keypoint_options.max_num_features = num_features * 2;
   keypoint_options.gftt_min_distance_between_features = 3;
   keypoint_options.gftt_absolute_strength_threshold = 0.005;
   sdtrack::TrackerOptions tracker_options;
@@ -903,7 +903,7 @@ void InitTracker()
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
   tracker_options.patch_dim = patch_size;
-  tracker_options.default_rho = 1.0/10.0;
+  tracker_options.default_rho = 1.0/5.0;
   tracker_options.feature_cells = feature_cells;
   tracker_options.iteration_exponent = 2;
   tracker_options.center_weight = tracker_center_weight;

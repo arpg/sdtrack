@@ -24,6 +24,11 @@ namespace sdtrack
     double pre_solve_error;
     double delta_pose_norm;
     double delta_lm_norm;
+    double transfer_time;
+    double jacobian_time;
+    double schur_time;
+    double solve_time;
+    double lm_time;
   };
 
   struct OptimizationOptions
