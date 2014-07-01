@@ -137,7 +137,6 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
   options.use_robust_norm_for_proj_residuals =
       use_robust_norm_for_proj && !initialize_lm;
   options.projection_outlier_threshold = outlier_threshold;
-  options.trust_region_size = num_active_poses * 10;
   options.regularize_biases_in_batch = regularize_biases_in_batch;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;

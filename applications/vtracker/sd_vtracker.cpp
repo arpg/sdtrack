@@ -83,7 +83,6 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
   }
 
   ba::Options<double> options;
-  options.trust_region_size = num_active_poses * 10;
   options.use_dogleg = use_dogleg;
   options.use_sparse_solver = true;
   options.param_change_threshold = 1e-10;
