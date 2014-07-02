@@ -59,6 +59,7 @@ namespace sdtrack
     std::vector<Eigen::Vector2d> statistics;
     std::vector<Eigen::Matrix<double, 1, 6>> dprojections;
     std::vector<Eigen::Vector3d> rays;
+    // These are always in the 0th level coordinates
     std::vector<Eigen::Vector2d> projections;
     std::vector<double> projected_values;
     std::vector<Eigen::Vector2i> indices;

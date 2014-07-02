@@ -938,13 +938,13 @@ void SemiDenseTracker::GetImageDerivative(
   double eps = 1e-9;
   // const double val_pix = ref_patch.projected_values[ii];
   const double valx_pix = GetSubPix(image, pix[0] + eps, pix[1]);
-  const double valnx_pix = GetSubPix(image, pix[0] - eps, pix[1]);
+  // const double valnx_pix = GetSubPix(image, pix[0] - eps, pix[1]);
   const double valy_pix = GetSubPix(image, pix[0], pix[1] + eps);
-  const double valny_pix = GetSubPix(image, pix[0], pix[1] - eps);
-  di_dppix[0] = (valx_pix - valnx_pix)/(2 * eps);
-  //di_dppix[0] = (valx_pix - val_pix)/(eps);
-  di_dppix[1] = (valy_pix - valny_pix)/(2 * eps);
-  //di_dppix[1] = (valy_pix - val_pix)/(eps);
+  // const double valny_pix = GetSubPix(image, pix[0], pix[1] - eps);
+  //di_dppix[0] = (valx_pix - valnx_pix)/(2 * eps);
+  di_dppix[0] = (valx_pix - val_pix)/(eps);
+  //di_dppix[1] = (valy_pix - valny_pix)/(2 * eps);
+  di_dppix[1] = (valy_pix - val_pix)/(eps);
 }
 
 void SemiDenseTracker::Do2dAlignment(
@@ -953,7 +953,7 @@ void SemiDenseTracker::Do2dAlignment(
 {
   Eigen::LDLT<Eigen::Matrix2d> solver;
   Eigen::Matrix2d jtj;
-  Eigen::Vector2d jtr, delta_pix;
+  Eigen::Vector2d jtr, delta_pix, delta_pix_0th_level;
   double res_total;
   Eigen::Matrix<double, 1, 2> di_dp;
   double ncc_num = 0, ncc_den_a = 0, ncc_den_b = 0;
@@ -973,27 +973,27 @@ void SemiDenseTracker::Do2dAlignment(
       // Set up the 2d alignment problem.
       PatchTransfer& transfer = track->transfer;
       uint32_t level = transfer.level;
+      std::cerr << "doing 2d alignment for level " << level << std::endl;
       DenseKeypoint& ref_kp = track->ref_keypoint;
       Patch& ref_patch = ref_kp.patch_pyramid[level];
       bool out_of_bounds = false;
       for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
         const size_t ii = transfer.valid_rays[kk];
-        if (!IsReprojectionValid(transfer.valid_projections[ii],
-                                 image_pyrmaid_[level])) {
+        const Eigen::Vector2t& pix = transfer.valid_projections[kk];
+        if (!IsReprojectionValid(pix, image_pyrmaid_[level])) {
+          std::cerr << "1: valid ray " << kk << " with pix " << pix.transpose() << " out of bounds " << std::endl;
           out_of_bounds = true;
           break;
         }
         // Get the residual at this point.
         const double val_pix = GetSubPix(image_pyrmaid[level],
-                                         transfer.valid_projections[kk][0],
-                                         transfer.valid_projections[kk][1]);
+                                         pix[0], pix[1]);
         const double mean_s_ref = ref_patch.values[ii] - ref_patch.mean;
         const double mean_s_proj = val_pix - transfer.mean_value;
         double res = mean_s_proj - mean_s_ref;
 
         // Also tet the jacobian.
-        GetImageDerivative(image_pyrmaid[level], transfer.valid_projections[kk],
-                           di_dp, val_pix);
+        GetImageDerivative(image_pyrmaid[level], pix, di_dp, val_pix);
 
         jtj += di_dp.transpose() * di_dp;
         jtr += di_dp.transpose() * res;
@@ -1007,21 +1007,22 @@ void SemiDenseTracker::Do2dAlignment(
       // Calculate the update to this patch.
       solver.compute(jtj);
       delta_pix = solver.solve(jtr);
+      delta_pix_0th_level[0] = delta_pix[0] / pyramid_coord_ratio_[level][0];
+      delta_pix_0th_level[1] = delta_pix[1] / pyramid_coord_ratio_[level][1];
 
       out_of_bounds = false;
       transfer.mean_value = 0;
       for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
         const size_t ii = transfer.valid_rays[kk];
         transfer.valid_projections[kk] -= delta_pix;
-        ref_patch.projections[ii] -= delta_pix;
-        if (!IsReprojectionValid(ref_patch.projections[ii],
-                                 image_pyrmaid_[level])) {
+        ref_patch.projections[ii] -= delta_pix_0th_level;
+        const Eigen::Vector2t& pix = transfer.valid_projections[kk];
+        if (!IsReprojectionValid(pix, image_pyrmaid_[level])) {
           out_of_bounds = true;
           break;
         }
         ref_patch.projected_values[ii] = GetSubPix(image_pyrmaid[level],
-                                                   ref_patch.projections[ii][0],
-                                                   ref_patch.projections[ii][1]);
+                                                   pix[0], pix[1]);
         transfer.mean_value += ref_patch.projected_values[ii];
       }
 
