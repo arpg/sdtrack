@@ -12,7 +12,7 @@ static double& accel_bias_sigma =
     CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", IMU_ACCEL_BIAS_SIGMA, "");
 
 static int& pyramid_levels =
-    CVarUtils::CreateCVar<>("sd.PyramidLevels", 4, "");
+    CVarUtils::CreateCVar<>("sd.PyramidLevels", 3, "");
 static int& patch_size =
     CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
 static int& ba_debug_level =
@@ -32,7 +32,7 @@ static bool& do_outlier_rejection =
 static bool& reset_outliers =
     CVarUtils::CreateCVar<>("sd.ResetOutliers", false, "");
 static double& outlier_threshold =
-    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 1.0, "");
+    CVarUtils::CreateCVar<>("sd.OutlierThreshold", 2.0, "");
 static bool& use_dogleg =
     CVarUtils::CreateCVar<>("sd.UseDogleg", true, "");
 static bool& regularize_biases_in_batch =

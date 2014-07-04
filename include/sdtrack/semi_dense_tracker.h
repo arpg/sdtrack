@@ -85,7 +85,8 @@ namespace sdtrack
                           bool initialize_pixel_vals = false);
 
     void Do2dAlignment(const std::vector<cv::Mat>& image_pyrmaid,
-                       std::list<std::shared_ptr<DenseTrack>> &tracks);
+                       std::list<std::shared_ptr<DenseTrack>> &tracks,
+                       uint32_t level);
   private:
     uint32_t StartNewTracks(std::vector<cv::Mat>& image_pyrmaid,
                            std::vector<cv::KeyPoint>& cv_keypoints,
@@ -107,10 +108,11 @@ namespace sdtrack
     void ExtractKeypoints(const cv::Mat& image,
                           std::vector<cv::KeyPoint> &keypoints);
 
-    bool IsKeypointValid(const cv::KeyPoint& kp,
-                         uint32_t image_width, uint32_t image_height);
+    inline bool IsKeypointValid(const cv::KeyPoint& kp, uint32_t image_width,
+                                uint32_t image_height);
 
-    bool IsReprojectionValid(const Eigen::Vector2t& pix, const cv::Mat &image);
+    inline bool IsReprojectionValid(
+        const Eigen::Vector2t& pix, const cv::Mat &image);
     inline void GetImageDerivative(const cv::Mat &image, const Eigen::Vector2d &pix,
         Eigen::Matrix<double, 1, 2> &di_dpix, double val_pix);
 

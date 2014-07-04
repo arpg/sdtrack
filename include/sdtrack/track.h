@@ -57,6 +57,7 @@ namespace sdtrack
     bool residual_used = false;
     bool tracked = false;
     bool is_new = true;
+    Eigen::Vector2d offset_2d;
     bool is_outlier = false;
     Sophus::SE3d t_ba;
 

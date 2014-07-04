@@ -529,7 +529,7 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks,
           if (optimized_pose == false) {
             options.optimize_landmarks = false;
             options.optimize_pose = true;
-            if (last_level < 2) {
+            if (last_level < 3) {
               ii = tracker_options_.pyramid_levels;
               optimized_pose = true;
             }
@@ -593,6 +593,10 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks,
 
       } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm >
                1e-4 * current_tracks_.size());
+
+      // Now that we've done 3d to 2d tracking, do 2d to 2d tracking for new
+      // tracks.
+
 
 //        std::cerr << "Optimized level " << ii << " for " << iterations <<
 //                     " iterations with optimize_lm = " <<
@@ -949,7 +953,8 @@ void SemiDenseTracker::GetImageDerivative(
 
 void SemiDenseTracker::Do2dAlignment(
     const std::vector<cv::Mat>& image_pyrmaid,
-    std::list<std::shared_ptr<DenseTrack>> &tracks)
+    std::list<std::shared_ptr<DenseTrack>> &tracks,
+    uint32_t level)
 {
   Eigen::LDLT<Eigen::Matrix2d> solver;
   Eigen::Matrix2d jtj;
@@ -972,8 +977,7 @@ void SemiDenseTracker::Do2dAlignment(
 
       // Set up the 2d alignment problem.
       PatchTransfer& transfer = track->transfer;
-      uint32_t level = transfer.level;
-      std::cerr << "doing 2d alignment for level " << level << std::endl;
+      // uint32_t level = transfer.level;
       DenseKeypoint& ref_kp = track->ref_keypoint;
       Patch& ref_patch = ref_kp.patch_pyramid[level];
       bool out_of_bounds = false;
@@ -981,7 +985,6 @@ void SemiDenseTracker::Do2dAlignment(
         const size_t ii = transfer.valid_rays[kk];
         const Eigen::Vector2t& pix = transfer.valid_projections[kk];
         if (!IsReprojectionValid(pix, image_pyrmaid_[level])) {
-          std::cerr << "1: valid ray " << kk << " with pix " << pix.transpose() << " out of bounds " << std::endl;
           out_of_bounds = true;
           break;
         }
@@ -1140,7 +1143,8 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
 
     PatchTransfer& transfer = track->transfer;
 
-    const Sophus::SE3d track_t_ba = t_cv * t_ba_ * track->t_ba * t_vc;
+    const Sophus::SE3d track_t_va = t_ba_ * track->t_ba * t_vc;
+    const Sophus::SE3d track_t_ba = t_cv * track_t_va;
     const Eigen::Matrix4d track_t_ba_matrix = track_t_ba.matrix();
     // Project into the image and form the problem.
     DenseKeypoint& ref_kp = track->ref_keypoint;
@@ -1189,8 +1193,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
       // need 2x6 transfer residual
       ray.head<3>() = ref_patch.rays[ii];
       ray[3] = ref_kp.rho;
-      const Eigen::Vector4t ray_v = MultHomogeneous(
-            t_ba_ * track->t_ba * t_vc, ray);
+      const Eigen::Vector4t ray_v = MultHomogeneous(track_t_va, ray);
 
       dprojection_dray = transfer.dprojections[kk];
       dprojection_dray *= pyramid_coord_ratio_[level][0];

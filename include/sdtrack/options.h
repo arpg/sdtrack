@@ -91,7 +91,7 @@ namespace sdtrack
     double dense_rmse_threshold = 15;
     double dense_ncc_threshold = 0.75;
     double harris_score_threshold = 10000;
-    bool do_corner_subpixel_refinement = true;
+    bool do_corner_subpixel_refinement = false;
     uint32_t feature_cells = 8;
   };
 }

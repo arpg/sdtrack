@@ -320,7 +320,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
 
             if (do_outlier_rejection &&
                 !initialize_lm /*&& (do_adaptive_conditioning || !do_async_ba)*/) {
-              if (ratio > 0.3 && track->tracked == false &&
+              if (ratio > 0.5 && track->tracked == false &&
                   (end_pose_id >= min_poses_for_imu - 1 || !use_imu)) {
                 /*
               std::cerr << "Rejecting landmark with outliers : ";
@@ -592,12 +592,13 @@ void ProcessImage(cv::Mat& image, double timestamp)
       new_pose->v_w.setZero();
       new_pose->b.setZero();
       // corridor
-      new_pose->b << 0.00209809 , 0.00167743, -7.46213e-05 ,
-          0.151629 ,0.0224114, 0.826392;
+      // new_pose->b << 0.00209809 , 0.00167743, -7.46213e-05 ,
+      //     0.151629 ,0.0224114, 0.826392;
 
       // gw_block
-      new_pose->b << 0.00288919,  0.0023673, 0.00714931 ,
-          -0.156199,   0.258919,   0.422379;
+      // new_pose->b << 0.00288919,  0.0023673, 0.00714931 ,
+      //     -0.156199,   0.258919,   0.422379;
+
     }
     {
       std::unique_lock<std::mutex>(aac_mutex);
@@ -662,7 +663,7 @@ void ProcessImage(cv::Mat& image, double timestamp)
     if (!is_manual_mode) {
       tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
       tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                            tracker.GetCurrentTracks());
+                            tracker.GetCurrentTracks(), 0);
       tracker.PruneTracks();
     }
     // Update the pose t_ab based on the result from the tracker.
@@ -675,7 +676,7 @@ void ProcessImage(cv::Mat& image, double timestamp)
     const double total_trans = tracker.t_ba().translation().norm();
     const double total_rot = tracker.t_ba().so3().log().norm();
 
-    bool keyframe_condition = track_ratio < 0.8 || total_trans > 0.3 ||
+    bool keyframe_condition = track_ratio < 0.5 || total_trans > 0.3 ||
         total_rot > 0.1 /*|| tracker.num_successful_tracks() < 64*/;
 
     std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
@@ -1049,7 +1050,7 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks());
+                          tracker.GetCurrentTracks(), last_optimization_level);
   });
 
   pangolin::RegisterKeyPressCallback('B', [&]() {
