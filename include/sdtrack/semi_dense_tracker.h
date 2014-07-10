@@ -17,6 +17,7 @@
 #include <Eigen/Eigenvalues>
 #include <random>
 
+#define UNINITIALIZED_TRANSFER UINT_MAX
 
 namespace sdtrack
 {
@@ -119,7 +120,7 @@ namespace sdtrack
     Sophus::SE3t t_ba_;
     bool last_image_was_keyframe_ = true;
     double lm_per_cell_;
-    double average_track_length;
+    double average_track_length_;
     TrackerOptions  tracker_options_;
     KeypointOptions keypoint_options_;
     std::vector<DenseKeypoint> previous_keypoints_;

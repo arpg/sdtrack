@@ -28,6 +28,7 @@
 #include <xmmintrin.h>
 #endif
 
+#define POSES_TO_INIT 30
 #include <sdtrack/semi_dense_tracker.h>
 
 
@@ -137,7 +138,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
   options.use_robust_norm_for_proj_residuals =
       use_robust_norm_for_proj && !initialize_lm;
   options.projection_outlier_threshold = outlier_threshold;
-  options.regularize_biases_in_batch = regularize_biases_in_batch;
+  options.regularize_biases_in_batch = poses.size() < POSES_TO_INIT ||
+      regularize_biases_in_batch;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
   // Find the earliest pose touched by the current tracks.
@@ -318,9 +320,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             auto landmark =
                 ba.GetLandmarkObj(track->external_id[id]);
 
-            if (do_outlier_rejection &&
+            if (do_outlier_rejection && poses.size() > POSES_TO_INIT &&
                 !initialize_lm /*&& (do_adaptive_conditioning || !do_async_ba)*/) {
-              if (ratio > 0.5 && track->tracked == false &&
+              if (ratio > 0.3 && track->tracked == false &&
                   (end_pose_id >= min_poses_for_imu - 1 || !use_imu)) {
                 /*
               std::cerr << "Rejecting landmark with outliers : ";
@@ -434,12 +436,12 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       // status = OptStatus_NoChange;
     } else {
       const double cond_total_error =
-          (cond_inertial_error /*+ summary.cond_proj_error*/);
+          (cond_inertial_error + summary.cond_proj_error);
       const double inertial_ratio = cond_inertial_error / cond_i_chi2_dist;
       const double visual_ratio = summary.cond_proj_error / cond_v_chi2_dist;
       if ((inertial_ratio > 1.0 || visual_ratio > 1.0) &&
           (cond_total_error <= prev_cond_error) &&
-          (((prev_cond_error - cond_total_error) / prev_cond_error) > 0.0001)) {
+          (((prev_cond_error - cond_total_error) / prev_cond_error) > 0.00001)) {
         num_active_poses += 30;//(start_active_pose - start_pose);
         // std::cerr << "INCREASING WINDOW SIZE TO " << num_active_poses <<
         //              std::endl;
@@ -478,8 +480,8 @@ void DoAAC()
 {
   while (true) {
     if (poses.size() > 10 && do_async_ba) {
-      // DoBundleAdjustment(bundle_adjuster, false, num_aac_poses, true, false,
-      //                    1, aac_imu_residual_ids);
+//      DoBundleAdjustment(bundle_adjuster, false, num_aac_poses, true, false,
+//                          1, aac_imu_residual_ids);
       uint32_t num_poses = poses.size();
       orig_num_aac_poses = num_aac_poses;
       while (true) {
@@ -599,6 +601,10 @@ void ProcessImage(cv::Mat& image, double timestamp)
       // new_pose->b << 0.00288919,  0.0023673, 0.00714931 ,
       //     -0.156199,   0.258919,   0.422379;
 
+      // gw_car_block
+      // new_pose->b << 0.00217338, -0.00122939,  0.00220202,
+      //     -0.175229,  -0.0731785,    0.548693;
+
     }
     {
       std::unique_lock<std::mutex>(aac_mutex);
@@ -676,7 +682,7 @@ void ProcessImage(cv::Mat& image, double timestamp)
     const double total_trans = tracker.t_ba().translation().norm();
     const double total_rot = tracker.t_ba().so3().log().norm();
 
-    bool keyframe_condition = track_ratio < 0.5 || total_trans > 0.3 ||
+    bool keyframe_condition = track_ratio < 0.5 || total_trans > 1.0 ||
         total_rot > 0.1 /*|| tracker.num_successful_tracks() < 64*/;
 
     std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
@@ -812,7 +818,7 @@ void Run()
           vi_bundle_adjuster.GetImuCalibration();
       std::vector<ba::ImuPoseT<Scalar>> imu_poses;
 
-      glLineWidth(2.0f);
+      glLineWidth(1.0f);
       // glPushMatrix();
       // glMultMatrixT(t_world_frame.matrix().data());
       // Draw the inertial residuals

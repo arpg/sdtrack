@@ -33,7 +33,7 @@ namespace sdtrack
 
   struct OptimizationOptions
   {
-    bool transfer_patchs = true;
+    bool transfer_patches = true;
     bool optimize_landmarks = true;
     bool optimize_pose = true;
   };

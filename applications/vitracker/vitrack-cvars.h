@@ -62,7 +62,7 @@ static double& imu_time_offset =
 static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
-    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.925, "");
+    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
 static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
                             (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)

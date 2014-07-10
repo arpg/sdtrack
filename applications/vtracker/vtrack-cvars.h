@@ -31,4 +31,4 @@ static int& num_ba_iterations =
 static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
-    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.925, "");
+    CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
