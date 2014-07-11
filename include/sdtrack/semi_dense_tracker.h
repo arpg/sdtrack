@@ -49,7 +49,7 @@ namespace sdtrack
     void StartNewLandmarks();
 
     double EvaluateTrackResiduals(uint32_t level,
-        const std::vector<cv::Mat> &image_pyrmaid,
+        const std::vector<std::vector<cv::Mat> > &image_pyrmaid,
         std::list<std::shared_ptr<DenseTrack>> &tracks,
         bool transfer_jacobians = false,
         bool optimized_tracks_only = false);
@@ -62,16 +62,17 @@ namespace sdtrack
     void PruneTracks();
 
     void OptimizePyramidLevel(uint32_t level,
-        const std::vector<cv::Mat> &image_pyrmaid,
+        const std::vector<std::vector<cv::Mat> > &image_pyrmaid,
         std::list<std::shared_ptr<DenseTrack>> &tracks,
         const OptimizationOptions &options,
         OptimizationStats &stats);
 
-    void AddImage(const cv::Mat &image,
+    void AddImage(const std::vector<cv::Mat> &images,
                   const Sophus::SE3t& t_ab_guess);
     void AddKeyframe() { last_image_was_keyframe_ = true; }
 
-    std::vector<cv::Mat>& GetImagePyramid() { return image_pyrmaid_; }
+    std::vector<std::vector<cv::Mat>>& GetImagePyramid()
+      { return image_pyramid_; }
     void PruneOutliers();
     std::list<std::shared_ptr<DenseTrack>>& GetCurrentTracks()
       { return current_tracks_; }
@@ -83,19 +84,21 @@ namespace sdtrack
     uint32_t longest_track_id() { return longest_track_id_; }
 
     void BackProjectTrack(std::shared_ptr<DenseTrack> track,
-                          bool initialize_pixel_vals = false);
+                          bool initialize_pixel_vals = false,
+                          uint32_t cam_id = 0);
 
-    void Do2dAlignment(const std::vector<cv::Mat>& image_pyrmaid,
-                       std::list<std::shared_ptr<DenseTrack>> &tracks,
+    void Do2dAlignment(const std::vector<std::vector<cv::Mat> > &image_pyrmaid,
+                       std::list<std::shared_ptr<DenseTrack>> &tracks, uint32_t cam_id,
                        uint32_t level);
   private:
     uint32_t StartNewTracks(std::vector<cv::Mat>& image_pyrmaid,
                            std::vector<cv::KeyPoint>& cv_keypoints,
-                           uint32_t num_to_start);
+                           uint32_t num_to_start, uint32_t cam_id);
 
 
     void TransferPatch(std::shared_ptr<DenseTrack> track,
                        uint32_t level,
+                       uint32_t cam_id,
                        const Sophus::SE3t& t_ba,
                        calibu::CameraInterface<Scalar>* cam,
                        PatchTransfer &result, bool transfer_jacobians,
@@ -118,6 +121,7 @@ namespace sdtrack
         Eigen::Matrix<double, 1, 2> &di_dpix, double val_pix);
 
     Sophus::SE3t t_ba_;
+    uint32_t num_cameras_;
     bool last_image_was_keyframe_ = true;
     double lm_per_cell_;
     double average_track_length_;
@@ -135,7 +139,7 @@ namespace sdtrack
     std::vector<std::vector<uint32_t>> pyramid_patch_corner_dims_;
     std::vector<std::vector<std::vector<double>>> pyramid_patch_interp_factors_;
     std::vector<Eigen::Vector2t> pyramid_coord_ratio_;
-    std::vector<cv::Mat> image_pyrmaid_;
+    std::vector<std::vector<cv::Mat>> image_pyramid_;
     std::vector<double> pyramid_error_thresholds_;
     Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> feature_cells_;
     Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> prev_feature_cells_;

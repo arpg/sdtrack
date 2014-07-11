@@ -17,6 +17,10 @@ namespace sdtrack
 
   struct PatchTransfer
   {
+    std::vector<double> residuals;
+    std::vector<double> projected_values;
+    std::vector<Eigen::Vector2d> projections;
+
     Eigen::Vector2d center_projection;
     Eigen::Matrix<double, 2, 3> center_dprojection;
     std::vector<Eigen::Vector2d> valid_projections;
@@ -26,6 +30,43 @@ namespace sdtrack
     double mean_value;
     uint32_t level;
     double dimension;
+    uint32_t patch_dim;
+
+    void GetProjectedPerimiter(std::vector<Eigen::Vector2d>& points,
+                               Eigen::Vector2d& center) const
+    {
+      center = projections[(projections.size() - 1) / 2];
+      for (size_t ii = 0; ii < patch_dim ; ++ii) {
+        points.push_back(projections[ii]);
+      }
+
+      size_t index = (patch_dim * 2) - 1;
+      for (size_t ii = 0; ii < patch_dim - 1 ; ++ii) {
+        points.push_back(projections[index]);
+        index += patch_dim;
+      }
+
+      for (size_t ii = 1; ii < patch_dim ; ++ii) {
+        points.push_back(projections[projections.size() - patch_dim]);
+      }
+
+      index = (patch_dim * (patch_dim - 2));
+      for (size_t ii = 0; ii < patch_dim - 1 ; ++ii) {
+        points.push_back(projections[index]);
+        index -= patch_dim;
+      }
+    }
+  };
+
+  struct Keypoint
+  {
+    Keypoint() {}
+    Keypoint(const Eigen::Vector2d& kp_val, const bool tracked_val,
+                  const uint32_t external_data_val) :
+      kp(kp_val), tracked(tracked_val), external_data(external_data_val) {}
+    Eigen::Vector2d kp;
+    bool tracked = false;
+    uint32_t external_data = UINT_MAX;
   };
 
   struct DenseTrack
@@ -51,9 +92,7 @@ namespace sdtrack
     uint32_t id;
     uint32_t num_good_tracked_frames = 0;
     DenseKeypoint ref_keypoint;
-    std::vector<Eigen::Vector2d> keypoints;
-    std::vector<uint32_t> keypoint_external_data;
-    std::vector<bool> keypoints_tracked;
+    std::vector<std::vector<Keypoint>> keypoints;
     bool residual_used = false;
     bool tracked = false;
     bool is_new = true;

@@ -144,8 +144,8 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
           continue;
         }
         for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
-          if (track->keypoints_tracked[jj]) {
-            const Eigen::Vector2d& z = track->keypoints[jj];
+          if (track->keypoints[jj][0].tracked) {
+            const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
             const uint32_t res_id =
                 bundle_adjuster.AddProjectionResidual(
                   z, pose->opt_id[id] + jj, track->external_id[id], 0);
@@ -259,7 +259,7 @@ void BaAndStartNewLandmarks()
   }
 }
 
-void ProcessImage(cv::Mat& image)
+void ProcessImage(std::vector<cv::Mat>& images)
 {
 #ifdef CHECK_NANS
   _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
@@ -300,14 +300,14 @@ void ProcessImage(cv::Mat& image)
     guess.translation() = Eigen::Vector3d(0,0,0.01);
   }
 
-  tracker.AddImage(image, guess);
+  tracker.AddImage(images, guess);
   tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0);
+                          tracker.GetCurrentTracks(), 0, 0);
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
@@ -401,6 +401,8 @@ bool LoadCameras()
 {
   LoadCameraAndRig(*cl, camera_device, old_rig);
   calibu::CreateFromOldRig(&old_rig, &rig);
+  rig.cameras_.resize(1);
+  rig.t_wc_.resize(1);
   return true;
 }
 
@@ -442,7 +444,11 @@ void Run()
                             camera_img->Format(), camera_img->Type(), 0);
       }
 
-      ProcessImage(camera_img->Mat());
+      std::vector<cv::Mat> cvmat_images;
+      for (int ii = 0; ii < images->Size() ; ++ii) {
+        cvmat_images.push_back(images->at(ii)->Mat());
+      }
+      ProcessImage(cvmat_images);
     }
     if (camera_img && camera_img->data()) {
       camera_view->ActivateAndScissor();
@@ -652,7 +658,8 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), last_optimization_level);
+                          tracker.GetCurrentTracks(), 0,
+                          last_optimization_level);
   });
 
   // Create the patch grid.

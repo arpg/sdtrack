@@ -253,13 +253,13 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
               continue;
             }
             for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
-              if (track->keypoints_tracked[jj]) {
-                const Eigen::Vector2d& z = track->keypoints[jj];
+              if (track->keypoints[jj][0].tracked) {
+                const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
                 if (ba.GetNumPoses() > (pose->opt_id[id] + jj)) {
                   const uint32_t res_id =
                       ba.AddProjectionResidual(
                         z, pose->opt_id[id] + jj,
-                        track->external_id[id], 0, 1.0);
+                        track->external_id[id], 0, 2.0);
                 }
               }
             }
@@ -505,8 +505,8 @@ void DoAAC()
 
 void DoBA()
 {
-  DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true, false,
-                     0, ba_imu_residual_ids);
+//  DoBundleAdjustment(bundle_adjuster, false, num_ba_poses, true, false,
+//                     0, ba_imu_residual_ids);
   if (poses.size() > min_poses_for_imu && use_imu_measurements) {
     DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses, false, false,
                        0, ba_imu_residual_ids);
@@ -541,7 +541,7 @@ void BaAndStartNewLandmarks()
   }
 }
 
-void ProcessImage(cv::Mat& image, double timestamp)
+void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 {
   std::cerr << "Processing image with timestamp " << timestamp << std::endl;
 #ifdef CHECK_NANS
@@ -621,8 +621,9 @@ void ProcessImage(cv::Mat& image, double timestamp)
   guess = prev_delta_t_ba * prev_t_ba;
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0,0,-0.1);
+    guess.translation() = Eigen::Vector3d(0, 0, 0.01);
   }
+
 
   bool used_imu_for_guess = false;
   if (use_imu_measurements &&
@@ -662,14 +663,14 @@ void ProcessImage(cv::Mat& image, double timestamp)
   {
     std::lock_guard<std::mutex> lock(aac_mutex);
 
-    tracker.AddImage(image, guess);
+    tracker.AddImage(images, guess);
     tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
                                    tracker.GetCurrentTracks());
 
     if (!is_manual_mode) {
       tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
       tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                            tracker.GetCurrentTracks(), 0);
+                            tracker.GetCurrentTracks(), 0, 0);
       tracker.PruneTracks();
     }
     // Update the pose t_ab based on the result from the tracker.
@@ -682,7 +683,7 @@ void ProcessImage(cv::Mat& image, double timestamp)
     const double total_trans = tracker.t_ba().translation().norm();
     const double total_rot = tracker.t_ba().so3().log().norm();
 
-    bool keyframe_condition = track_ratio < 0.5 || total_trans > 1.0 ||
+    bool keyframe_condition = track_ratio < 0.7 || total_trans > 1.0 ||
         total_rot > 0.1 /*|| tracker.num_successful_tracks() < 64*/;
 
     std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
@@ -803,7 +804,11 @@ void Run()
                             camera_img->Format(), camera_img->Type(), 0);
       }
 
-      ProcessImage(camera_img->Mat(), images->Timestamp());
+      std::vector<cv::Mat> cvmat_images;
+      for (int ii = 0; ii < images->Size() ; ++ii) {
+        cvmat_images.push_back(images->at(ii)->Mat());
+      }
+      ProcessImage(cvmat_images, images->Timestamp());
     }
     if (camera_img && camera_img->data()) {
       camera_view->ActivateAndScissor();
@@ -924,6 +929,8 @@ bool LoadCameras()
 {
   LoadCameraAndRig(*cl, camera_device, old_rig);
   calibu::CreateFromOldRig(&old_rig, &rig);
+  rig.cameras_.resize(1);
+  rig.t_wc_.resize(1);
 
   // Load the imu
   std::string imu_str = cl->follow("","-imu");
@@ -1056,7 +1063,8 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), last_optimization_level);
+                          tracker.GetCurrentTracks(), 0,
+                          last_optimization_level);
   });
 
   pangolin::RegisterKeyPressCallback('B', [&]() {
