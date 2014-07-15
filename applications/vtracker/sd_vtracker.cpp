@@ -3,6 +3,8 @@
 #undef NDEBUG
 #include <assert.h>
 
+//#define CHECK_NANS
+
 #include <HAL/Camera/CameraDevice.h>
 #include <miniglog/logging.h>
 #include <calibu/utils/Xml.h>
@@ -46,7 +48,8 @@ calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 sdtrack::SemiDenseTracker tracker;
 
-pangolin::View* camera_view, *grid_view;
+pangolin::View *grid_view;
+std::vector<pangolin::View*> camera_view;
 pangolin::View patch_view;
 pangolin::OpenGlRenderState  gl_render3d;
 std::unique_ptr<SceneGraph::HandlerSceneGraph> sg_handler_;
@@ -108,7 +111,10 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
     bundle_adjuster.Init(options, poses.size(),
                          current_tracks->size() * poses.size());
-    bundle_adjuster.AddCamera(rig.cameras_[0], rig.t_wc_[0]);
+    for (int cam_id = 0; cam_id < /*rig.cameras_.size()*/ 1; ++cam_id) {
+      bundle_adjuster.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
+    }
+
     // First add all the poses and landmarks to ba.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
@@ -143,12 +149,14 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         if (track->external_id[id] == UINT_MAX) {
           continue;
         }
-        for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
-          if (track->keypoints[jj][0].tracked) {
-            const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
-            const uint32_t res_id =
-                bundle_adjuster.AddProjectionResidual(
-                  z, pose->opt_id[id] + jj, track->external_id[id], 0);
+        for (uint32_t cam_id = 0; cam_id < /*rig.cameras_.size()*/ 1; ++cam_id) {
+          for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
+            if (track->keypoints[jj][cam_id].tracked) {
+              const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
+              const uint32_t res_id =
+                  bundle_adjuster.AddProjectionResidual(
+                    z, pose->opt_id[id] + jj, track->external_id[id], cam_id);
+            }
           }
         }
       }
@@ -307,7 +315,7 @@ void ProcessImage(std::vector<cv::Mat>& images)
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0, 0);
+                          tracker.GetCurrentTracks(), 0);
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
@@ -371,9 +379,11 @@ void ProcessImage(std::vector<cv::Mat>& images)
                std::endl;
 }
 
-void DrawImageData()
+void DrawImageData(uint32_t cam_id)
 {
-  handler->track_centers.clear();
+  if (cam_id == 0) {
+    handler->track_centers.clear();
+  }
 
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
     axes[ii]->SetPose(poses[ii]->t_wp.matrix());
@@ -382,11 +392,15 @@ void DrawImageData()
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
     Eigen::Vector2d center;
-    DrawTrackData(track, image_width, image_height, last_optimization_level,
-                  center, handler->selected_track == track);
-    handler->track_centers.push_back(
-          std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
-            center, track));
+    if (track->keypoints.back()[cam_id].tracked) {
+      DrawTrackData(track, image_width, image_height, center,
+                    handler->selected_track == track, cam_id);
+    }
+    if (cam_id == 0) {
+      handler->track_centers.push_back(
+            std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
+              center, track));
+    }
   }
 
   // Populate the first column with the reference from the selected track.
@@ -394,21 +408,24 @@ void DrawImageData()
     DrawTrackPatches(handler->selected_track, patches);
   }
 
-  camera_view->RenderChildren();
+  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    camera_view[cam_id]->RenderChildren();
+  }
 }
 
 bool LoadCameras()
 {
   LoadCameraAndRig(*cl, camera_device, old_rig);
+  rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
-  rig.cameras_.resize(1);
-  rig.t_wc_.resize(1);
+ // rig.cameras_.resize(1);
+ // rig.t_wc_.resize(1);
   return true;
 }
 
 void Run()
 {
-  pangolin::GlTexture gl_tex;
+  std::vector<pangolin::GlTexture> gl_tex;
 
   // pangolin::Timer timer;
   bool capture_success = false;
@@ -430,19 +447,25 @@ void Run()
     }
 
     if (capture_success) {
+      gl_tex.resize(images->Size());
+
+      for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
+        if (!gl_tex[cam_id].tid) {
+          camera_img = images->at(cam_id);
+          GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
+                                     GL_LUMINANCE : GL_RGBA);
+          // Only initialise now we know format.
+          gl_tex[cam_id].Reinitialise(
+                camera_img->Width(), camera_img->Height(), internal_format,
+                false, 0, camera_img->Format(), camera_img->Type(), 0);
+        }
+      }
+
       camera_img = images->at(0);
       image_width = camera_img->Width();
       image_height = camera_img->Height();
       handler->image_height = image_height;
       handler->image_width = image_width;
-      if (!gl_tex.tid) {
-        GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
-                                   GL_LUMINANCE : GL_RGBA);
-        // Only initialise now we know format.
-        gl_tex.Reinitialise(camera_img->Width() , camera_img->Height(),
-                            internal_format, false, 0,
-                            camera_img->Format(), camera_img->Type(), 0);
-      }
 
       std::vector<cv::Mat> cvmat_images;
       for (int ii = 0; ii < images->Size() ; ++ii) {
@@ -450,12 +473,17 @@ void Run()
       }
       ProcessImage(cvmat_images);
     }
+
     if (camera_img && camera_img->data()) {
-      camera_view->ActivateAndScissor();
-      gl_tex.Upload(camera_img->data(), camera_img->Format(),
-                    camera_img->Type());
-      gl_tex.RenderToViewportFlipY();
-      DrawImageData();
+      for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
+           cam_id < images->Size(); ++cam_id) {
+        camera_img = images->at(cam_id);
+        camera_view[cam_id]->ActivateAndScissor();
+        gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
+                      camera_img->Type());
+        gl_tex[cam_id].RenderToViewportFlipY();
+        DrawImageData(cam_id);
+      }
 
       grid_view->ActivateAndScissor(gl_render3d);
 
@@ -514,8 +542,11 @@ void InitGui()
   scene_graph.AddChild(&grid);
 
   // Add named OpenGL viewport to window and provide 3D Handler
-  camera_view = &pangolin::Display("image")
-      .SetAspect(-(float)window_width/(float)window_height);
+  camera_view.resize(rig.cameras_.size());
+  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    camera_view[cam_id] = &pangolin::CreateDisplay()
+        .SetAspect(-(float)window_width/(float)window_height);
+  }
   grid_view = &pangolin::Display("grid")
       .SetAspect(-(float)window_width/(float)window_height);
 
@@ -533,16 +564,20 @@ void InitGui()
 
   pangolin::Display("multi")
       .SetBounds(1.0, 0.0, 0.0, 1.0)
-      .SetLayout(pangolin::LayoutEqual)
-      .AddDisplay(*camera_view)
-      .AddDisplay(*grid_view);
+      .SetLayout(pangolin::LayoutEqual);
+
+  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    pangolin::Display("multi").AddDisplay(*camera_view[cam_id]);
+  }
+
+  pangolin::Display("multi").AddDisplay(*grid_view);
 
   SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
   glClearColor(0.0,0.0,0.0,1.0);
 
-  std::cerr << "Viewport: " << camera_view->v.l << " " <<
-               camera_view->v.r() << " " << camera_view->v.b << " " <<
-               camera_view->v.t() << std::endl;
+//  std::cerr << "Viewport: " << camera_view->v.l << " " <<
+//               camera_view->v.r() << " " << camera_view->v.b << " " <<
+//               camera_view->v.t() << std::endl;
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
@@ -553,6 +588,7 @@ void InitGui()
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_CTRL + 'r',
         [&]() {
+    camera_img.reset();
     is_keyframe = true;
     is_prev_keyframe = true;
     is_running = false;
@@ -562,6 +598,9 @@ void InitGui()
     scene_graph.AddChild(&grid);
     axes.clear();
     LoadCameras();
+    prev_delta_t_ba = Sophus::SE3d();
+    prev_t_ba = Sophus::SE3d();
+    last_t_ba = Sophus::SE3d();
   });
 
   pangolin::RegisterKeyPressCallback(
@@ -658,13 +697,13 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0,
+                          tracker.GetCurrentTracks(),
                           last_optimization_level);
   });
 
   // Create the patch grid.
-  camera_view->AddDisplay(patch_view);
-  camera_view->SetHandler(handler);
+  camera_view[0]->AddDisplay(patch_view);
+  camera_view[0]->SetHandler(handler);
   patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
 
   CreatePatchGrid(3, 3,  patches, patch_view);

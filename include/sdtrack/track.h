@@ -26,11 +26,15 @@ namespace sdtrack
     std::vector<Eigen::Vector2d> valid_projections;
     std::vector<unsigned int> valid_rays;
     std::vector<Eigen::Matrix<double, 2, 4>> dprojections;
-    uint32_t pixels_attempted;
     double mean_value;
     uint32_t level;
     double dimension;
     uint32_t patch_dim;
+
+    double rmse = 0;
+    double ncc = 1.0;
+    uint32_t tracked_pixels;
+    uint32_t pixels_attempted;
 
     void GetProjectedPerimiter(std::vector<Eigen::Vector2d>& points,
                                Eigen::Vector2d& center) const
@@ -72,20 +76,25 @@ namespace sdtrack
   struct DenseTrack
   {
     DenseTrack(uint32_t num_pyrmaid_levels,
-               const std::vector<uint32_t>& pyramid_dims):
+               const std::vector<uint32_t>& pyramid_dims,
+               uint32_t num_cameras):
       ref_keypoint(num_pyrmaid_levels, pyramid_dims)
     {
+      transfer.resize(num_cameras);
+      for (int ii = 0; ii < num_cameras ; ++ii) {
+        transfer[ii].projected_values.resize(
+              ref_keypoint.patch_pyramid[0].values.size());
+        transfer[ii].projections.resize(
+              ref_keypoint.patch_pyramid[0].values.size());
+        transfer[ii].patch_dim =
+            ref_keypoint.patch_pyramid[0].dim;
+      }
       ref_keypoint.track = this;
       external_id.resize(2);
     }
 
-    PatchTransfer transfer;
-    uint32_t tracked_pixels;
-    uint32_t pixels_attempted;
+    std::vector<PatchTransfer> transfer;
     double jtj = 0;
-    double rmse = 0;
-    double ncc = 1.0;
-    double center_error = 0;
     uint32_t opt_id;
     uint32_t residual_offset;
     std::vector<uint32_t> external_id;

@@ -670,7 +670,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     if (!is_manual_mode) {
       tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
       tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                            tracker.GetCurrentTracks(), 0, 0);
+                            tracker.GetCurrentTracks(), 0);
       tracker.PruneTracks();
     }
     // Update the pose t_ab based on the result from the tracker.
@@ -753,8 +753,8 @@ void DrawImageData()
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
-    DrawTrackData(track, image_width, image_height, last_optimization_level,
-                  center, handler->selected_track == track);
+    DrawTrackData(track, image_width, image_height,  center,
+                  handler->selected_track == track, 0);
     handler->track_centers.push_back(
           std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
             center, track));
@@ -928,6 +928,7 @@ void InitTracker()
 bool LoadCameras()
 {
   LoadCameraAndRig(*cl, camera_device, old_rig);
+  rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
   rig.cameras_.resize(1);
   rig.t_wc_.resize(1);
@@ -1008,6 +1009,7 @@ void InitGui()
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_CTRL + 'r',
         [&]() {
+    camera_img.reset();
     is_keyframe = true;
     is_prev_keyframe = true;
     is_running = false;
@@ -1063,8 +1065,7 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0,
-                          last_optimization_level);
+                          tracker.GetCurrentTracks(), last_optimization_level);
   });
 
   pangolin::RegisterKeyPressCallback('B', [&]() {
