@@ -170,7 +170,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   for (uint32_t ii = window.start_index ; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
     for (std::shared_ptr<DenseTrack> track : pose->tracks) {
-      if (track->external_id[0] == UINT_MAX) {
+      if (track->external_id[ba_id_] == UINT_MAX) {
         continue;
       }
       // Limit the number of measurements we add here for a track, as they

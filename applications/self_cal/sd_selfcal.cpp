@@ -39,7 +39,7 @@ uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 // Self calibration params
-bool unknown_calibration = false;
+bool unknown_calibration = true;
 bool compare_self_cal_with_batch = false;
 bool do_self_cal = true;
 uint32_t num_self_cal_segments = 5;
