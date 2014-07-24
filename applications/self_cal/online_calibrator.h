@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include <calibu/cam/camera_crtp_interop.h>
 #include <Eigen/Eigenvalues>
 #include <ba/BundleAdjuster.h>
@@ -71,5 +72,6 @@ public:
     Eigen::VectorXd covariance_weights_;
     CalibrationWindow total_window_;
     ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
+    uint32_t ba_id_ = 1;
   };
 }

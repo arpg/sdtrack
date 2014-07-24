@@ -143,13 +143,13 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   // First add all the poses and landmarks to ba.
   for (uint32_t ii = window.start_index; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
-    pose->opt_id = selfcal_ba.AddPose(pose->t_wp, ii > start_active_pose);
+    pose->opt_id[ba_id_] = selfcal_ba.AddPose(pose->t_wp, ii > start_active_pose);
     // std::cerr << "Adding pose with opt_id " << pose->opt_id << " and t_wp " <<
     //              pose->t_wp.matrix() << std::endl;
 
     for (std::shared_ptr<DenseTrack> track: pose->tracks) {
       if (track->num_good_tracked_frames == 1 || track->is_outlier) {
-        track->external_id = UINT_MAX;
+        track->external_id[ba_id_] = UINT_MAX;
         continue;
       }
 
@@ -158,7 +158,8 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ray[3] = track->ref_keypoint.rho;
       ray = MultHomogeneous(pose->t_wp  * rig_->t_wc_[0], ray);
       bool active = track->id != longest_track->id;
-      track->external_id = selfcal_ba.AddLandmark(ray, pose->opt_id, 0, active);
+      track->external_id[ba_id_] =
+          selfcal_ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
       // std::cerr << "Adding lm with opt_id " << track->external_id << " and "
       //              " x_r " << ray.transpose() << " and x_orig: " <<
       //              x_r_orig_->transpose() << std::endl;
@@ -169,17 +170,17 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   for (uint32_t ii = window.start_index ; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
     for (std::shared_ptr<DenseTrack> track : pose->tracks) {
-      if (track->external_id == UINT_MAX) {
+      if (track->external_id[0] == UINT_MAX) {
         continue;
       }
       // Limit the number of measurements we add here for a track, as they
       // could exceed the size of this calibration window.
       for (size_t jj = 0; jj < track->keypoints.size() &&
            jj < (window.end_index - ii) ; ++jj) {
-        if (track->keypoints_tracked[jj]) {
-          const Eigen::Vector2d& z = track->keypoints[jj];
+        if (track->keypoints[jj][0].tracked) {
+          const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
           selfcal_ba.AddProjectionResidual(
-                z, pose->opt_id + jj, track->external_id, 0);
+                z, pose->opt_id[ba_id_] + jj, track->external_id[ba_id_], 0);
         }
       }
     }
@@ -450,14 +451,15 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       std::shared_ptr<TrackerPose> last_pose = poses.back();
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
-      last_pose->t_wp = selfcal_ba.GetPose(last_pose->opt_id).t_wp;
+      last_pose->t_wp = selfcal_ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
       // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
       //              std::endl;
 
       // Read out the pose and landmark values.
       for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
         std::shared_ptr<TrackerPose> pose = poses[ii];
-        const ba::PoseT<double>& ba_pose = selfcal_ba.GetPose(pose->opt_id);
+        const ba::PoseT<double>& ba_pose =
+            selfcal_ba.GetPose(pose->opt_id[ba_id_]);
         // std::cerr << "Pose " << pose->opt_id << " t_wp " << std::endl <<
         //              pose->t_wp.matrix() << std::endl << " after opt: " <<
         //              std::endl << ba_pose.t_wp.matrix() << std::endl;
@@ -466,7 +468,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
         t_ba = last_pose->t_wp.inverse() * pose->t_wp;
         for (std::shared_ptr<DenseTrack> track: pose->tracks) {
-          if (track->external_id == UINT_MAX) {
+          if (track->external_id[ba_id_] == UINT_MAX) {
             continue;
           }
           // Set the t_ab on this track.
@@ -477,7 +479,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
           // Get the landmark location in the world frame.
           const Eigen::Vector4d& x_w =
-              selfcal_ba.GetLandmark(track->external_id);
+              selfcal_ba.GetLandmark(track->external_id[ba_id_]);
           Eigen::Vector4d prev_ray;
           prev_ray.head<3>() = track->ref_keypoint.ray;
           prev_ray[3] = track->ref_keypoint.rho;

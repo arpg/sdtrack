@@ -1147,6 +1147,13 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
   stats.lm_time = 0;
   double schur_time;
 
+  if (tracks.size() == 0) {
+    stats.pre_solve_error = 0;
+    stats.delta_pose_norm = 0;
+    stats.delta_lm_norm = 0;
+    return;
+  }
+
   const Sophus::SE3d t_vc = camera_rig_->t_wc_[0];
   for (std::shared_ptr<DenseTrack>& track : tracks) {
     track->opt_id = UINT_MAX;
@@ -1407,8 +1414,11 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
   Eigen::Matrix<double, 6, 1> delta_p;
   if (options.optimize_pose) {
     Eigen::LDLT<Eigen::Matrix<Scalar, 6, 6>> solver;
+    // std::cerr << "u: " << std::endl << u << std::endl;
+    std::cerr << "r_p: " << std::endl << r_p << std::endl;
     solver.compute(u);
     delta_p = solver.solve(r_p);
+    std::cerr << "Delta p " << delta_p.transpose() << std::endl;
     t_ba_ = Sophus::SE3d::exp(-delta_p * tracker_options_.gn_scaling) * t_ba_;
   }
   stats.solve_time += Toc(solve_time);

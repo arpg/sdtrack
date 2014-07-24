@@ -2,7 +2,7 @@
 // accompanying LICENSE file for more information.
 #undef NDEBUG
 #include <assert.h>
-
+#include <vector>
 #include <HAL/Camera/CameraDevice.h>
 #include <miniglog/logging.h>
 #include <calibu/utils/Xml.h>
@@ -39,7 +39,7 @@ uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 // Self calibration params
-bool unknown_calibration = true;
+bool unknown_calibration = false;
 bool compare_self_cal_with_batch = false;
 bool do_self_cal = true;
 uint32_t num_self_cal_segments = 5;
@@ -126,11 +126,11 @@ void DoBundleAdjustment()
     // First add all the poses and landmarks to ba.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-      pose->opt_id = bundle_adjuster.AddPose(pose->t_wp,
+      pose->opt_id[0] = bundle_adjuster.AddPose(pose->t_wp,
                                              ii >= start_active_pose );
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         if (track->num_good_tracked_frames == 1 || track->is_outlier) {
-          track->external_id = UINT_MAX;
+          track->external_id[0] = UINT_MAX;
           continue;
         }
         Eigen::Vector4d ray;
@@ -142,8 +142,8 @@ void DoBundleAdjustment()
         if (!active) {
           std::cerr << "Landmark " << track->id << " inactive. " << std::endl;
         }
-        track->external_id =
-            bundle_adjuster.AddLandmark(ray, pose->opt_id, 0, active);
+        track->external_id[0] =
+            bundle_adjuster.AddLandmark(ray, pose->opt_id[0], 0, active);
       }
     }
 
@@ -151,15 +151,15 @@ void DoBundleAdjustment()
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
       for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
-        if (track->external_id == UINT_MAX) {
+        if (track->external_id[0] == UINT_MAX) {
           continue;
         }
         for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
-          if (track->keypoints_tracked[jj]) {
-            const Eigen::Vector2d& z = track->keypoints[jj];
+          if (track->keypoints[jj][0].tracked) {
+            const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
             const uint32_t res_id =
                 bundle_adjuster.AddProjectionResidual(
-                  z, pose->opt_id + jj, track->external_id, 0);
+                  z, pose->opt_id[0] + jj, track->external_id[0], 0);
           }
         }
       }
@@ -170,31 +170,32 @@ void DoBundleAdjustment()
 
     // Get the pose of the last pose. This is used to calculate the relative
     // transform from the pose to the current pose.
-    last_pose->t_wp = bundle_adjuster.GetPose(last_pose->opt_id).t_wp;
+    last_pose->t_wp = bundle_adjuster.GetPose(last_pose->opt_id[0]).t_wp;
     // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
     //              std::endl;
 
     // Read out the pose and landmark values.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-      const ba::PoseT<double>& ba_pose = bundle_adjuster.GetPose(pose->opt_id);
+      const ba::PoseT<double>& ba_pose =
+          bundle_adjuster.GetPose(pose->opt_id[0]);
 
       pose->t_wp = ba_pose.t_wp;
       // Here the last pose is actually t_wb and the current pose t_wa.
       last_t_ba = t_ba;
       t_ba = last_pose->t_wp.inverse() * pose->t_wp;
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
-        if (track->external_id == UINT_MAX) {
+        if (track->external_id[0] == UINT_MAX) {
           continue;
         }
         track->t_ba = t_ba;
 
         // Get the landmark location in the world frame.
         const Eigen::Vector4d& x_w =
-            bundle_adjuster.GetLandmark(track->external_id);
-        double ratio = bundle_adjuster.LandmarkOutlierRatio(track->external_id);
+            bundle_adjuster.GetLandmark(track->external_id[0]);
+        double ratio = bundle_adjuster.LandmarkOutlierRatio(track->external_id[0]);
         auto landmark =
-            bundle_adjuster.GetLandmarkObj(track->external_id);
+            bundle_adjuster.GetLandmarkObj(track->external_id[0]);
         if (ratio > 0.4) {
           num_outliers++;
           track->is_outlier = true;
@@ -238,7 +239,7 @@ void BaAndStartNewLandmarks()
           0, poses.size(), batch_window, 50, true);
     for (uint32_t ii = 0 ; ii < poses.size() ; ++ii) {
       for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
-        if (track->external_id == UINT_MAX) {
+        if (track->external_id[0] == UINT_MAX) {
           continue;
         }
         // We also have to backproject this track again.
@@ -354,7 +355,7 @@ void BaAndStartNewLandmarks()
   }
 }
 
-void ProcessImage(cv::Mat& image)
+void ProcessImage(std::vector<cv::Mat>& images)
 {
 #ifdef CHECK_NANS
   _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
@@ -395,12 +396,14 @@ void ProcessImage(cv::Mat& image)
     guess.translation() = Eigen::Vector3d(0,0,0.01);
   }
 
-  tracker.AddImage(image, guess);
+  tracker.AddImage(images, guess);
   tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks);
+    tracker.Do2dAlignment(tracker.GetImagePyramid(),
+                          tracker.GetCurrentTracks(), 0);
 
     tracker.PruneTracks();
   }
@@ -483,8 +486,10 @@ void DrawImageData()
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
     Eigen::Vector2d center;
-    DrawTrackData(track, image_width, image_height, last_optimization_level,
-                  center);
+    if (track->keypoints.back()[0].tracked) {
+      DrawTrackData(track, image_width, image_height, center,
+                    handler->selected_track == track, 0);
+    }
     handler->track_centers.push_back(
           std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
             center, track));
@@ -536,7 +541,11 @@ void Run()
                             camera_img->Format(), camera_img->Type(), 0);
       }
 
-      ProcessImage(camera_img->Mat());
+      std::vector<cv::Mat> cvmat_images;
+      for (int ii = 0; ii < images->Size() ; ++ii) {
+        cvmat_images.push_back(images->at(ii)->Mat());
+      }
+      ProcessImage(cvmat_images);
     }
     if (camera_img && camera_img->data()) {
       camera_view->ActivateAndScissor();
