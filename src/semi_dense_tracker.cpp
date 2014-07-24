@@ -1418,11 +1418,8 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
   Eigen::Matrix<double, 6, 1> delta_p;
   if (options.optimize_pose) {
     Eigen::LDLT<Eigen::Matrix<Scalar, 6, 6>> solver;
-    // std::cerr << "u: " << std::endl << u << std::endl;
-    std::cerr << "r_p: " << std::endl << r_p << std::endl;
     solver.compute(u);
     delta_p = solver.solve(r_p);
-    std::cerr << "Delta p " << delta_p.transpose() << std::endl;
     t_ba_ = Sophus::SE3d::exp(-delta_p * tracker_options_.gn_scaling) * t_ba_;
   }
   stats.solve_time += Toc(solve_time);
