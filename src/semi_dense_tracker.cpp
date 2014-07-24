@@ -1382,6 +1382,10 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
         v = 1e-6;
       }
 
+      if (std::isnan(v) || std::isinf(v)) {
+        std::cerr << "v is bad: " << v << std::endl;
+      }
+
       // std::cerr << "v: " << v << std::endl;
       const double v_inv = 1.0 / v;
       v_inv_vec[track->opt_id] = v_inv;
