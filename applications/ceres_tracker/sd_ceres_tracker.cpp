@@ -19,7 +19,7 @@
 #include "math_types.h"
 #include "gui_common.h"
 #include "etc_common.h"
-#include "vtrack-cvars.h"
+#include "ceres_tracker_cvars.h"
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
 #endif
