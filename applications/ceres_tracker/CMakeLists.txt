@@ -26,5 +26,5 @@ def_executable(sd_ceres_tracker
   ${HAL_LIBRARIES}
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
-  ${Ceres_LIBRARIES}
+  ${CERES_LIBRARIES}
   )
