@@ -3,7 +3,7 @@
 #undef NDEBUG
 #include <assert.h>
 
-#define CHECK_NANS
+// #define CHECK_NANS
 
 #include <HAL/Camera/CameraDevice.h>
 #include <miniglog/logging.h>
