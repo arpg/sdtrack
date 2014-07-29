@@ -1,3 +1,4 @@
+#include <miniglog/logging.h>
 #include <sdtrack/semi_dense_tracker.h>
 #define MIN_OBS_FOR_CAM_LOCALIZATION 3
 using namespace sdtrack;
