@@ -747,9 +747,8 @@ bool LoadCameras(GetPot& cl)
     if (params.rows() > 4) {
       params[4] = 1.0;
     }
-    for (size_t ii = 0; ii < rig.cameras_[0]->NumParams() ; ++ii) {
-      rig.cameras_[0]->GetParams()[ii] = params[ii];
-    }
+
+    rig.cameras_[0]->SetParams(params);
 
     // Add a marker in the batch file for this initial, unknown calibration.
     Eigen::VectorXd initial_covariance(params.rows());

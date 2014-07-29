@@ -39,7 +39,7 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                                     Scalar rho)
 {
   calibu::CameraInterface<Scalar>* cam = rig_->cameras_[0];
-  Scalar* params = cam->GetParams();
+  Eigen::VectorXd params = cam->GetParams();
   const double eps = 1e-6;
   Eigen::Matrix<Scalar, 2, Eigen::Dynamic> jacobian_fd(2, cam->NumParams());
   // Test the transfer jacobian.
@@ -102,21 +102,14 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   selfcal_ba.Solve(num_iterations);
 
   // Obtain the mean from the BA.
-  double* params = selfcal_ba.rig().cameras_[0]->GetParams();
-  overal_window.mean =
-      Eigen::VectorXd(selfcal_ba.rig().cameras_[0]->NumParams());
-  for (int ii = 0; ii < overal_window.mean.rows() ; ++ii) {
-    overal_window.mean[ii] = params[ii];
-  }
+  overal_window.mean = selfcal_ba.rig().cameras_[0]->GetParams();
   overal_window.covariance =
       selfcal_ba.GetSolutionSummary().calibration_marginals;
 
   // If we are not applying results, reset them.
   if (!apply_results) {
-    for (int ii = 0; ii < params_backup.rows() ; ++ii) {
-      // Replace the parameters with the backup.
-      rig_->cameras_[0]->GetParams()[ii] = params_backup[ii];
-    }
+    // Replace the parameters with the backup.
+    rig_->cameras_[0]->SetParams(params_backup);
   }
 }
 
@@ -439,11 +432,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     const ba::SolutionSummary<double>& summary =
         selfcal_ba.GetSolutionSummary();
     // Obtain the mean from the BA.
-    double* params = selfcal_ba.rig().cameras_[0]->GetParams();
-    window.mean = Eigen::VectorXd(selfcal_ba.rig().cameras_[0]->NumParams());
-    for (int ii = 0; ii < window.mean.rows() ; ++ii) {
-      window.mean[ii] = params[ii];
-    }
+    window.mean = selfcal_ba.rig().cameras_[0]->GetParams();
     window.covariance = summary.calibration_marginals;
     window.score = GetWindowScore(window);
 
@@ -499,10 +488,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       }
     } else {
       std::cerr << "Resetting parameters. " << std::endl;
-      for (int ii = 0; ii < params_backup.rows() ; ++ii) {
-        // Replace the parameters with the backup.
-        rig_->cameras_[0]->GetParams()[ii] = params_backup[ii];
-      }
+      rig_->cameras_[0]->SetParams(params_backup);
     }
   }
 }
