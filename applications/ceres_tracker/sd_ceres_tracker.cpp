@@ -74,6 +74,45 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
+ceres::ResidualBlockId AddProjectionResidualToCeres(
+    ceres::Problem& problem, std::shared_ptr<sdtrack::DenseTrack>& track,
+    uint32_t ref_pose_id, uint32_t kp_id, uint32_t cam_id) {
+  const Eigen::Vector2d& z = track->keypoints[kp_id][cam_id].kp;
+  std::shared_ptr<sdtrack::TrackerPose>& meas_pose = poses[ref_pose_id + kp_id];
+  std::shared_ptr<sdtrack::TrackerPose>& ref_pose = poses[ref_pose_id];
+  ceres::ResidualBlockId residual_id;
+  if (dynamic_cast<calibu::FovCamera<double>*>(rig.cameras_[cam_id])) {
+    residual_id =
+        problem.AddResidualBlock(
+          new ceres::AutoDiffCostFunction<
+          InverseDepthCostFunctor<calibu::FovCamera<double>>, 2, 7, 7, 1>(
+            new InverseDepthCostFunctor<calibu::FovCamera<double>>(
+              rig.t_wc_[0],       // Ref. cam extrinsics.
+              rig.t_wc_[cam_id],  // Meas. cam extrinsics.
+              track->ref_keypoint.ray,
+              z, rig.cameras_[cam_id]->GetParams())),
+          NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
+          &track->ref_keypoint.rho);
+  } else if (dynamic_cast<calibu::LinearCamera<double>*>(
+               rig.cameras_[cam_id])) {
+    residual_id =
+        problem.AddResidualBlock(
+          new ceres::AutoDiffCostFunction<
+          InverseDepthCostFunctor<calibu::LinearCamera<double>>, 2, 7, 7, 1>(
+            new InverseDepthCostFunctor<calibu::LinearCamera<double>>(
+              rig.t_wc_[0],       // Ref. cam extrinsics.
+              rig.t_wc_[cam_id],  // Meas. cam extrinsics.
+              track->ref_keypoint.ray,
+              z, rig.cameras_[cam_id]->GetParams())),
+          NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
+          &track->ref_keypoint.rho);
+  } else {
+    LOG(FATAL) << "Unsupported camera type.";
+  }
+
+  return residual_id;
+}
+
 void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
 {
   if (reset_outliers) {
@@ -111,8 +150,8 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
       if (ii < start_active_pose) {
         problem.SetParameterBlockConstant(pose->t_wp.data());
       }
-//      pose->opt_id[id] = bundle_adjuster.AddPose(
-//            pose->t_wp, ii >= start_active_pose );
+      //      pose->opt_id[id] = bundle_adjuster.AddPose(
+      //            pose->t_wp, ii >= start_active_pose );
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         const bool constrains_active =
             track->keypoints.size() + ii > start_active_pose;
@@ -140,25 +179,9 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
           for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
             if (track->keypoints[jj][cam_id].tracked &&
                 !(jj == 0 && cam_id == 0)) {
-              const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
-              std::shared_ptr<sdtrack::TrackerPose> meas_pose = poses[ii + jj];
-              if (dynamic_cast<calibu::FovCamera<double>*>(
-                    rig.cameras_[cam_id])) {
-                lm_residuals[track->id].push_back(
-                problem.AddResidualBlock(
-                  new ceres::AutoDiffCostFunction<
-                      InverseDepthCostFunctor<calibu::FovCamera<double>>,
-                                              2, 7, 7, 1>(
-                    new InverseDepthCostFunctor<calibu::FovCamera<double>>(
-                    rig.t_wc_[0],       // Ref. cam extrinsics.
-                    rig.t_wc_[cam_id],  // Meas. cam extrinsics.
-                    track->ref_keypoint.ray,
-                    z, rig.cameras_[cam_id]->GetParams())),
-                      NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
-                      &track->ref_keypoint.rho));
-              } else {
-                LOG(FATAL) << "Unsupported camera type.";
-              }
+              lm_residuals[track->id].push_back(
+                    AddProjectionResidualToCeres(
+                      problem, track, ii , jj, cam_id));
             }
           }
         }
@@ -274,9 +297,9 @@ void ProcessImage(std::vector<cv::Mat>& images)
 #endif
 
   frame_count++;
-//  if (poses.size() > 100) {
-//    exit(EXIT_SUCCESS);
-//  }
+  //  if (poses.size() > 100) {
+  //    exit(EXIT_SUCCESS);
+  //  }
 
   Sophus::SE3d guess;
   // If this is a keyframe, set it as one on the tracker.
@@ -296,7 +319,7 @@ void ProcessImage(std::vector<cv::Mat>& images)
     }
     poses.push_back(new_pose);
     axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
-                      new SceneGraph::GLAxis(0.05)));
+                     new SceneGraph::GLAxis(0.05)));
     scene_graph.AddChild(axes.back().get());
   }
 
@@ -388,7 +411,7 @@ void DrawImageData(uint32_t cam_id)
   }
 
   // Draw the tracks
-  for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
+  for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
     if (track->keypoints.back()[cam_id].tracked) {
       DrawTrackData(track, image_width, image_height, center,
@@ -416,8 +439,8 @@ bool LoadCameras()
   LoadCameraAndRig(*cl, camera_device, old_rig);
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
- // rig.cameras_.resize(1);
- // rig.t_wc_.resize(1);
+  // rig.cameras_.resize(1);
+  // rig.t_wc_.resize(1);
   return true;
 }
 
@@ -478,7 +501,7 @@ void Run()
         camera_img = images->at(cam_id);
         camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
-                      camera_img->Type());
+                              camera_img->Type());
         gl_tex[cam_id].RenderToViewportFlipY();
         DrawImageData(cam_id);
       }
@@ -573,9 +596,9 @@ void InitGui()
   SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
   glClearColor(0.0,0.0,0.0,1.0);
 
-//  std::cerr << "Viewport: " << camera_view->v.l << " " <<
-//               camera_view->v.r() << " " << camera_view->v.b << " " <<
-//               camera_view->v.t() << std::endl;
+  //  std::cerr << "Viewport: " << camera_view->v.l << " " <<
+  //               camera_view->v.r() << " " << camera_view->v.b << " " <<
+  //               camera_view->v.t() << std::endl;
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
@@ -608,7 +631,7 @@ void InitGui()
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
     for (auto pose : poses) {
       pose_file << pose->t_wp.translation().transpose().format(
-      sdtrack::kLongCsvFmt) << std::endl;
+                     sdtrack::kLongCsvFmt) << std::endl;
     }
   });
 
