@@ -90,8 +90,8 @@ void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
                            tracker_options_.feature_cells);
   feature_cell_rho_.setZero();
 
-  mask_.AddImage(rig->cameras_[0]->ImageSize()[0],
-      rig->cameras_[0]->ImageSize()[1]);
+  mask_.AddImage(rig->cameras_[0]->Width(),
+      rig->cameras_[0]->Height());
 
   pyramid_coord_ratio_.resize(tracker_options_.pyramid_levels);
   current_tracks_.clear();
