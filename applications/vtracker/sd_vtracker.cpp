@@ -111,7 +111,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
     bundle_adjuster.Init(options, poses.size(),
                          current_tracks->size() * poses.size());
-    for (int cam_id = 0; cam_id < /*rig.cameras_.size()*/ 1; ++cam_id) {
+    for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
       bundle_adjuster.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
     }
 
@@ -149,7 +149,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         if (track->external_id[id] == UINT_MAX) {
           continue;
         }
-        for (uint32_t cam_id = 0; cam_id < /*rig.cameras_.size()*/ 1; ++cam_id) {
+        for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
           for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
             if (track->keypoints[jj][cam_id].tracked) {
               const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;

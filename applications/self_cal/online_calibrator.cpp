@@ -1,3 +1,4 @@
+#include <miniglog/logging.h>
 #include <online_calibrator.h>
 
 using namespace sdtrack;
