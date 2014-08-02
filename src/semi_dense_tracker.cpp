@@ -79,7 +79,6 @@ void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
 
   for (int ii = 0; ii < 6 ; ++ii) {
     generators_[ii] = Sophus::SE3d::generator(ii);
-    std::cerr << "gen " << ii << std::endl << generators_[ii] << std::endl;
   }
 
   // Inititalize the feature cells.
@@ -350,22 +349,28 @@ uint32_t SemiDenseTracker::StartNewTracks(
     new_track->num_good_tracked_frames++;
 
     // inherit the depth of this track from the closeset track.
-//    std::shared_ptr<DenseTrack> closest_track = nullptr;
-//    double min_distance = DBL_MAX;
-//    for (std::shared_ptr<DenseTrack> track : current_tracks_) {
-//      const double dist =
-//          (track->keypoints.back() - new_kp.center_px).norm();
-//      if (dist < min_distance && track->keypoints.size() > 2) {
-//        min_distance = dist;
-//        closest_track = track;
-//      }
-//    }
+    bool seeded_from_closest_track = false;
+    if (tracker_options_.use_closest_track_to_seed_rho) {
+      std::shared_ptr<DenseTrack> closest_track = nullptr;
+      double min_distance = DBL_MAX;
+      for (std::shared_ptr<DenseTrack> track : current_tracks_) {
+        const double dist =
+            (track->keypoints.back()[0].kp - new_kp.center_px).norm();
+        if (dist < min_distance && track->keypoints.size() > 2) {
+          min_distance = dist;
+          closest_track = track;
+        }
+      }
 
-    // if (closest_track != nullptr && min_distance < 100) {
-    //   new_kp.rho = closest_track->ref_keypoint.rho;
-    // } else {
+      if (closest_track != nullptr && min_distance < 100) {
+        new_kp.rho = closest_track->ref_keypoint.rho;
+        seeded_from_closest_track = true;
+      }
+    }
+
+    if (!seeded_from_closest_track) {
       new_kp.rho = distribution(generator_);
-    //}
+    }
 
     BackProjectTrack(new_track, true);
 

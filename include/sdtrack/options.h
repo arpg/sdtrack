@@ -83,6 +83,7 @@ namespace sdtrack
     uint32_t num_active_tracks = 10;
     uint32_t iteration_exponent = 2;
     double center_weight = 100;
+    bool use_closest_track_to_seed_rho = true;
     bool use_robust_norm_ = false;
     double gn_scaling = 1.0;
     double robust_norm_threshold_ = 5;
