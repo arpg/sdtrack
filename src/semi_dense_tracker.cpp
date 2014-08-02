@@ -945,14 +945,9 @@ void SemiDenseTracker::GetImageDerivative(
     Eigen::Matrix<double, 1, 2>& di_dppix, double val_pix)
 {
   double eps = 1e-9;
-  // const double val_pix = ref_patch.projected_values[ii];
   const double valx_pix = GetSubPix(image, pix[0] + eps, pix[1]);
-  // const double valnx_pix = GetSubPix(image, pix[0] - eps, pix[1]);
   const double valy_pix = GetSubPix(image, pix[0], pix[1] + eps);
-  // const double valny_pix = GetSubPix(image, pix[0], pix[1] - eps);
-  //di_dppix[0] = (valx_pix - valnx_pix)/(2 * eps);
   di_dppix[0] = (valx_pix - val_pix)/(eps);
-  //di_dppix[1] = (valy_pix - valny_pix)/(2 * eps);
   di_dppix[1] = (valy_pix - val_pix)/(eps);
 }
 
