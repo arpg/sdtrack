@@ -39,7 +39,9 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 
 const int window_width = 640;
 const int window_height = 480;
-const char* g_usage = "";
+std::string g_usage = "SD VITRACKER. Example usage:\n"
+    "-cam file:[loop=1]///Path/To/Dataset/[left,right]*pgm "
+    "-imu join:///path/to/imu -cmod cameras.xml";
 bool is_keyframe = true, is_prev_keyframe = true;
 bool include_new_landmarks = true;
 bool optimize_landmarks = true;

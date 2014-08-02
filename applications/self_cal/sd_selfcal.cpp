@@ -47,7 +47,8 @@ uint32_t self_cal_segment_length = 10;
 
 const int window_width = 640;
 const int window_height = 480;
-const char* g_usage = "";
+std::string g_usage = "SD SELFCAL. Example usage:\n"
+    "-cam file:[loop=1]///Path/To/Dataset/[left,right]*pgm -cmod cameras.xml";
 bool is_keyframe = true, is_prev_keyframe = true;
 bool optimize_landmarks = true;
 bool is_running = false;
