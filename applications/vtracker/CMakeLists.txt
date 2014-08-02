@@ -13,14 +13,12 @@ include_directories(${SDTRACK_INCLUDE_DIRS}
                     ${Pangolin_INCLUDE_DIRS}
                     ${SceneGraph_INCLUDE_DIRS} 
                     ${CMAKE_CURRENT_SOURCE_DIR})
-link_libraries()
 
 def_executable(sd_vtracker
   SOURCES sd_vtracker.cpp 
   DEPENDS
   sdtrack
   LINK_LIBS
-  ${SDRACK_LIBRARIES}
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
   ${SceneGraph_LIBRARIES}
