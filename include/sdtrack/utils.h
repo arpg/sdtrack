@@ -8,6 +8,33 @@ typedef REAL_TYPE Scalar;
 typedef double Scalar;
 #endif // REAL_TYPE
 
+namespace Sophus
+{
+
+typedef Sophus::SO3Group<Scalar> SO3t;
+typedef Sophus::SE3Group<Scalar> SE3t;
+}
+
+namespace Eigen
+{
+  template<typename EigenT>
+  using aligned_vector = std::vector<EigenT, Eigen::aligned_allocator<EigenT> >;
+
+  #define USING_VECTOR_ARRAY(size)                                        \
+    using Vector##size##tArray = aligned_vector<Matrix<Scalar, size, 1> >
+
+  USING_VECTOR_ARRAY(2);
+  USING_VECTOR_ARRAY(3);
+  USING_VECTOR_ARRAY(4);
+  USING_VECTOR_ARRAY(5);
+  USING_VECTOR_ARRAY(6);
+  typedef Matrix<Scalar, Eigen::Dynamic, 1> VectorXt;
+  typedef Matrix<Scalar, 2, 1> Vector2t;
+  typedef Matrix<Scalar, 3, 1> Vector3t;
+  typedef Matrix<Scalar, 4, 1> Vector4t;
+  typedef Matrix<Scalar, 6, 1> Vector6t;
+  typedef Matrix<Scalar, 4, 4> Matrix4t;
+}
 namespace sdtrack
 {
   static Eigen::IOFormat kCleanFmt(4, 0, ", ", ";\n", "", "");
@@ -188,7 +215,9 @@ namespace sdtrack
       int        row,           //< Input: Feature row position
       int        col,           //< Input: Feature col position
       uint32_t   patch_dim,
-      double     k              //< Input: Harris constant
+      double     k,              //< Input: Harris constant
+      double&    l1,
+      double&    l2
       )
   {
 
@@ -198,7 +227,10 @@ namespace sdtrack
 
     double det   = dHessian[0]*dHessian[3] - dHessian[1]*dHessian[1];
     double trace = dHessian[0] + dHessian[3];
-    return det - k * trace * trace;
+    l1 = trace / 2 + sqrt((trace * trace) / 4 -det);
+    l2 = trace / 2 - sqrt((trace * trace) / 4 -det);
+    // return det - k * trace * trace;
+    return std::min(l1, l2);
   }
 
   ///////////////////////////////////////////////////////////////////////////////
@@ -219,9 +251,11 @@ namespace sdtrack
           it->pt.y < patch_dim || it->pt.y > max_y) {
         continue;
       }
+      double l1, l2;
       it->response = ComputeScore(image, image_width, image_height,
                                   it->pt.y, it->pt.x,
-                                  patch_dim, k);
+                                  patch_dim, k, l1, l2);
+      it->angle = std::max(l1, l2);
     }
   }
 

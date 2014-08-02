@@ -11,9 +11,9 @@ namespace sdtrack
     int fast_threshold = 10;
     bool fast_nonmax_suppression = true;
 
-    double gftt_absolute_strength_threshold = 0.1;
-    int gftt_min_distance_between_features = 10;
+    double gftt_absolute_strength_threshold = 0.5;
     int gftt_feature_block_size = 9;
+    int gftt_min_distance_between_features = 4;
     bool gftt_use_harris = true;
 
 
@@ -24,12 +24,18 @@ namespace sdtrack
     double pre_solve_error;
     double delta_pose_norm;
     double delta_lm_norm;
+    double transfer_time;
+    double jacobian_time;
+    double schur_time;
+    double solve_time;
+    double lm_time;
   };
 
   struct OptimizationOptions
   {
-    bool transfer_patchs = true;
+    bool transfer_patches = true;
     bool optimize_landmarks = true;
+    bool optimize_pose = true;
   };
 
   struct DescriptorOptions
@@ -76,13 +82,17 @@ namespace sdtrack
     uint32_t patch_dim = 9;
     uint32_t num_active_tracks = 10;
     uint32_t iteration_exponent = 2;
+    double center_weight = 100;
+    bool use_closest_track_to_seed_rho = true;
     bool use_robust_norm_ = false;
+    double gn_scaling = 1.0;
     double robust_norm_threshold_ = 5;
     double default_ray_depth = 1.0;
     double default_rho = 1.0;
     double dense_rmse_threshold = 15;
     double dense_ncc_threshold = 0.75;
     double harris_score_threshold = 10000;
+    bool do_corner_subpixel_refinement = false;
     uint32_t feature_cells = 8;
   };
 }

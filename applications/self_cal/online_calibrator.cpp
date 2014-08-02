@@ -1,3 +1,4 @@
+#include <miniglog/logging.h>
 #include <online_calibrator.h>
 
 using namespace sdtrack;
@@ -38,7 +39,7 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                                     Scalar rho)
 {
   calibu::CameraInterface<Scalar>* cam = rig_->cameras_[0];
-  Scalar* params = cam->GetParams();
+  Eigen::VectorXd params = cam->GetParams();
   const double eps = 1e-6;
   Eigen::Matrix<Scalar, 2, Eigen::Dynamic> jacobian_fd(2, cam->NumParams());
   // Test the transfer jacobian.
@@ -101,21 +102,14 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   selfcal_ba.Solve(num_iterations);
 
   // Obtain the mean from the BA.
-  double* params = selfcal_ba.rig().cameras_[0]->GetParams();
-  overal_window.mean =
-      Eigen::VectorXd(selfcal_ba.rig().cameras_[0]->NumParams());
-  for (int ii = 0; ii < overal_window.mean.rows() ; ++ii) {
-    overal_window.mean[ii] = params[ii];
-  }
+  overal_window.mean = selfcal_ba.rig().cameras_[0]->GetParams();
   overal_window.covariance =
       selfcal_ba.GetSolutionSummary().calibration_marginals;
 
   // If we are not applying results, reset them.
   if (!apply_results) {
-    for (int ii = 0; ii < params_backup.rows() ; ++ii) {
-      // Replace the parameters with the backup.
-      rig_->cameras_[0]->GetParams()[ii] = params_backup[ii];
-    }
+    // Replace the parameters with the backup.
+    rig_->cameras_[0]->SetParams(params_backup);
   }
 }
 
@@ -143,13 +137,13 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   // First add all the poses and landmarks to ba.
   for (uint32_t ii = window.start_index; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
-    pose->opt_id = selfcal_ba.AddPose(pose->t_wp, ii > start_active_pose);
+    pose->opt_id[ba_id_] = selfcal_ba.AddPose(pose->t_wp, ii > start_active_pose);
     // std::cerr << "Adding pose with opt_id " << pose->opt_id << " and t_wp " <<
     //              pose->t_wp.matrix() << std::endl;
 
     for (std::shared_ptr<DenseTrack> track: pose->tracks) {
       if (track->num_good_tracked_frames == 1 || track->is_outlier) {
-        track->external_id = UINT_MAX;
+        track->external_id[ba_id_] = UINT_MAX;
         continue;
       }
 
@@ -158,7 +152,8 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ray[3] = track->ref_keypoint.rho;
       ray = MultHomogeneous(pose->t_wp  * rig_->t_wc_[0], ray);
       bool active = track->id != longest_track->id;
-      track->external_id = selfcal_ba.AddLandmark(ray, pose->opt_id, 0, active);
+      track->external_id[ba_id_] =
+          selfcal_ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
       // std::cerr << "Adding lm with opt_id " << track->external_id << " and "
       //              " x_r " << ray.transpose() << " and x_orig: " <<
       //              x_r_orig_->transpose() << std::endl;
@@ -169,17 +164,17 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   for (uint32_t ii = window.start_index ; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
     for (std::shared_ptr<DenseTrack> track : pose->tracks) {
-      if (track->external_id == UINT_MAX) {
+      if (track->external_id[ba_id_] == UINT_MAX) {
         continue;
       }
       // Limit the number of measurements we add here for a track, as they
       // could exceed the size of this calibration window.
       for (size_t jj = 0; jj < track->keypoints.size() &&
            jj < (window.end_index - ii) ; ++jj) {
-        if (track->keypoints_tracked[jj]) {
-          const Eigen::Vector2d& z = track->keypoints[jj];
+        if (track->keypoints[jj][0].tracked) {
+          const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
           selfcal_ba.AddProjectionResidual(
-                z, pose->opt_id + jj, track->external_id, 0);
+                z, pose->opt_id[ba_id_] + jj, track->external_id[ba_id_], 0);
         }
       }
     }
@@ -437,11 +432,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     const ba::SolutionSummary<double>& summary =
         selfcal_ba.GetSolutionSummary();
     // Obtain the mean from the BA.
-    double* params = selfcal_ba.rig().cameras_[0]->GetParams();
-    window.mean = Eigen::VectorXd(selfcal_ba.rig().cameras_[0]->NumParams());
-    for (int ii = 0; ii < window.mean.rows() ; ++ii) {
-      window.mean[ii] = params[ii];
-    }
+    window.mean = selfcal_ba.rig().cameras_[0]->GetParams();
     window.covariance = summary.calibration_marginals;
     window.score = GetWindowScore(window);
 
@@ -450,14 +441,15 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       std::shared_ptr<TrackerPose> last_pose = poses.back();
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
-      last_pose->t_wp = selfcal_ba.GetPose(last_pose->opt_id).t_wp;
+      last_pose->t_wp = selfcal_ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
       // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
       //              std::endl;
 
       // Read out the pose and landmark values.
       for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
         std::shared_ptr<TrackerPose> pose = poses[ii];
-        const ba::PoseT<double>& ba_pose = selfcal_ba.GetPose(pose->opt_id);
+        const ba::PoseT<double>& ba_pose =
+            selfcal_ba.GetPose(pose->opt_id[ba_id_]);
         // std::cerr << "Pose " << pose->opt_id << " t_wp " << std::endl <<
         //              pose->t_wp.matrix() << std::endl << " after opt: " <<
         //              std::endl << ba_pose.t_wp.matrix() << std::endl;
@@ -466,7 +458,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
         t_ba = last_pose->t_wp.inverse() * pose->t_wp;
         for (std::shared_ptr<DenseTrack> track: pose->tracks) {
-          if (track->external_id == UINT_MAX) {
+          if (track->external_id[ba_id_] == UINT_MAX) {
             continue;
           }
           // Set the t_ab on this track.
@@ -477,7 +469,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
           // Get the landmark location in the world frame.
           const Eigen::Vector4d& x_w =
-              selfcal_ba.GetLandmark(track->external_id);
+              selfcal_ba.GetLandmark(track->external_id[ba_id_]);
           Eigen::Vector4d prev_ray;
           prev_ray.head<3>() = track->ref_keypoint.ray;
           prev_ray[3] = track->ref_keypoint.rho;
@@ -496,10 +488,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       }
     } else {
       std::cerr << "Resetting parameters. " << std::endl;
-      for (int ii = 0; ii < params_backup.rows() ; ++ii) {
-        // Replace the parameters with the backup.
-        rig_->cameras_[0]->GetParams()[ii] = params_backup[ii];
-      }
+      rig_->cameras_[0]->SetParams(params_backup);
     }
   }
 }

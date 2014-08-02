@@ -9,6 +9,7 @@
 #include "math_types.h"
 #include <sdtrack/keypoint.h>
 #include <sdtrack/track.h>
+#include <sdtrack/semi_dense_tracker.h>
 
 typedef std::shared_ptr<sdtrack::DenseTrack> TrackPtr ;
 typedef std::vector<std::pair<Eigen::Vector2d, TrackPtr>> TrackCenterMap;
@@ -37,19 +38,19 @@ struct TrackerHandler : pangolin::Handler3D
       Eigen::Vector2d center = track_centers[ii].first;
       const double dist = sqrt(sdtrack::powi(x_val - center[0], 2) +
           sdtrack::powi(y_val - center[1], 2));
-      std::cerr << "Dist is " << dist << " w " << image_width << " h " <<
-                   image_height << std::endl;
       if (dist < 4) {
         // Then this is the selected track.
         selected_track = track_centers[ii].second;
         sdtrack::DenseKeypoint& kp = selected_track->ref_keypoint;
         sdtrack::Patch& p = selected_track->ref_keypoint.patch_pyramid[0];
         const double ncc = sdtrack::ScorePatchesNCC(
-              p.values, p.projected_values, 9, 9);
+              p.values, selected_track->transfer[0].projected_values, 9, 9);
         std::cerr << "selected kp " << selected_track->id <<
-                     "with response: " << kp.response << " rmse " <<
-                     selected_track->rmse << " ncc: " << ncc << " track ncc " <<
-                     selected_track->ncc << std::endl;
+                     "with response: " << kp.response << " response2 " <<
+                     kp.response2 << " rmse " <<
+                     selected_track->transfer[0].rmse << " ncc: " << ncc << " track ncc " <<
+                     selected_track->transfer[0].ncc << " rho " <<
+                     selected_track->ref_keypoint.rho << std::endl;
         break;
       }
     }
@@ -78,9 +79,10 @@ void DrawTrackPatches(
     std::shared_ptr<sdtrack::DenseTrack>& track,
     std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>>& patches) {
   sdtrack::DenseKeypoint& kp = track->ref_keypoint;
-  for (uint32_t ii = 0; ii < kp.patch_pyramid.size() &&
-       ii <= 2 ; ++ii) {
-    const sdtrack::Patch& ref_patch = kp.patch_pyramid[ii];
+//  for (uint32_t ii = 0; ii < kp.patch_pyramid.size() &&
+//       ii <= 0 ; ++ii) {
+    int ii = 0;
+    const sdtrack::Patch& ref_patch = kp.patch_pyramid[track->transfer[0].level];
     std::vector<unsigned char> disp_values;
     std::vector<unsigned char> disp_proj_values;
     std::vector<unsigned char> res_values;
@@ -90,8 +92,8 @@ void DrawTrackPatches(
 
     for (uint32_t jj = 0; jj < ref_patch.values.size() ; ++jj) {
       disp_values.push_back(ref_patch.values[jj]);
-      disp_proj_values.push_back(ref_patch.projected_values[jj]);
-      res_values.push_back(fabs(ref_patch.residuals[jj]));
+      disp_proj_values.push_back(track->transfer[0].projected_values[jj]);
+      res_values.push_back(fabs(track->transfer[0].residuals[jj]));
     }
     patches[ii][0]->SetImage(&disp_values[0], ref_patch.dim, ref_patch.dim,
         GL_LUMINANCE8, GL_LUMINANCE);
@@ -101,42 +103,82 @@ void DrawTrackPatches(
 
     patches[ii][2]->SetImage(&res_values[0], ref_patch.dim, ref_patch.dim,
         GL_LUMINANCE8,GL_LUMINANCE);
+  // }
+}
+
+void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
+                   std::vector<std::shared_ptr<sdtrack::TrackerPose>>& poses,
+                   calibu::Rig<Scalar>& rig,
+                   TrackerHandler *handler,
+                   int& selected_track_id)
+{
+  glBegin(GL_POINTS);
+  for (std::shared_ptr<sdtrack::TrackerPose> pose: poses) {
+    for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
+      if (selected_track_id == track->id) {
+        handler->selected_track = track;
+        selected_track_id = -1;
+      }
+
+      if (track->num_good_tracked_frames <
+          min_lm_measurements_for_drawing) {
+        continue;
+      }
+      Eigen::Vector4d ray;
+      ray.head<3>() = track->ref_keypoint.ray;
+      ray[3] = track->ref_keypoint.rho;
+      ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
+      ray /= ray[3];
+      if (handler->selected_track == track) {
+        glColor3f(1.0, 1.0, 0.2);
+      } else if (track->is_outlier) {
+        glColor3f(1.0, 0.2, 0.1);
+      } else {
+        glColor3f(1.0, 1.0, 1.0);
+      }
+      glVertex3f(ray[0], ray[1], ray[2]);
+    }
   }
+  glEnd();
 }
 
 void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,
                    uint32_t image_width, uint32_t image_height,
-                   uint32_t opt_level, Eigen::Vector2d& center)
+                   Eigen::Vector2d& center, bool is_selected, uint32_t cam_id)
 {
   Eigen::Vector3d rgb;
   // const double error = std::min(1.0, track->rmse / 15.0) * 0.7 + 0.3;
   // hsv2rgb(Eigen::Vector3d(1.0 - error, 1.0, 1.0), rgb);
-  if (track->is_outlier == false) {
-    const double error =  (1.0 - (std::max(track->ncc - 0.8, 0.0) / 0.2))
+  if (is_selected) {
+    rgb = Eigen::Vector3d(1.0, 1.0, 0.2);
+  } else if (track->is_outlier == false) {
+    const double error =
+        (1.0 - (std::max(track->transfer[cam_id].ncc - 0.8, 0.0) / 0.2))
         * 0.7 + 0.3;
     sdtrack::hsv2rgb(Eigen::Vector3d(1.0 - error, 1.0, 1.0), rgb);
   } else {
     rgb = Eigen::Vector3d(1.0, 0.2, 0.0);
   }
 
-
+  glColor4d(rgb[0], rgb[1], rgb[2], 1.0);
   glBegin(GL_LINE_STRIP);
   double alpha = track->keypoints.size() == 1 ? 1.0 : 0.15;
   const double alpha_increment = track->keypoints.size() == 1  ?
         0 : (1.0 - alpha) / track->keypoints.size();
-  for (Eigen::Vector2d point : track->keypoints) {
-    glColor4d(rgb[0], rgb[1], rgb[2], alpha);
+  for (std::vector<sdtrack::Keypoint> keypoints : track->keypoints) {
+    const Eigen::Vector2d& point = keypoints[cam_id].kp;
+    if (keypoints[cam_id].tracked) {
+      glColor4d(rgb[0], rgb[1], rgb[2], alpha);
+      Eigen::Vector2d px_win = ImageToWindowCoords(image_width, image_height,
+                                                   point[0], point[1]);
+      glVertex3f(px_win[0], px_win[1], 0);
+    }
     alpha += alpha_increment;
-    Eigen::Vector2d px_win = ImageToWindowCoords(image_width, image_height,
-                                                 point[0], point[1]);
-    glVertex3f(px_win[0], px_win[1], 0);
   }
   glEnd();
 
-  const sdtrack::Patch& ref_patch =
-      track->ref_keypoint.patch_pyramid[opt_level];
   std::vector<Eigen::Vector2d> perimiter;
-  ref_patch.GetProjectedPerimiter(perimiter, center);
+  track->transfer[cam_id].GetProjectedPerimiter(perimiter, center);
 
   glBegin(GL_LINE_STRIP);
   for (Eigen::Vector2d point : perimiter) {
@@ -149,8 +191,8 @@ void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,
   glColor3f(0.0, 1.0, 0.0);
   glPointSize(2);
   Eigen::Vector2d px_win = ImageToWindowCoords(image_width, image_height,
-        track->keypoints.back()[0],
-      track->keypoints.back()[1]);
+        track->keypoints.back()[cam_id].kp[0],
+      track->keypoints.back()[cam_id].kp[1]);
   glBegin(GL_POINTS);
   glVertex3f(px_win[0], px_win[1], 0);
   glEnd();
@@ -223,7 +265,9 @@ bool LoadCameraAndRig(GetPot& cl,
   LOG(INFO) << "Starting Tvs: " << crig.cameras[0].T_wc.matrix();
 
   rig.cameras.clear();
-  rig.Add( crig.cameras[0]);
+  for (int cam_id = 0; cam_id < crig.cameras.size(); ++cam_id) {
+    rig.Add( crig.cameras[cam_id]);
+  }
 
   for (size_t ii=0; ii < rig.cameras.size(); ++ii) {
     LOG(INFO) << ">>>>>>>> Camera " << ii << ":"  << std::endl

@@ -6,7 +6,6 @@
 // #define CHECK_NANS
 
 #include <HAL/Camera/CameraDevice.h>
-#include <miniglog/logging.h>
 #include <calibu/utils/Xml.h>
 #include "GetPot"
 #include <sdtrack/TicToc.h>
@@ -19,11 +18,14 @@
 #include "math_types.h"
 #include "gui_common.h"
 #include "etc_common.h"
-#include "vtrack-cvars.h"
+#include "ceres_tracker_cvars.h"
+#include "ceres_cost_terms.h"
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
 #endif
 
+#include <ceres/ceres.h>
+#include <ba/LocalParamSe3.h>
 #include <sdtrack/semi_dense_tracker.h>
 
 uint32_t keyframe_tracks = UINT_MAX;
@@ -32,15 +34,13 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 
 const int window_width = 640;
 const int window_height = 480;
-std::string g_usage = "SD VTRACKER. Example usage:\n"
-    "-cam file:[loop=1]///Path/To/Dataset/[left,right]*pgm -cmod cameras.xml";
+std::string g_usage = "SD CERES";
 bool is_keyframe = true, is_prev_keyframe = true;
 bool optimize_landmarks = true;
 bool optimize_pose = true;
 bool is_running = false;
 bool is_stepping = false;
 bool is_manual_mode = false;
-bool do_bundle_adjustment = true;
 bool do_start_new_landmarks = true;
 int image_width;
 int image_height;
@@ -74,8 +74,46 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
+ceres::ResidualBlockId AddProjectionResidualToCeres(
+    ceres::Problem& problem, std::shared_ptr<sdtrack::DenseTrack>& track,
+    uint32_t ref_pose_id, uint32_t kp_id, uint32_t cam_id) {
+  const Eigen::Vector2d& z = track->keypoints[kp_id][cam_id].kp;
+  std::shared_ptr<sdtrack::TrackerPose>& meas_pose = poses[ref_pose_id + kp_id];
+  std::shared_ptr<sdtrack::TrackerPose>& ref_pose = poses[ref_pose_id];
+  ceres::ResidualBlockId residual_id;
+  if (dynamic_cast<calibu::FovCamera<double>*>(rig.cameras_[cam_id])) {
+    residual_id =
+        problem.AddResidualBlock(
+          new ceres::AutoDiffCostFunction<
+          InverseDepthCostFunctor<calibu::FovCamera<double>>, 2, 7, 7, 1>(
+            new InverseDepthCostFunctor<calibu::FovCamera<double>>(
+              rig.t_wc_[0],       // Ref. cam extrinsics.
+              rig.t_wc_[cam_id],  // Meas. cam extrinsics.
+              track->ref_keypoint.ray,
+              z, rig.cameras_[cam_id]->GetParams())),
+          NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
+          &track->ref_keypoint.rho);
+  } else if (dynamic_cast<calibu::LinearCamera<double>*>(
+               rig.cameras_[cam_id])) {
+    residual_id =
+        problem.AddResidualBlock(
+          new ceres::AutoDiffCostFunction<
+          InverseDepthCostFunctor<calibu::LinearCamera<double>>, 2, 7, 7, 1>(
+            new InverseDepthCostFunctor<calibu::LinearCamera<double>>(
+              rig.t_wc_[0],       // Ref. cam extrinsics.
+              rig.t_wc_[cam_id],  // Meas. cam extrinsics.
+              track->ref_keypoint.ray,
+              z, rig.cameras_[cam_id]->GetParams())),
+          NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
+          &track->ref_keypoint.rho);
+  } else {
+    LOG(FATAL) << "Unsupported camera type.";
+  }
 
-void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
+  return residual_id;
+}
+
+void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
 {
   if (reset_outliers) {
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
@@ -86,15 +124,9 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
     reset_outliers = false;
   }
 
-  ba::Options<double> options;
-  options.use_dogleg = use_dogleg;
-  options.use_sparse_solver = true;
-  options.param_change_threshold = 1e-10;
-  options.error_change_threshold = 1e-3;
-  options.use_robust_norm_for_proj_residuals = use_robust_norm_for_proj;
-  options.projection_outlier_threshold = outlier_threshold;
-  // options.error_change_threshold = 1e-3;
-  // options.use_sparse_solver = false;
+  LocalParamSe3* local_param = new LocalParamSe3();
+  ceres::Problem problem;
+
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
   uint32_t start_active_pose, start_pose;
@@ -110,17 +142,16 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
   // Do a bundle adjustment on the current set
   if (current_tracks && poses.size() > 1) {
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
-    bundle_adjuster.Init(options, poses.size(),
-                         current_tracks->size() * poses.size());
-    for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-      bundle_adjuster.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
-    }
 
     // First add all the poses and landmarks to ba.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-      pose->opt_id[id] = bundle_adjuster.AddPose(
-            pose->t_wp, ii >= start_active_pose );
+      problem.AddParameterBlock(pose->t_wp.data(), 7, local_param);
+      if (ii < start_active_pose) {
+        problem.SetParameterBlockConstant(pose->t_wp.data());
+      }
+      //      pose->opt_id[id] = bundle_adjuster.AddPose(
+      //            pose->t_wp, ii >= start_active_pose );
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         const bool constrains_active =
             track->keypoints.size() + ii > start_active_pose;
@@ -128,57 +159,45 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
             !constrains_active) {
           track->external_id[id] = UINT_MAX;
           continue;
+        } else {
+          problem.AddParameterBlock(&track->ref_keypoint.rho, 1, NULL);
+          track->external_id[id] = 0;
         }
-        Eigen::Vector4d ray;
-        ray.head<3>() = track->ref_keypoint.ray;
-        ray[3] = track->ref_keypoint.rho;
-        ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
-        bool active = track->id != tracker.longest_track_id() ||
-            !all_poses_active;
-        if (!active) {
-          std::cerr << "Landmark " << track->id << " inactive. " << std::endl;
-        }
-        track->external_id[id] =
-            bundle_adjuster.AddLandmark(ray, pose->opt_id[id], 0, active);
       }
     }
 
+    std::map<uint32_t, std::vector<ceres::ResidualBlockId>> lm_residuals;
+
     // Now add all reprojections to ba)
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
-      std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-      for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
+      std::shared_ptr<sdtrack::TrackerPose> ref_pose = poses[ii];
+      for (std::shared_ptr<sdtrack::DenseTrack> track : ref_pose->tracks) {
         if (track->external_id[id] == UINT_MAX) {
           continue;
         }
-        for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+        for (uint32_t cam_id = 0; cam_id < /*rig.cameras_.size()*/ 1; ++cam_id) {
           for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
-            if (track->keypoints[jj][cam_id].tracked) {
-              const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
-              const uint32_t res_id =
-                  bundle_adjuster.AddProjectionResidual(
-                    z, pose->opt_id[id] + jj, track->external_id[id], cam_id);
+            if (track->keypoints[jj][cam_id].tracked &&
+                !(jj == 0 && cam_id == 0)) {
+              lm_residuals[track->id].push_back(
+                    AddProjectionResidualToCeres(
+                      problem, track, ii , jj, cam_id));
             }
           }
         }
       }
     }
 
-    // Optimize the poses
-    bundle_adjuster.Solve(num_ba_iterations);
-
-    // Get the pose of the last pose. This is used to calculate the relative
-    // transform from the pose to the current pose.
-    last_pose->t_wp = bundle_adjuster.GetPose(last_pose->opt_id[id]).t_wp;
-    // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
-    //              std::endl;
+    ceres::Solver::Summary summary;
+    ceres::Solver::Options options;
+    options.function_tolerance = 1e-3;
+    options.trust_region_strategy_type = ceres::DOGLEG;
+    ceres::Solve(options, &problem, &summary);
 
     // Read out the pose and landmark values.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
-      const ba::PoseT<double>& ba_pose =
-          bundle_adjuster.GetPose(pose->opt_id[id]);
 
-      pose->t_wp = ba_pose.t_wp;
       // Here the last pose is actually t_wb and the current pose t_wa.
       last_t_ba = t_ba;
       t_ba = last_pose->t_wp.inverse() * pose->t_wp;
@@ -188,16 +207,27 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         }
         track->t_ba = t_ba;
 
-        // Get the landmark location in the world frame.
-        const Eigen::Vector4d& x_w =
-            bundle_adjuster.GetLandmark(track->external_id[id]);
-        double ratio =
-            bundle_adjuster.LandmarkOutlierRatio(track->external_id[id]);
-        auto landmark =
-            bundle_adjuster.GetLandmarkObj(track->external_id[id]);
+        ceres::Problem::EvaluateOptions ev_options;
+        ev_options.apply_loss_function = false;
+        // ev_options.parameter_blocks.push_back(&track->ref_keypoint.rho);
+        const std::vector<ceres::ResidualBlockId> residual_ids =
+            lm_residuals[track->id];
+        uint32_t num_outliers = 0;
+        for (const ceres::ResidualBlockId& id : residual_ids) {
+          ev_options.residual_blocks.clear();
+          ev_options.residual_blocks.push_back(id);
+          double cost;
+          problem.Evaluate(ev_options, &cost, NULL, NULL, NULL);
+          if (cost > outlier_threshold) {
+            num_outliers++;
+          }
+        }
+
+        const double outlier_ratio =
+            (double)num_outliers / (double)residual_ids.size();
 
         if (do_outlier_rejection) {
-          if (ratio > 0.3 &&
+          if (outlier_ratio > 0.3 &&
               ((track->keypoints.size() == num_ba_poses - 1) ||
                track->tracked == false)) {
             num_outliers++;
@@ -207,17 +237,6 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
           }
         }
 
-        Eigen::Vector4d prev_ray;
-        prev_ray.head<3>() = track->ref_keypoint.ray;
-        prev_ray[3] = track->ref_keypoint.rho;
-        // Make the ray relative to the pose.
-        Eigen::Vector4d x_r =
-            sdtrack::MultHomogeneous(
-              (pose->t_wp * rig.t_wc_[0]).inverse(), x_w);
-        // Normalize the xyz component of the ray to compare to the original
-        // ray.
-        x_r /= x_r.head<3>().norm();
-        track->ref_keypoint.rho = x_r[3];
       }
     }
 
@@ -252,7 +271,8 @@ void BaAndStartNewLandmarks()
   uint32_t keyframe_id = poses.size();
 
   if (do_bundle_adjustment) {
-    DoBundleAdjustment(10, 0);
+    // DoBundleAdjustment(10, 0);
+    DoBundleAdjustmentCeres(10, 0);
   }
 
   if (do_start_new_landmarks) {
@@ -277,9 +297,9 @@ void ProcessImage(std::vector<cv::Mat>& images)
 #endif
 
   frame_count++;
-//  if (poses.size() > 100) {
-//    exit(EXIT_SUCCESS);
-//  }
+  //  if (poses.size() > 100) {
+  //    exit(EXIT_SUCCESS);
+  //  }
 
   Sophus::SE3d guess;
   // If this is a keyframe, set it as one on the tracker.
@@ -299,7 +319,7 @@ void ProcessImage(std::vector<cv::Mat>& images)
     }
     poses.push_back(new_pose);
     axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
-                      new SceneGraph::GLAxis(0.05)));
+                     new SceneGraph::GLAxis(0.05)));
     scene_graph.AddChild(axes.back().get());
   }
 
@@ -391,7 +411,7 @@ void DrawImageData(uint32_t cam_id)
   }
 
   // Draw the tracks
-  for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
+  for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
     if (track->keypoints.back()[cam_id].tracked) {
       DrawTrackData(track, image_width, image_height, center,
@@ -419,8 +439,8 @@ bool LoadCameras()
   LoadCameraAndRig(*cl, camera_device, old_rig);
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
- // rig.cameras_.resize(1);
- // rig.t_wc_.resize(1);
+  // rig.cameras_.resize(1);
+  // rig.t_wc_.resize(1);
   return true;
 }
 
@@ -481,7 +501,7 @@ void Run()
         camera_img = images->at(cam_id);
         camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
-                      camera_img->Type());
+                              camera_img->Type());
         gl_tex[cam_id].RenderToViewportFlipY();
         DrawImageData(cam_id);
       }
@@ -576,9 +596,9 @@ void InitGui()
   SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
   glClearColor(0.0,0.0,0.0,1.0);
 
-//  std::cerr << "Viewport: " << camera_view->v.l << " " <<
-//               camera_view->v.r() << " " << camera_view->v.b << " " <<
-//               camera_view->v.t() << std::endl;
+  //  std::cerr << "Viewport: " << camera_view->v.l << " " <<
+  //               camera_view->v.r() << " " << camera_view->v.b << " " <<
+  //               camera_view->v.t() << std::endl;
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
@@ -611,7 +631,7 @@ void InitGui()
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
     for (auto pose : poses) {
       pose_file << pose->t_wp.translation().transpose().format(
-      sdtrack::kLongCsvFmt) << std::endl;
+                     sdtrack::kLongCsvFmt) << std::endl;
     }
   });
 
