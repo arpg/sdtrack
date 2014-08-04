@@ -34,3 +34,5 @@ static double& ncc_threshold =
     CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
 static bool& do_bundle_adjustment =
     CVarUtils::CreateCVar<>("sd.DoBundleAdjustment", true, "");
+static bool& do_calibration =
+    CVarUtils::CreateCVar<>("sd.DoCalibration", false, "");

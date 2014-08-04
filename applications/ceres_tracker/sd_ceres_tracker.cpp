@@ -42,6 +42,7 @@ bool is_running = false;
 bool is_stepping = false;
 bool is_manual_mode = false;
 bool do_start_new_landmarks = true;
+bool has_imu = false;
 int image_width;
 int image_height;
 calibu::CameraRigT<Scalar> old_rig;
@@ -74,44 +75,6 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
-ceres::ResidualBlockId AddProjectionResidualToCeres(
-    ceres::Problem& problem, std::shared_ptr<sdtrack::DenseTrack>& track,
-    uint32_t ref_pose_id, uint32_t kp_id, uint32_t cam_id) {
-  const Eigen::Vector2d& z = track->keypoints[kp_id][cam_id].kp;
-  std::shared_ptr<sdtrack::TrackerPose>& meas_pose = poses[ref_pose_id + kp_id];
-  std::shared_ptr<sdtrack::TrackerPose>& ref_pose = poses[ref_pose_id];
-  ceres::ResidualBlockId residual_id;
-  if (dynamic_cast<calibu::FovCamera<double>*>(rig.cameras_[cam_id])) {
-    residual_id =
-        problem.AddResidualBlock(
-          new ceres::AutoDiffCostFunction<
-          InverseDepthCostFunctor<calibu::FovCamera<double>>, 2, 7, 7, 1>(
-            new InverseDepthCostFunctor<calibu::FovCamera<double>>(
-              rig.t_wc_[0],       // Ref. cam extrinsics.
-              rig.t_wc_[cam_id],  // Meas. cam extrinsics.
-              track->ref_keypoint.ray,
-              z, rig.cameras_[cam_id]->GetParams())),
-          NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
-          &track->ref_keypoint.rho);
-  } else if (dynamic_cast<calibu::LinearCamera<double>*>(
-               rig.cameras_[cam_id])) {
-    residual_id =
-        problem.AddResidualBlock(
-          new ceres::AutoDiffCostFunction<
-          InverseDepthCostFunctor<calibu::LinearCamera<double>>, 2, 7, 7, 1>(
-            new InverseDepthCostFunctor<calibu::LinearCamera<double>>(
-              rig.t_wc_[0],       // Ref. cam extrinsics.
-              rig.t_wc_[cam_id],  // Meas. cam extrinsics.
-              track->ref_keypoint.ray,
-              z, rig.cameras_[cam_id]->GetParams())),
-          NULL, ref_pose->t_wp.data(), meas_pose->t_wp.data(),
-          &track->ref_keypoint.rho);
-  } else {
-    LOG(FATAL) << "Unsupported camera type.";
-  }
-
-  return residual_id;
-}
 
 void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
 {
@@ -142,6 +105,20 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
   // Do a bundle adjustment on the current set
   if (current_tracks && poses.size() > 1) {
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
+
+    if (do_calibration) {
+      for (int ii = 0; ii < rig.cameras_.size(); ++ii) {
+        problem.AddParameterBlock(rig.t_wc_[ii].data(), 7, local_param);
+        std::cerr << "Params for cam " << ii <<
+                     rig.cameras_[ii]->GetParams().transpose() << std::endl;
+      }
+
+      // If we don't have an imu, set the first t_vc to static as it is
+      // overparameterized.
+      if (!has_imu) {
+        problem.SetParameterBlockConstant(rig.t_wc_[0].data());
+      }
+    }
 
     // First add all the poses and landmarks to ba.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
@@ -181,7 +158,8 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
                 !(jj == 0 && cam_id == 0)) {
               lm_residuals[track->id].push_back(
                     AddProjectionResidualToCeres(
-                      problem, track, ii , jj, cam_id));
+                      problem, track, ii , jj, cam_id, poses, rig,
+                      do_calibration));
             }
           }
         }
@@ -193,6 +171,15 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     options.function_tolerance = 1e-3;
     options.trust_region_strategy_type = ceres::DOGLEG;
     ceres::Solve(options, &problem, &summary);
+
+    // We need to backproject tracks if the calibration changed.
+    if (do_calibration) {
+      for (size_t ii = 0; ii < poses.size(); ++ii) {
+        for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
+          tracker.BackProjectTrack(track);
+        }
+      }
+    }
 
     // Read out the pose and landmark values.
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
@@ -272,7 +259,7 @@ void BaAndStartNewLandmarks()
 
   if (do_bundle_adjustment) {
     // DoBundleAdjustment(10, 0);
-    DoBundleAdjustmentCeres(10, 0);
+    DoBundleAdjustmentCeres(num_ba_poses, 0);
   }
 
   if (do_start_new_landmarks) {
