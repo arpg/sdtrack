@@ -313,7 +313,7 @@ void ProcessImage(std::vector<cv::Mat>& images)
   guess = prev_delta_t_ba * prev_t_ba;
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0,0,0.01);
+    guess.translation() = Eigen::Vector3d(0,0,-0.01);
   }
 
   tracker.AddImage(images, guess);
