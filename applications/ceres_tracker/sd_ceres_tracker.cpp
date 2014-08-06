@@ -326,9 +326,11 @@ void ProcessImage(std::vector<cv::Mat>& images)
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
-    tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0);
+    if (do_calibration && rig.cameras_.size() > 1) {
+      tracker.Do2dTracking(tracker.GetCurrentTracks());
+    } else {
+      tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
+    }
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
@@ -405,10 +407,10 @@ void DrawImageData(uint32_t cam_id)
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
-    if (track->keypoints.back()[cam_id].tracked) {
+    // if (track->keypoints.back()[cam_id].tracked) {
       DrawTrackData(track, image_width, image_height, center,
                     handler->selected_track == track, cam_id);
-    }
+    //}
     if (cam_id == 0) {
       handler->track_centers.push_back(
             std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
@@ -431,8 +433,8 @@ bool LoadCameras()
   LoadCameraAndRig(*cl, camera_device, old_rig);
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
-  // rig.cameras_.resize(1);
-  // rig.t_wc_.resize(1);
+   // rig.cameras_.resize(1);
+   // rig.t_wc_.resize(1);
   return true;
 }
 
@@ -632,19 +634,15 @@ void InitGui()
   });
 
   pangolin::RegisterKeyPressCallback('b', [&]() {
-    last_optimization_level = 0;
+    // last_optimization_level = 0;
     tracker.OptimizeTracks(last_optimization_level,
                            optimize_landmarks, optimize_pose);
+    UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('B', [&]() {
     do_bundle_adjustment = !do_bundle_adjustment;
     std::cerr << "Do BA:" << do_bundle_adjustment << std::endl;
-  });
-
-  pangolin::RegisterKeyPressCallback('k', [&]() {
-    is_keyframe = !is_keyframe;
-    std::cerr << "is_keyframe:" << is_keyframe << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('S', [&]() {
@@ -654,30 +652,18 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback('2', [&]() {
     last_optimization_level = 2;
-    tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks, optimize_pose);
-    UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('3', [&]() {
     last_optimization_level = 3;
-    tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks, optimize_pose);
-    UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('1', [&]() {
     last_optimization_level = 1;
-    tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks, optimize_pose);
-    UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('0', [&]() {
     last_optimization_level = 0;
-    tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks, optimize_pose);
-    UpdateCurrentPose();
   });
 
   pangolin::RegisterKeyPressCallback('9', [&]() {
@@ -711,7 +697,7 @@ void InitGui()
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
                           tracker.GetCurrentTracks(),
-                          last_optimization_level);
+                          last_optimization_level, false);
   });
 
   // Create the patch grid.

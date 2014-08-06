@@ -457,9 +457,6 @@ void ProcessImage(std::vector<cv::Mat>& images)
 
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks);
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0);
-
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.

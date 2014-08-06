@@ -80,6 +80,7 @@ namespace sdtrack
                uint32_t num_cameras):
       ref_keypoint(num_pyrmaid_levels, pyramid_dims)
     {
+      offset_2d.resize(num_cameras);
       transfer.resize(num_cameras);
       for (int ii = 0; ii < num_cameras ; ++ii) {
         transfer[ii].projected_values.resize(
@@ -105,7 +106,7 @@ namespace sdtrack
     bool residual_used = false;
     bool tracked = false;
     bool is_new = true;
-    Eigen::Vector2d offset_2d;
+    std::vector<Eigen::Vector2d> offset_2d;
     bool is_outlier = false;
     Sophus::SE3d t_ba;
 

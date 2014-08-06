@@ -483,7 +483,8 @@ void SemiDenseTracker::ReprojectTrackCenters()
       const DenseKeypoint& ref_kp = track->ref_keypoint;
       // Transfer the center ray. This is used for 2d tracking.
       const Eigen::Vector2t center_pix =
-          cam.Transfer3d(track_t_ba, ref_kp.ray, ref_kp.rho);
+          cam.Transfer3d(track_t_ba, ref_kp.ray, ref_kp.rho) +
+          track->offset_2d[cam_id];
       if (IsReprojectionValid(center_pix, image_pyramid_[cam_id][0])) {
         track->keypoints.back()[cam_id].kp = center_pix;
         mask_.SetMask(0, center_pix[0], center_pix[1]);
@@ -678,6 +679,9 @@ void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks,
           last_level, image_pyramid_, current_tracks_, false, true);
   }
 
+  // Do final 2d alignment of tracks.
+  Do2dAlignment(GetImagePyramid(), GetCurrentTracks(), 0, false);
+
   // Reproject patch centers. This will add to the keypoints vector in each
   // patch which is used to pass on center values to an outside 2d BA.
   ReprojectTrackCenters();
@@ -784,7 +788,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     const Eigen::Vector3t& corner_ray =
         ref_patch.rays[pyramid_patch_corner_dims_[level][ii]];
     corner_projections[ii] = cam->Transfer3d(t_ba, corner_ray, ref_kp.rho) +
-        track->offset_2d;
+        track->offset_2d[cam_id];
 
     if (transfer_jacobians) {
       ray.head<3>() = corner_ray;
@@ -830,7 +834,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
     if (corners_project) {
       if (!use_approximation) {
         pix = cam->Transfer3d(
-              t_ba, ref_patch.rays[ii], ref_kp.rho) + track->offset_2d;
+              t_ba, ref_patch.rays[ii], ref_kp.rho) + track->offset_2d[cam_id];
       } else {
         // std::cerr << "prev pix: " << pix.transpose() << std::endl;
         // linearly interpolate this
@@ -956,10 +960,20 @@ void SemiDenseTracker::GetImageDerivative(
   di_dppix[1] = (valy_pix - val_pix)/(eps);
 }
 
+void SemiDenseTracker::Do2dTracking(
+    std::list<std::shared_ptr<DenseTrack>> &tracks)
+{
+  for (int level = tracker_options_.pyramid_levels - 1 ; level >= 0 ; --level) {
+    Do2dAlignment(GetImagePyramid(), GetCurrentTracks(), level, false);
+  }
+  ReprojectTrackCenters();
+}
+
 void SemiDenseTracker::Do2dAlignment(
     const std::vector<std::vector<cv::Mat>>& image_pyrmaid,
     std::list<std::shared_ptr<DenseTrack>> &tracks,
-    uint32_t level)
+    uint32_t level,
+    bool apply_to_kp)
 {
 
   Eigen::LDLT<Eigen::Matrix2d> solver;
@@ -1028,7 +1042,6 @@ void SemiDenseTracker::Do2dAlignment(
         delta_pix = solver.solve(jtr);
         delta_pix_0th_level[0] = delta_pix[0] / pyramid_coord_ratio_[level][0];
         delta_pix_0th_level[1] = delta_pix[1] / pyramid_coord_ratio_[level][1];
-        track->offset_2d += delta_pix;
 
         out_of_bounds = false;
         transfer.mean_value = 0;
@@ -1076,7 +1089,10 @@ void SemiDenseTracker::Do2dAlignment(
           transfer.ncc = prev_ncc;
           break;
         } else {
-          track->keypoints.back()[cam_id].kp -= delta_pix;
+          track->offset_2d[cam_id] -= delta_pix_0th_level;
+          if (apply_to_kp) {
+            track->keypoints.back()[cam_id].kp -= delta_pix_0th_level;
+          }
         }
 
   //      if ((track->ncc - prev_ncc) / prev_ncc < 0.01) {
@@ -1496,8 +1512,8 @@ void SemiDenseTracker::AddImage(const std::vector<cv::Mat> &images,
 
   // Clear out all 2d offsets for new tracks
   for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
-    track->offset_2d.setZero();
     for (int cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
+      track->offset_2d[cam_id].setZero();
       track->transfer[cam_id].level = UNINITIALIZED_TRANSFER;
     }
   }

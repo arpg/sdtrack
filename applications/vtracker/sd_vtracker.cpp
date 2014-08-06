@@ -315,8 +315,6 @@ void ProcessImage(std::vector<cv::Mat>& images)
 
   if (!is_manual_mode) {
     tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0);
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
@@ -694,7 +692,7 @@ void InitGui()
   pangolin::RegisterKeyPressCallback('k', [&]() {
     tracker.Do2dAlignment(tracker.GetImagePyramid(),
                           tracker.GetCurrentTracks(),
-                          last_optimization_level);
+                          last_optimization_level, true);
   });
 
   // Create the patch grid.
