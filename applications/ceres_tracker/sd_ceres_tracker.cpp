@@ -72,6 +72,9 @@ ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
 TrackerHandler *handler;
 pangolin::OpenGlRenderState render_state;
 
+ceres::LossFunctionWrapper loss_function(
+    new ceres::SoftLOneLoss(1), ceres::TAKE_OWNERSHIP);
+
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
@@ -88,7 +91,9 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
   }
 
   LocalParamSe3* local_param = new LocalParamSe3();
-  ceres::Problem problem;
+  ceres::Problem::Options problem_options;
+  problem_options.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+  ceres::Problem problem(problem_options);
 
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
@@ -159,7 +164,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
               lm_residuals[track->id].push_back(
                     AddProjectionResidualToCeres(
                       problem, track, ii , jj, cam_id, poses, rig,
-                      do_calibration));
+                      do_calibration, &loss_function));
             }
           }
         }
