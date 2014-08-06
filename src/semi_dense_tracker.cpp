@@ -1009,7 +1009,7 @@ void SemiDenseTracker::Do2dAlignment(
               //GetSubPix(image_pyrmaid[level], pix[0], pix[1]);
           const double mean_s_ref = ref_patch.values[ii] - ref_patch.mean;
           const double mean_s_proj = val_pix - transfer.mean_value;
-          double res = mean_s_proj - mean_s_ref;
+          const double res = mean_s_proj - mean_s_ref;
 
           // Also tet the jacobian.
           GetImageDerivative(image_pyrmaid[cam_id][level], pix, di_dp, val_pix);
@@ -1053,6 +1053,7 @@ void SemiDenseTracker::Do2dAlignment(
           transfer.mean_value /= transfer.valid_rays.size();
         }
 
+        double post_res_total = 0;
         for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
           const size_t ii = transfer.valid_rays[kk];
           const double mean_s_ref = ref_patch.values[ii] - ref_patch.mean;
@@ -1061,18 +1062,16 @@ void SemiDenseTracker::Do2dAlignment(
           ncc_num += mean_s_ref * mean_s_proj;
           ncc_den_a += mean_s_ref * mean_s_ref;
           ncc_den_b += mean_s_proj * mean_s_proj;
+          const double res = mean_s_proj - mean_s_ref;
           transfer.residuals[ii] = mean_s_proj - mean_s_ref;
+          post_res_total += fabs(res);
         }
 
         const double denom = sqrt(ncc_den_a * ncc_den_b);
         const double prev_ncc = transfer.ncc;
         transfer.ncc = denom == 0 ? 0 : ncc_num / denom;
 
-        // std::cerr << "Updated track " << track->id << " using 2d alignment of " <<
-        //              delta_pix.transpose() << " pixels. r: " << res_total <<
-        //              res_total << std::endl;
-
-        if (transfer.ncc <= prev_ncc) {
+        if (post_res_total >= res_total) {
           // roll back the changes
           transfer.ncc = prev_ncc;
           break;
