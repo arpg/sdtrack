@@ -630,11 +630,6 @@ void InitGui()
     std::cerr << "Do BA:" << do_bundle_adjustment << std::endl;
   });
 
-  pangolin::RegisterKeyPressCallback('k', [&]() {
-    is_keyframe = !is_keyframe;
-    std::cerr << "is_keyframe:" << is_keyframe << std::endl;
-  });
-
   pangolin::RegisterKeyPressCallback('S', [&]() {
     do_start_new_landmarks = !do_start_new_landmarks;
     std::cerr << "Do SNL:" << do_start_new_landmarks << std::endl;
