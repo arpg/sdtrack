@@ -89,8 +89,10 @@ void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
                            tracker_options_.feature_cells);
   feature_cell_rho_.setZero();
 
-  mask_.AddImage(rig->cameras_[0]->Width(),
-      rig->cameras_[0]->Height());
+  for (int ii = 0; ii < rig->cameras_.size(); ++ii) {
+    mask_.AddImage(rig->cameras_[ii]->Width(),
+        rig->cameras_[ii]->Height());
+  }
 
   pyramid_coord_ratio_.resize(tracker_options_.pyramid_levels);
   current_tracks_.clear();
@@ -163,7 +165,8 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
 
 bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
                                        uint32_t image_width,
-                                       uint32_t image_height)
+                                       uint32_t image_height,
+                                       uint32_t cam_id)
 {
   // Only for the car dataset.
 //  if (kp.pt.y > 400) {
@@ -185,7 +188,7 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint &kp,
   }
 
   // Make sure this keypoint isn't already ina a patch somewhere.
-  if (mask_.GetMask(0, kp.pt.x, kp.pt.y))
+  if (mask_.GetMask(cam_id, kp.pt.x, kp.pt.y))
   {
     return false;
   }
@@ -208,9 +211,9 @@ bool SemiDenseTracker::IsReprojectionValid(const Eigen::Vector2t &pix,
 }
 
 void SemiDenseTracker::BackProjectTrack(std::shared_ptr<DenseTrack> track,
-                                        bool initialize_pixel_vals,
-                                        uint32_t cam_id)
+                                        bool initialize_pixel_vals)
 {
+  const uint32_t cam_id = track->ref_cam_id;
   DenseKeypoint& kp = track->ref_keypoint;
   // Unproject the center pixel for this track.
   kp.ray =
@@ -294,9 +297,6 @@ uint32_t SemiDenseTracker::StartNewTracks(
   { return a.response > b.response; } );
 
 
-  // Clear the new tracks array, which will be populated below.
-  new_tracks_.clear();
-
   for (cv::KeyPoint& kp : cv_keypoints)
   {
     if (num_to_start == 0) {
@@ -313,12 +313,12 @@ uint32_t SemiDenseTracker::StartNewTracks(
       continue;
     }
 
-    if (!IsKeypointValid(kp, image_pyrmaid[0].cols,
-                         image_pyrmaid[0].rows)) {
+    if (!IsKeypointValid(kp, image_pyrmaid[0].cols, image_pyrmaid[0].rows,
+                         cam_id)) {
       continue;
     }
 
-    mask_.SetMask(0, kp.pt.x, kp.pt.y);
+    mask_.SetMask(cam_id, kp.pt.x, kp.pt.y);
     feature_cells_(addressy, addressx)++;
 
 
@@ -336,8 +336,9 @@ uint32_t SemiDenseTracker::StartNewTracks(
     new_kp.response2 = kp.angle;
     new_kp.center_px = Eigen::Vector2t(kp.pt.x, kp.pt.y);
 
+    new_track->ref_cam_id = cam_id;
     new_track->keypoints.emplace_back(num_cameras_);
-    Keypoint& track_kp = new_track->keypoints.back()[0];
+    Keypoint& track_kp = new_track->keypoints.back()[cam_id];
     track_kp.kp = new_kp.center_px;
     track_kp.tracked = true;
 
@@ -354,8 +355,12 @@ uint32_t SemiDenseTracker::StartNewTracks(
       std::shared_ptr<DenseTrack> closest_track = nullptr;
       double min_distance = DBL_MAX;
       for (std::shared_ptr<DenseTrack> track : current_tracks_) {
+        if (!track->keypoints.back()[cam_id].tracked) {
+          continue;
+        }
+
         const double dist =
-            (track->keypoints.back()[0].kp - new_kp.center_px).norm();
+            (track->keypoints.back()[cam_id].kp - new_kp.center_px).norm();
         if (dist < min_distance && track->keypoints.size() > 2) {
           min_distance = dist;
           closest_track = track;
@@ -392,10 +397,10 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
 
   double residual = 0;
   uint32_t residual_count = 0;
-  const Sophus::SE3d t_vc = camera_rig_->t_wc_[0];
   for (int cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
     for (std::shared_ptr<DenseTrack>& track : tracks) {
+      const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
       if (optimized_tracks_only && !track->residual_used) {
         continue;
       }
@@ -472,13 +477,13 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
 void SemiDenseTracker::ReprojectTrackCenters()
 {
   average_track_length_ = 0;
-  const Sophus::SE3d t_vc = camera_rig_->t_wc_[0];
   for (int cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
     const calibu::CameraInterface<Scalar>& cam = *camera_rig_->cameras_[cam_id];
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
 
     for (std::shared_ptr<DenseTrack>& track : current_tracks_)
     {
+      const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
       const Sophus::SE3d track_t_ba = t_cv * t_ba_ * track->t_ba * t_vc;
       const DenseKeypoint& ref_kp = track->ref_keypoint;
       // Transfer the center ray. This is used for 2d tracking.
@@ -913,33 +918,19 @@ void SemiDenseTracker::StartNewLandmarks()
   // Figure out the number of landmarks per cell that's required. For this we
   // will look at the previous cells to see how many active cells there were.
   const uint32_t num_cells = powi(tracker_options_.feature_cells, 2);
-//  const double default_lm_per_cell =
-//      (double) tracker_options_.num_active_tracks / num_cells;
-//  uint32_t num_active_cells = 0;
-//  for (int ii = 0; ii < feature_cells_.rows() ; ++ii) {
-//    for (int jj = 0; jj < feature_cells_.cols() ; ++jj) {
-//      if (feature_cells_(ii, jj) > default_lm_per_cell / 2.0) {
-//        num_active_cells++;
-//      }
-//    }
-//  }
-//  if (num_active_cells == 0) {
-//    num_active_cells = powi(tracker_options_.feature_cells, 2);
-//  }
   lm_per_cell_ = tracker_options_.num_active_tracks / num_cells;
-
-  //std::cerr << "Num active cells " << num_active_cells << " lm per cell " <<
-  //             lm_per_cell_ << std::endl;
-
-  std::vector<cv::KeyPoint> cv_keypoints;
-  // Extract features and descriptors from this image
-  ExtractKeypoints(image_pyramid_[0][0], cv_keypoints);
-
 
   // Afterwards, we must spawn a number of new tracks
   const int num_new_tracks =
       std::max(0, (int)tracker_options_.num_active_tracks -
                (int)num_successful_tracks_);
+
+  // Clear the new tracks array, which will be populated below.
+  new_tracks_.clear();
+
+  std::vector<cv::KeyPoint> cv_keypoints;
+  // Extract features and descriptors from this image
+  ExtractKeypoints(image_pyramid_[0][0], cv_keypoints);
 
   const uint32_t started =
       StartNewTracks(image_pyramid_[0], cv_keypoints, num_new_tracks, 0);
@@ -982,10 +973,10 @@ void SemiDenseTracker::Do2dAlignment(
   double res_total;
   Eigen::Matrix<double, 1, 2> di_dp;
   double ncc_num = 0, ncc_den_a = 0, ncc_den_b = 0;
-  const Sophus::SE3d t_vc = camera_rig_->t_wc_[0];
   for (int cam_id = 0; cam_id < num_cameras_; ++cam_id) {
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
     for (std::shared_ptr<DenseTrack>& track : tracks) {
+      const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
       if (track->keypoints.size() < 2) {
         continue;
       }
@@ -1170,8 +1161,8 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
     return;
   }
 
-  const Sophus::SE3d t_vc = camera_rig_->t_wc_[0];
   for (std::shared_ptr<DenseTrack>& track : tracks) {
+    const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
     track->opt_id = UINT_MAX;
     track->residual_used = false;
     // If we are not solving for landmarks, there is no point including

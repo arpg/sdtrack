@@ -132,14 +132,16 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
-        ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
+        ray = sdtrack::MultHomogeneous(
+              pose->t_wp  * rig.t_wc_[track->ref_cam_id], ray);
         bool active = track->id != tracker.longest_track_id() ||
             !all_poses_active;
         if (!active) {
           std::cerr << "Landmark " << track->id << " inactive. " << std::endl;
         }
         track->external_id[id] =
-            bundle_adjuster.AddLandmark(ray, pose->opt_id[id], 0, active);
+            bundle_adjuster.AddLandmark(ray, pose->opt_id[id],
+                                        track->ref_cam_id, active);
       }
     }
 
@@ -213,7 +215,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         // Make the ray relative to the pose.
         Eigen::Vector4d x_r =
             sdtrack::MultHomogeneous(
-              (pose->t_wp * rig.t_wc_[0]).inverse(), x_w);
+              (pose->t_wp * rig.t_wc_[track->ref_cam_id]).inverse(), x_w);
         // Normalize the xyz component of the ray to compare to the original
         // ray.
         x_r /= x_r.head<3>().norm();

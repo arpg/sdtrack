@@ -99,6 +99,7 @@ namespace sdtrack
     uint32_t opt_id;
     uint32_t residual_offset;
     std::vector<uint32_t> external_id;
+    uint32_t ref_cam_id;
     uint32_t id;
     uint32_t num_good_tracked_frames = 0;
     DenseKeypoint ref_keypoint;

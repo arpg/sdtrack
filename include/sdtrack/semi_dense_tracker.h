@@ -83,8 +83,7 @@ namespace sdtrack
     uint32_t longest_track_id() { return longest_track_id_; }
 
     void BackProjectTrack(std::shared_ptr<DenseTrack> track,
-                          bool initialize_pixel_vals = false,
-                          uint32_t cam_id = 0);
+                          bool initialize_pixel_vals = false);
 
     void Do2dAlignment(const std::vector<std::vector<cv::Mat> > &image_pyrmaid,
                        std::list<std::shared_ptr<DenseTrack>> &tracks,
@@ -113,7 +112,7 @@ namespace sdtrack
                           std::vector<cv::KeyPoint> &keypoints);
 
     inline bool IsKeypointValid(const cv::KeyPoint& kp, uint32_t image_width,
-                                uint32_t image_height);
+                                uint32_t image_height, uint32_t cam_id);
 
     inline bool IsReprojectionValid(
         const Eigen::Vector2t& pix, const cv::Mat &image);
