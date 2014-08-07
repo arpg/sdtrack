@@ -109,7 +109,8 @@ namespace sdtrack
     void ReprojectTrackCenters();
 
     void ExtractKeypoints(const cv::Mat& image,
-                          std::vector<cv::KeyPoint> &keypoints);
+                          std::vector<cv::KeyPoint> &keypoints,
+                          uint32_t cam_id);
 
     inline bool IsKeypointValid(const cv::KeyPoint& kp, uint32_t image_width,
                                 uint32_t image_height, uint32_t cam_id);
@@ -140,9 +141,8 @@ namespace sdtrack
     std::vector<Eigen::Vector2t> pyramid_coord_ratio_;
     std::vector<std::vector<cv::Mat>> image_pyramid_;
     std::vector<double> pyramid_error_thresholds_;
-    Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> feature_cells_;
-    Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic> prev_feature_cells_;
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> feature_cell_rho_;
+    std::vector<Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic>>
+      feature_cells_;
     calibu::Rig<Scalar>* camera_rig_;
     Eigen::Matrix4d generators_[6];
     std::default_random_engine generator_;

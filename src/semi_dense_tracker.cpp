@@ -81,15 +81,15 @@ void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
     generators_[ii] = Sophus::SE3d::generator(ii);
   }
 
-  // Inititalize the feature cells.
-  feature_cells_.resize(tracker_options_.feature_cells,
-                        tracker_options_.feature_cells);
-  feature_cells_.setZero();
-  feature_cell_rho_.resize(tracker_options_.feature_cells,
-                           tracker_options_.feature_cells);
-  feature_cell_rho_.setZero();
+  feature_cells_.resize(num_cameras_);
+  for (size_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
+    // Inititalize the feature cells.
+    feature_cells_[cam_id].resize(tracker_options_.feature_cells,
+                          tracker_options_.feature_cells);
+    feature_cells_[cam_id].setZero();
+  }
 
-  for (int ii = 0; ii < rig->cameras_.size(); ++ii) {
+  for (size_t ii = 0; ii < rig->cameras_.size(); ++ii) {
     mask_.AddImage(rig->cameras_[ii]->Width(),
         rig->cameras_[ii]->Height());
   }
@@ -101,7 +101,8 @@ void SemiDenseTracker::Initialize(const KeypointOptions &keypoint_options,
 }
 
 void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
-                                        std::vector<cv::KeyPoint> &keypoints)
+                                        std::vector<cv::KeyPoint> &keypoints,
+                                        uint32_t cam_id)
 {
   std::vector<cv::KeyPoint> cell_kp;
   keypoints.clear();
@@ -112,7 +113,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
   const double time = Tic();
   for (uint32_t ii = 0  ; ii < tracker_options_.feature_cells ; ++ii) {
     for (uint32_t jj = 0  ; jj < tracker_options_.feature_cells ; ++jj) {
-      if (feature_cells_(jj, ii) >= lm_per_cell_) {
+      if (feature_cells_[cam_id](jj, ii) >= lm_per_cell_) {
         continue;
       }
 
@@ -309,7 +310,7 @@ uint32_t SemiDenseTracker::StartNewTracks(
         (kp.pt.x / image_pyrmaid[0].cols) * tracker_options_.feature_cells;
     const uint32_t addressy =
         (kp.pt.y / image_pyrmaid[0].rows) * tracker_options_.feature_cells;
-    if (feature_cells_(addressy, addressx) >= lm_per_cell_) {
+    if (feature_cells_[cam_id](addressy, addressx) >= lm_per_cell_) {
       continue;
     }
 
@@ -319,7 +320,7 @@ uint32_t SemiDenseTracker::StartNewTracks(
     }
 
     mask_.SetMask(cam_id, kp.pt.x, kp.pt.y);
-    feature_cells_(addressy, addressx)++;
+    feature_cells_[cam_id](addressy, addressx)++;
 
 
     // Otherwise extract pyramid for this keypoint, and also backproject all
@@ -391,10 +392,6 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
     bool transfer_jacobians,
     bool optimized_tracks_only)
 {
-  prev_feature_cells_ = feature_cells_;
-  feature_cells_.setZero();
-  feature_cell_rho_.setZero();
-
   double residual = 0;
   uint32_t residual_count = 0;
   for (uint32_t cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
@@ -502,12 +499,12 @@ void SemiDenseTracker::ReprojectTrackCenters()
         const uint32_t addressy =
             (center_pix[1] / image_pyramid_[cam_id][0].rows) *
             tracker_options_.feature_cells;
-        if (addressy > feature_cells_.rows() ||
-            addressx > feature_cells_.cols()) {
+        if (addressy > feature_cells_[cam_id].rows() ||
+            addressx > feature_cells_[cam_id].cols()) {
           std::cerr << "Out of bounds feature cell access at : " << addressy <<
                        ", " << addressx << std::endl;
         }
-        feature_cells_(addressy, addressx)++;
+        feature_cells_[cam_id](addressy, addressx)++;
 
         if (track->keypoints.size() > 1) {
           average_track_length_ +=
@@ -928,16 +925,20 @@ void SemiDenseTracker::StartNewLandmarks()
   // Clear the new tracks array, which will be populated below.
   new_tracks_.clear();
 
-  std::vector<cv::KeyPoint> cv_keypoints;
-  // Extract features and descriptors from this image
-  ExtractKeypoints(image_pyramid_[0][0], cv_keypoints);
+  // Start tracks in every camera.
+  for (uint32_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
+    std::vector<cv::KeyPoint> cv_keypoints;
+    // Extract features and descriptors from this image
+    ExtractKeypoints(image_pyramid_[cam_id][0], cv_keypoints, cam_id);
 
-  const uint32_t started =
-      StartNewTracks(image_pyramid_[0], cv_keypoints, num_new_tracks, 0);
+    const uint32_t started =
+        StartNewTracks(image_pyramid_[cam_id], cv_keypoints, num_new_tracks, 0);
 
-  std::cerr << "Tracked: " << num_successful_tracks_ << " started " <<
-               started << " out of " << num_new_tracks << " new tracks with " <<
-               cv_keypoints.size() << " keypoints " << std::endl;
+    std::cerr << "Tracked: " << num_successful_tracks_ << " started " <<
+                 started << " out of " << num_new_tracks <<
+                 " new tracks with " << cv_keypoints.size() <<
+                 " keypoints in cam " << cam_id <<  std::endl;
+  }
 }
 
 void SemiDenseTracker::GetImageDerivative(
@@ -1502,8 +1503,9 @@ void SemiDenseTracker::AddImage(const std::vector<cv::Mat> &images,
   PruneOutliers();
 
   // Clear out all 2d offsets for new tracks
-  for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
-    for (int cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
+  for (int cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
+    feature_cells_[cam_id].setZero();
+    for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
       track->offset_2d[cam_id].setZero();
       track->transfer[cam_id].level = UNINITIALIZED_TRANSFER;
     }
