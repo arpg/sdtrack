@@ -171,7 +171,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       }
       ba.Init(options, end_pose_id + 1,
               current_tracks->size() * (end_pose_id + 1));
-      ba.AddCamera(rig.cameras_[0], rig.t_wc_[0]);
+      for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+        ba.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
+      }
+
       // First add all the poses and landmarks to ba.
       for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
         std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
@@ -232,7 +235,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             Eigen::Vector4d ray;
             ray.head<3>() = track->ref_keypoint.ray;
             ray[3] = track->ref_keypoint.rho;
-            ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
+            ray = sdtrack::MultHomogeneous(
+                  pose->t_wp * rig.t_wc_[track->ref_cam_id], ray);
             bool active = track->id != tracker.longest_track_id() ||
                 !all_poses_active || use_imu || initialize_lm;
             if (!active) {
@@ -241,7 +245,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
                            track->keypoints.size() << std::endl;
             }
             track->external_id[id] =
-                ba.AddLandmark(ray, pose->opt_id[id], 0, active);
+                ba.AddLandmark(ray, pose->opt_id[id], track->ref_cam_id, active);
           }
         }
       }
@@ -254,14 +258,16 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             if (track->external_id[id] == UINT_MAX) {
               continue;
             }
-            for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
-              if (track->keypoints[jj][0].tracked) {
-                const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
-                if (ba.GetNumPoses() > (pose->opt_id[id] + jj)) {
-                  const uint32_t res_id =
-                      ba.AddProjectionResidual(
-                        z, pose->opt_id[id] + jj,
-                        track->external_id[id], 0, 2.0);
+            for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+              for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
+                if (track->keypoints[jj][cam_id].tracked) {
+                  const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
+                  if (ba.GetNumPoses() > (pose->opt_id[id] + jj)) {
+                    const uint32_t res_id =
+                        ba.AddProjectionResidual(
+                          z, pose->opt_id[id] + jj,
+                          track->external_id[id], cam_id, 2.0);
+                  }
                 }
               }
             }
@@ -346,7 +352,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             // Make the ray relative to the pose.
             Eigen::Vector4d x_r =
                 sdtrack::MultHomogeneous(
-                  (pose->t_wp * rig.t_wc_[0]).inverse(), x_w);
+                  (pose->t_wp * rig.t_wc_[track->ref_cam_id]).inverse(), x_w);
             // Normalize the xyz component of the ray to compare to the original
             // ray.
             x_r /= x_r.head<3>().norm();
