@@ -265,7 +265,7 @@ bool LoadCameraAndRig(GetPot& cl,
   LOG(INFO) << "Starting Tvs: " << crig.cameras[0].T_wc.matrix();
 
   rig.cameras.clear();
-  for (int cam_id = 0; cam_id < crig.cameras.size(); ++cam_id) {
+  for (uint32_t cam_id = 0; cam_id < crig.cameras.size(); ++cam_id) {
     rig.Add( crig.cameras[cam_id]);
   }
 

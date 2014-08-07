@@ -138,7 +138,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
 
   if (tracker_options_.do_corner_subpixel_refinement) {
     std::vector<cv::Point2f> subpixel_centers(keypoints.size());
-    for (size_t ii = 0 ; ii < keypoints.size() ; ++ii) {
+    for (uint32_t ii = 0 ; ii < keypoints.size() ; ++ii) {
       subpixel_centers[ii] = keypoints[ii].pt;
     }
     cv::TermCriteria criteria(cv::TermCriteria::COUNT, 10, 0);
@@ -146,7 +146,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat &image,
                      cv::Size(tracker_options_.patch_dim,
                               tracker_options_.patch_dim), cv::Size(-1, -1),
                      criteria);
-    for (size_t ii = 0 ; ii < keypoints.size() ; ++ii) {
+    for (uint32_t ii = 0 ; ii < keypoints.size() ; ++ii) {
       // std::cerr << "kp " << ii << " refined from " << keypoints[ii].pt.x << ", "
       //           << keypoints[ii].pt.y << " to " << subpixel_centers[ii].x <<
       //              ", " << subpixel_centers[ii].y << std::endl;
@@ -342,7 +342,7 @@ uint32_t SemiDenseTracker::StartNewTracks(
     track_kp.kp = new_kp.center_px;
     track_kp.tracked = true;
 
-    for (int ii = 1; ii < num_cameras_; ++ii) {
+    for (uint32_t ii = 1; ii < num_cameras_; ++ii) {
       new_track->keypoints.back()[ii].kp.setZero();
       new_track->keypoints.back()[ii].tracked = 0;
     }
@@ -397,7 +397,7 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
 
   double residual = 0;
   uint32_t residual_count = 0;
-  for (int cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
+  for (uint32_t cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
     for (std::shared_ptr<DenseTrack>& track : tracks) {
       const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
@@ -477,7 +477,7 @@ double SemiDenseTracker::EvaluateTrackResiduals(uint32_t level,
 void SemiDenseTracker::ReprojectTrackCenters()
 {
   average_track_length_ = 0;
-  for (int cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
+  for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
     const calibu::CameraInterface<Scalar>& cam = *camera_rig_->cameras_[cam_id];
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
 
@@ -536,7 +536,7 @@ void SemiDenseTracker::TransformTrackTabs(const Sophus::SE3d &t_cb)
   }
 }
 
-void SemiDenseTracker::OptimizeTracks(int level, bool optimize_landmarks,
+void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
                                       bool optimize_pose, bool trust_guess)
 {
   const double time = Tic();
@@ -713,7 +713,7 @@ void SemiDenseTracker::PruneTracks()
     std::shared_ptr<DenseTrack> track = *iter;
 
     uint32_t num_successful_cams = 0;
-    for (int cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
+    for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
       PatchTransfer& transfer = track->transfer[cam_id];
       const double dim_ratio = transfer.dimension / tracker_options_.patch_dim;
       const double percent_tracked =
@@ -973,7 +973,7 @@ void SemiDenseTracker::Do2dAlignment(
   double res_total;
   Eigen::Matrix<double, 1, 2> di_dp;
   double ncc_num = 0, ncc_den_a = 0, ncc_den_b = 0;
-  for (int cam_id = 0; cam_id < num_cameras_; ++cam_id) {
+  for (uint32_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
     for (std::shared_ptr<DenseTrack>& track : tracks) {
       const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
@@ -1188,7 +1188,7 @@ void SemiDenseTracker::OptimizePyramidLevel(uint32_t level,
     track->residual_offset = residual_offset;
     residual_offset++;
 
-    for (int cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
+    for (uint32_t cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
       const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
       const Eigen::Matrix4d t_cv_mat = t_cv.matrix();
 
@@ -1512,7 +1512,7 @@ void SemiDenseTracker::AddImage(const std::vector<cv::Mat> &images,
   mask_.Clear();
   t_ba_ = t_ba_guess;
   // Create the image pyramid for the incoming image
-  for (int cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
+  for (uint32_t cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
     image_pyramid_[cam_id].resize(tracker_options_.pyramid_levels);
     image_pyramid_[cam_id][0] = images[cam_id];
     for (uint32_t ii = 1 ; ii < tracker_options_.pyramid_levels ; ++ii) {

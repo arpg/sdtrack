@@ -82,7 +82,7 @@ namespace sdtrack
     {
       offset_2d.resize(num_cameras);
       transfer.resize(num_cameras);
-      for (int ii = 0; ii < num_cameras ; ++ii) {
+      for (uint32_t ii = 0; ii < num_cameras ; ++ii) {
         transfer[ii].projected_values.resize(
               ref_keypoint.patch_pyramid[0].values.size());
         transfer[ii].projections.resize(

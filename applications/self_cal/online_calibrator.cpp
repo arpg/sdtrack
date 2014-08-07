@@ -43,7 +43,7 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
   const double eps = 1e-6;
   Eigen::Matrix<Scalar, 2, Eigen::Dynamic> jacobian_fd(2, cam->NumParams());
   // Test the transfer jacobian.
-  for (int ii = 0 ; ii < cam->NumParams()  ; ++ii) {
+  for (uint32_t ii = 0 ; ii < cam->NumParams()  ; ++ii) {
     const double old_param = params[ii];
     // modify the parameters and transfer again.
     params[ii] = old_param + eps;
