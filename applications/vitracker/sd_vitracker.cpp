@@ -1161,8 +1161,8 @@ void InitGui()
   plot_logs.resize(3);
   double bottom = 0;
   for (size_t ii = 0; ii < plot_views.size(); ++ii) {
-    plot_views[ii] = &pangolin::CreatePlotter("plot", &plot_logs[ii])
-        .SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
+    plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
+    plot_views[ii]->SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
     bottom += 0.1;
     pangolin::DisplayBase().AddDisplay(*plot_views[ii]);
   }

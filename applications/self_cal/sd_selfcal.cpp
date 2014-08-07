@@ -87,7 +87,7 @@ hal::Camera camera_device;
 sdtrack::SemiDenseTracker tracker;
 sdtrack::OnlineCalibrator online_calib;
 std::vector<pangolin::DataLog> plot_logs;
-std::vector<pangolin::View*> plot_views;
+std::vector<pangolin::Plotter*> plot_views;
 
 
 pangolin::View* camera_view, *grid_view;
@@ -192,9 +192,8 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
           for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
             if (track->keypoints[jj][cam_id].tracked) {
               const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
-              const uint32_t res_id =
-                  bundle_adjuster.AddProjectionResidual(
-                    z, pose->opt_id[id] + jj, track->external_id[id], cam_id);
+              bundle_adjuster.AddProjectionResidual(
+                z, pose->opt_id[id] + jj, track->external_id[id], cam_id);
             }
           }
         }
@@ -770,8 +769,8 @@ void InitGui()
     plot_logs.resize(rig.cameras_[0]->NumParams());
     double bottom = 0;
     for (size_t ii = 0; ii < rig.cameras_[0]->NumParams(); ++ii) {
-      plot_views[ii] = &pangolin::CreatePlotter("plot", &plot_logs[ii])
-              .SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
+      plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
+      plot_views[ii]->SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
       bottom += 0.1;
       pangolin::DisplayBase().AddDisplay(*plot_views[ii]);
     }
