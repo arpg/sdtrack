@@ -24,6 +24,23 @@ def_executable(sd_ceres_tracker
   ${SDRACK_LIBRARIES}
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
+  ${PbMsgs_LIBRARIES}
+  ${MINIGLOG_LIBRARIES}
+  ${SceneGraph_LIBRARIES}
+  ${Pangolin_LIBRARIES}
+  ${CERES_LIBRARIES}
+  )
+
+def_executable(sd_ceres_calib
+  SOURCES sd_ceres_calib.cpp
+  DEPENDS
+  sdtrack
+  LINK_LIBS
+  ${SDRACK_LIBRARIES}
+  ${BA_LIBRARIES}
+  ${HAL_LIBRARIES}
+  ${PbMsgs_LIBRARIES}
+  ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
   ${CERES_LIBRARIES}

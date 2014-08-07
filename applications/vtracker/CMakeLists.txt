@@ -21,6 +21,8 @@ def_executable(sd_vtracker
   LINK_LIBS
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
+  ${PbMsgs_LIBRARIES}
+  ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
   )
