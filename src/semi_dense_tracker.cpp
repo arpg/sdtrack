@@ -339,14 +339,16 @@ uint32_t SemiDenseTracker::StartNewTracks(
 
     new_track->ref_cam_id = cam_id;
     new_track->keypoints.emplace_back(num_cameras_);
+
+    for (uint32_t ii = 0; ii < num_cameras_; ++ii) {
+      new_track->keypoints.back()[ii].kp.setZero();
+      new_track->keypoints.back()[ii].tracked = 0;
+    }
+
     Keypoint& track_kp = new_track->keypoints.back()[cam_id];
     track_kp.kp = new_kp.center_px;
     track_kp.tracked = true;
 
-    for (uint32_t ii = 1; ii < num_cameras_; ++ii) {
-      new_track->keypoints.back()[ii].kp.setZero();
-      new_track->keypoints.back()[ii].tracked = 0;
-    }
 
     new_track->num_good_tracked_frames++;
 
@@ -489,7 +491,7 @@ void SemiDenseTracker::ReprojectTrackCenters()
           track->offset_2d[cam_id];
       if (IsReprojectionValid(center_pix, image_pyramid_[cam_id][0])) {
         track->keypoints.back()[cam_id].kp = center_pix;
-        mask_.SetMask(0, center_pix[0], center_pix[1]);
+        mask_.SetMask(cam_id, center_pix[0], center_pix[1]);
 
         // Figure out which feature cell this particular reprojection falls into,
         // and increment that cell.
@@ -932,7 +934,8 @@ void SemiDenseTracker::StartNewLandmarks()
     ExtractKeypoints(image_pyramid_[cam_id][0], cv_keypoints, cam_id);
 
     const uint32_t started =
-        StartNewTracks(image_pyramid_[cam_id], cv_keypoints, num_new_tracks, 0);
+        StartNewTracks(image_pyramid_[cam_id], cv_keypoints, num_new_tracks,
+                       cam_id);
 
     std::cerr << "Tracked: " << num_successful_tracks_ << " started " <<
                  started << " out of " << num_new_tracks <<
