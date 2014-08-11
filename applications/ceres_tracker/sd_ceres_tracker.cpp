@@ -28,6 +28,7 @@
 #include <ba/LocalParamSe3.h>
 #include <sdtrack/semi_dense_tracker.h>
 
+
 uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
@@ -98,6 +99,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
   uint32_t start_active_pose, start_pose;
+  double build_time = sdtrack::Tic();
 
   GetBaPoseRange(poses, num_active_poses, start_pose, start_active_pose);
 
@@ -171,12 +173,17 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
       }
     }
 
+    build_time = sdtrack::Toc(build_time);
+
+    double solve_time = sdtrack::Tic();
     ceres::Solver::Summary summary;
     ceres::Solver::Options options;
     options.function_tolerance = 1e-3;
     options.trust_region_strategy_type = ceres::DOGLEG;
     ceres::Solve(options, &problem, &summary);
+    solve_time = sdtrack::Toc(solve_time);
 
+    double write_time = sdtrack::Tic();
     // We need to backproject tracks if the calibration changed.
     if (do_calibration) {
       for (size_t ii = 0; ii < poses.size(); ++ii) {
@@ -232,9 +239,12 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
 
       }
     }
-
+    write_time = sdtrack::Toc(write_time);
+    std::cerr << "Rejected " << num_outliers << " outliers." << "Threads: " <<
+                 summary.num_threads_used << " build: " << build_time <<
+                 " solve: " << solve_time << " write: " << write_time <<
+                 std::endl;
   }
-  std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
 }
 
 void UpdateCurrentPose()
