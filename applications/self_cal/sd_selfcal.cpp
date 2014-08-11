@@ -59,6 +59,7 @@ static double& ncc_threshold =
 
 
 uint32_t keyframe_tracks = UINT_MAX;
+double start_time = 0;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 // Self calibration params
@@ -417,6 +418,9 @@ void ProcessImage(std::vector<cv::Mat>& images)
                            _MM_MASK_DIV_ZERO));
 #endif
 
+  if (frame_count == 0) {
+    start_time = sdtrack::Tic();
+  }
   frame_count++;
 //  if (poses.size() > 100) {
 //    exit(EXIT_SUCCESS);
@@ -523,7 +527,7 @@ void ProcessImage(std::vector<cv::Mat>& images)
 #endif
 
   std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
-               std::endl;
+               " FPS: " << frame_count / sdtrack::Toc(start_time) << std::endl;
 }
 
 void DrawImageData()
