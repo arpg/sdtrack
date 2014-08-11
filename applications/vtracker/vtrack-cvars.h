@@ -32,3 +32,5 @@ static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
     CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
+static bool& do_bundle_adjustment =
+    CVarUtils::CreateCVar<>("sd.DoBundleAdjustment", true, "");

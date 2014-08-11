@@ -14,8 +14,8 @@
 typedef std::shared_ptr<sdtrack::DenseTrack> TrackPtr ;
 typedef std::vector<std::pair<Eigen::Vector2d, TrackPtr>> TrackCenterMap;
 
-struct TrackerHandler : pangolin::Handler3D
-{
+
+struct TrackerHandler : pangolin::Handler3D {
   TrackerHandler(pangolin::OpenGlRenderState& cam_state,
           uint32_t image_w, uint32_t image_h,
           pangolin::AxisDirection enforce_up=pangolin::AxisNone,
@@ -24,8 +24,7 @@ struct TrackerHandler : pangolin::Handler3D
   image_width(image_w), image_height(image_h){}
 
   void Mouse(pangolin::View& view, pangolin::MouseButton button, int x, int y,
-             bool pressed, int button_state)
-  {
+             bool pressed, int button_state) {
     bool handled = false;
     double x_val =
         image_width * (((double)x - (double)view.v.l) / (double)view.v.w);
@@ -66,9 +65,23 @@ struct TrackerHandler : pangolin::Handler3D
   std::shared_ptr<sdtrack::DenseTrack> selected_track;
 };
 
+struct TrackerGuiVars {
+  pangolin::OpenGlRenderState render_state;
+  TrackerHandler *handler;
+  int image_width;
+  int image_height;
+  SceneGraph::GLSceneGraph  scene_graph;
+  SceneGraph::GLGrid grid;
+  pangolin::View *grid_view;
+  std::vector<pangolin::View*> camera_view;
+  pangolin::View patch_view;
+  pangolin::OpenGlRenderState  gl_render3d;
+  std::unique_ptr<SceneGraph::HandlerSceneGraph> sg_handler_;
+};
+
+
 inline Eigen::Vector2d ImageToWindowCoords(int image_width, int image_height,
-                                           double x, double y)
-{
+                                           double x, double y) {
   Eigen::Vector2d p_win((((x / image_width) - 0.5)) * 2,
                         ((-(y / image_height) + 0.5)) * 2);
 
@@ -110,8 +123,7 @@ void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
                    std::vector<std::shared_ptr<sdtrack::TrackerPose>>& poses,
                    calibu::Rig<Scalar>& rig,
                    TrackerHandler *handler,
-                   int& selected_track_id)
-{
+                   int& selected_track_id) {
   glBegin(GL_POINTS);
   for (std::shared_ptr<sdtrack::TrackerPose> pose: poses) {
     for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
@@ -144,8 +156,7 @@ void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
 
 void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,
                    uint32_t image_width, uint32_t image_height,
-                   Eigen::Vector2d& center, bool is_selected, uint32_t cam_id)
-{
+                   Eigen::Vector2d& center, bool is_selected, uint32_t cam_id) {
   Eigen::Vector3d rgb;
   // const double error = std::min(1.0, track->rmse / 15.0) * 0.7 + 0.3;
   // hsv2rgb(Eigen::Vector3d(1.0 - error, 1.0, 1.0), rgb);
@@ -177,6 +188,7 @@ void DrawTrackData(std::shared_ptr<sdtrack::DenseTrack>& track,
   }
   glEnd();
 
+  glColor4d(rgb[0], rgb[1], rgb[2], cam_id == track->ref_cam_id ? 1.0 : 0.2);
   std::vector<Eigen::Vector2d> perimiter;
   track->transfer[cam_id].GetProjectedPerimiter(perimiter, center);
 
@@ -226,10 +238,70 @@ void CreatePatchGrid(
   }
 }
 
+void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
+                    uint32_t window_height, uint32_t handler_image_width,
+                    uint32_t handler_image_height,
+                    uint32_t num_cameras) {
+  vars.image_height = handler_image_height;
+  vars.image_width = handler_image_width;
+  pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
+
+  vars.render_state.SetModelViewMatrix( pangolin::IdentityMatrix() );
+  vars.render_state.SetProjectionMatrix(
+        pangolin::ProjectionMatrixOrthographic(0, window_width, 0,
+                                               window_height, 0, 1000));
+  vars.handler = new TrackerHandler(vars.render_state, vars.image_width,
+                                    vars.image_height);
+
+  glPixelStorei(GL_PACK_ALIGNMENT,1);
+  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glEnable( GL_BLEND );
+
+  vars.grid.SetNumLines(20);
+  vars.grid.SetLineSpacing(5.0);
+  vars.scene_graph.AddChild(&vars.grid);
+
+  // Add named OpenGL viewport to window and provide 3D Handler
+  vars.camera_view.resize(num_cameras);
+  for (int cam_id = 0; cam_id < num_cameras; ++cam_id) {
+    vars.camera_view[cam_id] = &pangolin::CreateDisplay()
+        .SetAspect(-(float)window_width/(float)window_height);
+  }
+  vars.grid_view = &pangolin::Display("grid")
+      .SetAspect(-(float)window_width/(float)window_height);
+
+  vars.gl_render3d.SetProjectionMatrix(
+        pangolin::ProjectionMatrix(640,480,420,420,320,240,0.01,5000));
+  vars.gl_render3d.SetModelViewMatrix(
+        pangolin::ModelViewLookAt(-3,-3,-4, 0,0,0, pangolin::AxisNegZ));
+  vars.sg_handler_.reset(
+        new SceneGraph::HandlerSceneGraph(vars.scene_graph, vars.gl_render3d,
+                                          pangolin::AxisNegZ, 50.0f));
+  vars.grid_view->SetHandler(vars.sg_handler_.get());
+  vars.grid_view->SetDrawFunction(SceneGraph::ActivateDrawFunctor(
+                                    vars.scene_graph, vars.gl_render3d));
+
+  //.SetBounds(0.0, 1.0, 0, 1.0, -(float)window_width/(float)window_height);
+
+  pangolin::Display("multi")
+      .SetBounds(1.0, 0.0, 0.0, 1.0)
+      .SetLayout(pangolin::LayoutEqual);
+
+  for (int cam_id = 0; cam_id < num_cameras; ++cam_id) {
+    pangolin::Display("multi").AddDisplay(*vars.camera_view[cam_id]);
+  }
+
+  pangolin::Display("multi").AddDisplay(*vars.grid_view);
+
+  SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
+  glClearColor(0.0,0.0,0.0,1.0);
+}
+
 bool LoadCameraAndRig(GetPot& cl,
              hal::Camera& camera_device,
-             calibu::CameraRigT<Scalar>& rig)
-{
+             calibu::CameraRigT<Scalar>& rig) {
   std::string cam_string = cl.follow("", "-cam");
   try {
     camera_device = hal::Camera(hal::Uri(cam_string));
