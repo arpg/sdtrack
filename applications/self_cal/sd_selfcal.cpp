@@ -613,8 +613,7 @@ void Run()
   }
 }
 
-void InitGui()
-{
+void InitGui() {
   pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
 
   render_state.SetModelViewMatrix( pangolin::IdentityMatrix() );
