@@ -116,9 +116,12 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     if (do_calibration) {
       for (int ii = 0; ii < rig.cameras_.size(); ++ii) {
         problem.AddParameterBlock(rig.t_wc_[ii].data(), 7, local_param);
-        std::cerr << "Params for cam " << ii <<
+        std::cerr << "Params for cam " << ii << " " <<
                      rig.cameras_[ii]->GetParams().transpose() << std::endl;
+        std::cerr << "t_wc for cam " << ii << " " << std::endl <<
+                     rig.t_wc_[ii].matrix() << std::endl;
       }
+
 
       // If we don't have an imu, set the first t_vc to static as it is
       // overparameterized.
