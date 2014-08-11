@@ -134,7 +134,9 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
       problem.AddParameterBlock(pose->t_wp.data(), 7, local_param);
-      if (ii < start_active_pose) {
+      // Deactivate the start pose if all poses are active. Otherwise make
+      // mark the inactive set as constant in Ceres.
+      if (ii < start_active_pose || (all_poses_active && ii == 0)) {
         problem.SetParameterBlockConstant(pose->t_wp.data());
       }
       //      pose->opt_id[id] = bundle_adjuster.AddPose(
