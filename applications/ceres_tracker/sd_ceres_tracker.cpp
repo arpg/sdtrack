@@ -199,24 +199,25 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
         }
         track->t_ba = t_ba;
 
-        ceres::Problem::EvaluateOptions ev_options;
-        ev_options.apply_loss_function = false;
-        // ev_options.parameter_blocks.push_back(&track->ref_keypoint.rho);
-        const std::vector<ceres::ResidualBlockId> residual_ids =
-            lm_residuals[track->id];
+        std::vector<double> residuals;
         uint32_t num_outliers = 0;
-        for (const ceres::ResidualBlockId& id : residual_ids) {
-          ev_options.residual_blocks.clear();
-          ev_options.residual_blocks.push_back(id);
-          double cost;
-          problem.Evaluate(ev_options, &cost, NULL, NULL, NULL);
+
+        ceres::Problem::EvaluateOptions ev_options;
+        ev_options.residual_blocks = lm_residuals[track->id];
+        ev_options.num_threads = num_ceres_threads;
+        ev_options.apply_loss_function = false;
+        problem.Evaluate(ev_options, NULL, &residuals, NULL, NULL);
+
+        for (int ii = 0; ii < residuals.size(); ii+=2) {
+          double cost = sqrt(residuals[ii] * residuals[ii] +
+                             residuals[ii + 1] * residuals[ii + 1]);
           if (cost > outlier_threshold) {
             num_outliers++;
           }
         }
 
         const double outlier_ratio =
-            (double)num_outliers / (double)residual_ids.size();
+            (double)num_outliers / (double)ev_options.residual_blocks.size();
 
         if (do_outlier_rejection) {
           if (outlier_ratio > 0.3 &&
