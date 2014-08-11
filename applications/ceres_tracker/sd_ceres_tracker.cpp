@@ -164,13 +164,14 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
         if (track->external_id[id] == UINT_MAX) {
           continue;
         }
-        for (uint32_t cam_id = 0; cam_id < /*rig.cameras_.size()*/ 1; ++cam_id) {
+        for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
           for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
             if (track->keypoints[jj][cam_id].tracked &&
-                !(jj == 0 && cam_id == 0)) {
+                !(jj == 0 && cam_id == track->ref_cam_id)) {
               lm_residuals[track->id].push_back(
                     AddProjectionResidualToCeres(
-                      problem, track, ii , jj, cam_id, poses, rig,
+                      problem, track, poses[ii]->t_wp, poses[ii + jj]->t_wp,
+                      track->keypoints[jj][cam_id].kp, cam_id,  rig,
                       do_calibration, &loss_function));
             }
           }
