@@ -28,6 +28,8 @@ static bool& use_robust_norm_for_proj =
     CVarUtils::CreateCVar<>("sd.UseRobustNormForProj", true, "");
 static int& num_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumBAIterations", 200, "");
+static int& num_ceres_threads =
+    CVarUtils::CreateCVar<>("sd.NumCeresThreads", 8, "");
 static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =

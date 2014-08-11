@@ -184,8 +184,12 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     double solve_time = sdtrack::Tic();
     ceres::Solver::Summary summary;
     ceres::Solver::Options options;
+    options.num_threads = num_ceres_threads;
+    options.num_linear_solver_threads = num_ceres_threads;
+    options.linear_solver_type = ceres::SPARSE_SCHUR;
     options.function_tolerance = 1e-3;
     options.trust_region_strategy_type = ceres::DOGLEG;
+    options.minimizer_progress_to_stdout = true;
     ceres::Solve(options, &problem, &summary);
     solve_time = sdtrack::Toc(solve_time);
 
@@ -343,11 +347,11 @@ void ProcessImage(std::vector<cv::Mat>& images)
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
-    if (do_calibration && rig.cameras_.size() > 1) {
-      tracker.Do2dTracking(tracker.GetCurrentTracks());
-    } else {
+//    if (do_calibration && rig.cameras_.size() > 1) {
+//      tracker.Do2dTracking(tracker.GetCurrentTracks());
+//    } else {
       tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
-    }
+//    }
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
