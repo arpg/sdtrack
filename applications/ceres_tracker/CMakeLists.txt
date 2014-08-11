@@ -4,6 +4,7 @@ find_package(sdtrack REQUIRED)
 find_package(ba REQUIRED)
 find_package(HAL REQUIRED)
 find_package(PbMsgs REQUIRED)
+find_package(Protobuf REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(SceneGraph REQUIRED)
 find_package(Ceres REQUIRED)
@@ -25,23 +26,24 @@ def_executable(sd_ceres_tracker
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
   ${PbMsgs_LIBRARIES}
+  ${PROTOBUF_LIBRARIES}
   ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
   ${CERES_LIBRARIES}
   )
 
-def_executable(sd_ceres_calib
-  SOURCES sd_ceres_calib.cpp
-  DEPENDS
-  sdtrack
-  LINK_LIBS
-  ${SDRACK_LIBRARIES}
-  ${BA_LIBRARIES}
-  ${HAL_LIBRARIES}
-  ${PbMsgs_LIBRARIES}
-  ${MINIGLOG_LIBRARIES}
-  ${SceneGraph_LIBRARIES}
-  ${Pangolin_LIBRARIES}
-  ${CERES_LIBRARIES}
-  )
+#def_executable(sd_ceres_calib
+#  SOURCES sd_ceres_calib.cpp
+#  DEPENDS
+#  sdtrack
+#  LINK_LIBS
+#  ${SDRACK_LIBRARIES}
+#  ${BA_LIBRARIES}
+#  ${HAL_LIBRARIES}
+#  ${PbMsgs_LIBRARIES}
+#  ${MINIGLOG_LIBRARIES}
+#  ${SceneGraph_LIBRARIES}
+#  ${Pangolin_LIBRARIES}
+#  ${CERES_LIBRARIES}
+#  )
