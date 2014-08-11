@@ -167,11 +167,11 @@ struct DifCamCalibratingInvDepthCost {
 template <typename CamType>
 ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
     ceres::Problem& problem,
-    std::shared_ptr<sdtrack::TrackerPose>& meas_pose,
-    std::shared_ptr<sdtrack::TrackerPose>& ref_pose,
+    Sophus::SE3d& ref_pose,
+    Sophus::SE3d& meas_pose,
     std::shared_ptr<sdtrack::DenseTrack>& track,
-    uint32_t meas_cam_id,
     uint32_t ref_cam_id,
+    uint32_t meas_cam_id,
     calibu::Rig<Scalar>& cam_rig,
     bool calibrating,
     const Eigen::Vector2d& z,
@@ -188,8 +188,8 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
             CamType::kParamSize, 1>(
               new CalibratingInvDepthCost<CamType>(z, z_ref)),
             loss_function,
-            ref_pose->t_wp.data(),
-            meas_pose->t_wp.data(),
+            ref_pose.data(),
+            meas_pose.data(),
             cam_rig.t_wc_[ref_cam_id].data(),
             cam_rig.cameras_[ref_cam_id]->GetParams().data(),
             &track->ref_keypoint.rho);
@@ -201,8 +201,8 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
             CamType::kParamSize, CamType::kParamSize, 1>(
               new DifCamCalibratingInvDepthCost<CamType>(z, z_ref)),
             loss_function,
-            ref_pose->t_wp.data(),
-            meas_pose->t_wp.data(),
+            ref_pose.data(),
+            meas_pose.data(),
             cam_rig.t_wc_[ref_cam_id].data(),
             cam_rig.t_wc_[meas_cam_id].data(),
             cam_rig.cameras_[ref_cam_id]->GetParams().data(),
@@ -221,8 +221,8 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
               z,
               cam_rig.cameras_[meas_cam_id]->GetParams())),
           loss_function,
-          ref_pose->t_wp.data(),
-          meas_pose->t_wp.data(),
+          ref_pose.data(),
+          meas_pose.data(),
           &track->ref_keypoint.rho);
   }
 
@@ -230,28 +230,28 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
 }
 
 ceres::ResidualBlockId AddProjectionResidualToCeres(
-    ceres::Problem& problem, std::shared_ptr<sdtrack::DenseTrack>& track,
-    uint32_t ref_pose_id, uint32_t kp_id, uint32_t cam_id,
-    std::vector<std::shared_ptr<sdtrack::TrackerPose>>& pose_vec,
-    calibu::Rig<Scalar>& cam_rig, bool calibrating,
+    ceres::Problem& problem,
+    std::shared_ptr<sdtrack::DenseTrack>& track,
+    Sophus::SE3d& ref_pose,
+    Sophus::SE3d& meas_pose,
+    const Eigen::Vector2d& z,
+    uint32_t cam_id,
+    calibu::Rig<Scalar>& cam_rig,
+    bool calibrating,
     ceres::LossFunctionWrapper* loss_function)
 {
-  const uint32_t ref_cam_id = 0;
-  const Eigen::Vector2d& z = track->keypoints[kp_id][cam_id].kp;
-  std::shared_ptr<sdtrack::TrackerPose>& meas_pose =
-      pose_vec[ref_pose_id + kp_id];
-  std::shared_ptr<sdtrack::TrackerPose>& ref_pose = pose_vec[ref_pose_id];
+  const uint32_t ref_cam_id = track->ref_cam_id;
   ceres::ResidualBlockId residual_id;
   if (dynamic_cast<calibu::FovCamera<double>*>(cam_rig.cameras_[cam_id])) {
     residual_id =
     AddProjectionResidualBlockToCeres<calibu::FovCamera<double>>(
-        problem, meas_pose, ref_pose, track, cam_id, ref_cam_id, cam_rig,
+        problem, ref_pose, meas_pose, track, ref_cam_id, cam_id, cam_rig,
         calibrating, z, loss_function);
   } else if (dynamic_cast<calibu::LinearCamera<double>*>(
                cam_rig.cameras_[cam_id])) {
     residual_id =
     AddProjectionResidualBlockToCeres<calibu::LinearCamera<double>>(
-        problem, meas_pose, ref_pose, track, cam_id, ref_cam_id, cam_rig,
+        problem, ref_pose, meas_pose, track, ref_cam_id, cam_id, cam_rig,
         calibrating, z, loss_function);
   } else {
     LOG(FATAL) << "Unsupported camera type.";
