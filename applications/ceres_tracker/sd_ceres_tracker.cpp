@@ -28,7 +28,6 @@
 #include <ba/LocalParamSe3.h>
 #include <sdtrack/semi_dense_tracker.h>
 
-
 uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
@@ -61,21 +60,19 @@ int last_optimization_level = 0;
 std::shared_ptr<pb::Image> camera_img;
 std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
-std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
+std::vector<std::unique_ptr<SceneGraph::GLAxis>> axes;
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
 
-ceres::LossFunctionWrapper loss_function(
-    new ceres::SoftLOneLoss(1), ceres::TAKE_OWNERSHIP);
+ceres::LossFunctionWrapper loss_function(new ceres::SoftLOneLoss(1),
+                                         ceres::TAKE_OWNERSHIP);
 
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
-
-void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
-{
+void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
   if (reset_outliers) {
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
-      for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
+      for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
         track->is_outlier = false;
       }
     }
@@ -107,12 +104,11 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     if (do_calibration) {
       for (int ii = 0; ii < rig.cameras_.size(); ++ii) {
         problem.AddParameterBlock(rig.t_wc_[ii].data(), 7, local_param);
-        std::cerr << "Params for cam " << ii << " " <<
-                     rig.cameras_[ii]->GetParams().transpose() << std::endl;
-        std::cerr << "t_wc for cam " << ii << " " << std::endl <<
-                     rig.t_wc_[ii].matrix() << std::endl;
+        std::cerr << "Params for cam " << ii << " "
+                  << rig.cameras_[ii]->GetParams().transpose() << std::endl;
+        std::cerr << "t_wc for cam " << ii << " " << std::endl
+                  << rig.t_wc_[ii].matrix() << std::endl;
       }
-
 
       // If we don't have an imu, set the first t_vc to static as it is
       // overparameterized.
@@ -122,7 +118,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     }
 
     // First add all the poses and landmarks to ba.
-    for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
+    for (uint32_t ii = start_pose; ii < poses.size(); ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
       problem.AddParameterBlock(pose->t_wp.data(), 7, local_param);
       // Deactivate the start pose if all poses are active. Otherwise make
@@ -132,7 +128,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
       }
       //      pose->opt_id[id] = bundle_adjuster.AddPose(
       //            pose->t_wp, ii >= start_active_pose );
-      for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
+      for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
         const bool constrains_active =
             track->keypoints.size() + ii > start_active_pose;
         if (track->num_good_tracked_frames == 1 || track->is_outlier ||
@@ -149,21 +145,20 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     std::map<uint32_t, std::vector<ceres::ResidualBlockId>> lm_residuals;
 
     // Now add all reprojections to ba)
-    for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
+    for (uint32_t ii = start_pose; ii < poses.size(); ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> ref_pose = poses[ii];
       for (std::shared_ptr<sdtrack::DenseTrack> track : ref_pose->tracks) {
         if (track->external_id[id] == UINT_MAX) {
           continue;
         }
         for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-          for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
+          for (size_t jj = 0; jj < track->keypoints.size(); ++jj) {
             if (track->keypoints[jj][cam_id].tracked &&
                 !(jj == 0 && cam_id == track->ref_cam_id)) {
-              lm_residuals[track->id].push_back(
-                    AddProjectionResidualToCeres(
-                      problem, track, poses[ii]->t_wp, poses[ii + jj]->t_wp,
-                      track->keypoints[jj][cam_id].kp, cam_id,  rig,
-                      do_calibration, &loss_function));
+              lm_residuals[track->id].push_back(AddProjectionResidualToCeres(
+                  problem, track, poses[ii]->t_wp, poses[ii + jj]->t_wp,
+                  track->keypoints[jj][cam_id].kp, cam_id, rig, do_calibration,
+                  &loss_function));
             }
           }
         }
@@ -195,13 +190,13 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
     }
 
     // Read out the pose and landmark values.
-    for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
+    for (uint32_t ii = start_pose; ii < poses.size(); ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
 
       // Here the last pose is actually t_wb and the current pose t_wa.
       last_t_ba = t_ba;
       t_ba = last_pose->t_wp.inverse() * pose->t_wp;
-      for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
+      for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
         if (track->external_id[id] == UINT_MAX) {
           continue;
         }
@@ -216,7 +211,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
         ev_options.apply_loss_function = false;
         problem.Evaluate(ev_options, NULL, &residuals, NULL, NULL);
 
-        for (int ii = 0; ii < residuals.size(); ii+=2) {
+        for (int ii = 0; ii < residuals.size(); ii += 2) {
           double cost = sqrt(residuals[ii] * residuals[ii] +
                              residuals[ii + 1] * residuals[ii + 1]);
           if (cost > outlier_threshold) {
@@ -237,19 +232,17 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id)
             track->is_outlier = false;
           }
         }
-
       }
     }
     write_time = sdtrack::Toc(write_time);
-    std::cerr << "Rejected " << num_outliers << " outliers." << "Threads: " <<
-                 summary.num_threads_used << " build: " << build_time <<
-                 " solve: " << solve_time << " write: " << write_time <<
-                 std::endl;
+    std::cerr << "Rejected " << num_outliers << " outliers."
+              << "Threads: " << summary.num_threads_used
+              << " build: " << build_time << " solve: " << solve_time
+              << " write: " << write_time << std::endl;
   }
 }
 
-void UpdateCurrentPose()
-{
+void UpdateCurrentPose() {
   std::shared_ptr<sdtrack::TrackerPose> new_pose = poses.back();
   if (poses.size() > 1) {
     new_pose->t_wp = poses[poses.size() - 2]->t_wp * tracker.t_ba().inverse();
@@ -263,12 +256,11 @@ void UpdateCurrentPose()
     max_track_length = std::max(track->keypoints.size(), max_track_length);
   }
   new_pose->longest_track = max_track_length;
-  std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
-               new_pose->longest_track << std::endl;
+  std::cerr << "Setting longest track for pose " << poses.size() << " to "
+            << new_pose->longest_track << std::endl;
 }
 
-void BaAndStartNewLandmarks()
-{
+void BaAndStartNewLandmarks() {
   if (!is_keyframe) {
     return;
   }
@@ -293,12 +285,11 @@ void BaAndStartNewLandmarks()
   }
 }
 
-void ProcessImage(std::vector<cv::Mat>& images)
-{
+void ProcessImage(std::vector<cv::Mat>& images) {
 #ifdef CHECK_NANS
-  _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
-                         ~(_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
-                           _MM_MASK_DIV_ZERO));
+  _MM_SET_EXCEPTION_MASK(
+      _MM_GET_EXCEPTION_MASK() &
+      ~(_MM_MASK_INVALID | _MM_MASK_OVERFLOW | _MM_MASK_DIV_ZERO));
 #endif
 
   frame_count++;
@@ -323,15 +314,14 @@ void ProcessImage(std::vector<cv::Mat>& images)
       new_pose->t_wp = poses.back()->t_wp * last_t_ba.inverse();
     }
     poses.push_back(new_pose);
-    axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
-                     new SceneGraph::GLAxis(0.05)));
+    axes.push_back(
+        std::unique_ptr<SceneGraph::GLAxis>(new SceneGraph::GLAxis(0.05)));
     gui_vars.scene_graph.AddChild(axes.back().get());
   }
 
   guess = prev_delta_t_ba * prev_t_ba;
-  if(guess.translation() == Eigen::Vector3d(0,0,0) &&
-     poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0,0,-0.01);
+  if (guess.translation() == Eigen::Vector3d(0, 0, 0) && poses.size() > 1) {
+    guess.translation() = Eigen::Vector3d(0, 0, -0.01);
   }
 
   tracker.AddImage(images, guess);
@@ -339,27 +329,27 @@ void ProcessImage(std::vector<cv::Mat>& images)
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
-//    if (do_calibration && rig.cameras_.size() > 1) {
-//      tracker.Do2dTracking(tracker.GetCurrentTracks());
-//    } else {
-      tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
-//    }
+    //    if (do_calibration && rig.cameras_.size() > 1) {
+    //      tracker.Do2dTracking(tracker.GetCurrentTracks());
+    //    } else {
+    tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
+    //    }
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
   UpdateCurrentPose();
 
   if (do_keyframing) {
-    const double track_ratio = (double)tracker.num_successful_tracks() /
-        (double)keyframe_tracks;
+    const double track_ratio =
+        (double)tracker.num_successful_tracks() / (double)keyframe_tracks;
     const double total_trans = tracker.t_ba().translation().norm();
     const double total_rot = tracker.t_ba().so3().log().norm();
 
-    bool keyframe_condition = track_ratio < 0.8 || total_trans > 0.2 ||
-        total_rot > 0.1;
+    bool keyframe_condition =
+        track_ratio < 0.8 || total_trans > 0.2 || total_rot > 0.1;
 
-    std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
-                 " rot: " << total_rot << std::endl;
+    std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans
+              << " rot: " << total_rot << std::endl;
 
     if (keyframe_tracks != 0) {
       if (keyframe_condition) {
@@ -380,8 +370,8 @@ void ProcessImage(std::vector<cv::Mat>& images)
     tracker.AddKeyframe();
   }
 
-  std::cerr << "Num successful : " << tracker.num_successful_tracks() <<
-               " keyframe tracks: " << keyframe_tracks << std::endl;
+  std::cerr << "Num successful : " << tracker.num_successful_tracks()
+            << " keyframe tracks: " << keyframe_tracks << std::endl;
 
   if (!is_manual_mode) {
     BaAndStartNewLandmarks();
@@ -398,22 +388,21 @@ void ProcessImage(std::vector<cv::Mat>& images)
   current_tracks = &tracker.GetCurrentTracks();
 
 #ifdef CHECK_NANS
-  _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() |
-                         (_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
-                          _MM_MASK_DIV_ZERO));
+  _MM_SET_EXCEPTION_MASK(
+      _MM_GET_EXCEPTION_MASK() |
+      (_MM_MASK_INVALID | _MM_MASK_OVERFLOW | _MM_MASK_DIV_ZERO));
 #endif
 
-  std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
-               std::endl;
+  std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size()
+            << std::endl;
 }
 
-void DrawImageData(uint32_t cam_id)
-{
+void DrawImageData(uint32_t cam_id) {
   if (cam_id == 0) {
     gui_vars.handler->track_centers.clear();
   }
 
-  for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
+  for (uint32_t ii = 0; ii < poses.size(); ++ii) {
     axes[ii]->SetPose(poses[ii]->t_wp.matrix());
   }
 
@@ -421,12 +410,12 @@ void DrawImageData(uint32_t cam_id)
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
     // if (track->keypoints.back()[cam_id].tracked) {
-      DrawTrackData(track, image_width, image_height, center,
-                    gui_vars.handler->selected_track == track, cam_id);
+    DrawTrackData(track, image_width, image_height, center,
+                  gui_vars.handler->selected_track == track, cam_id);
     //}
     if (cam_id == 0) {
       gui_vars.handler->track_centers.push_back(
-            std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
+          std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
               center, track));
     }
   }
@@ -441,25 +430,23 @@ void DrawImageData(uint32_t cam_id)
   }
 }
 
-bool LoadCameras()
-{
+bool LoadCameras() {
   LoadCameraAndRig(*cl, camera_device, old_rig);
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
-   // rig.cameras_.resize(1);
-   // rig.t_wc_.resize(1);
+  // rig.cameras_.resize(1);
+  // rig.t_wc_.resize(1);
   return true;
 }
 
-void Run()
-{
+void Run() {
   std::vector<pangolin::GlTexture> gl_tex;
 
   // pangolin::Timer timer;
   bool capture_success = false;
   std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
   camera_device.Capture(*images);
-  while(!pangolin::ShouldQuit()) {
+  while (!pangolin::ShouldQuit()) {
     capture_success = false;
     const bool go = is_stepping;
     if (!is_running) {
@@ -468,7 +455,7 @@ void Run()
     // usleep(20000);
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glColor4f(1.0f,1.0f,1.0f,1.0f);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
     if (go) {
       capture_success = camera_device.Capture(*images);
@@ -477,15 +464,15 @@ void Run()
     if (capture_success) {
       gl_tex.resize(images->Size());
 
-      for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
+      for (uint32_t cam_id = 0; cam_id < images->Size(); ++cam_id) {
         if (!gl_tex[cam_id].tid) {
           camera_img = images->at(cam_id);
-          GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
-                                     GL_LUMINANCE : GL_RGBA);
+          GLint internal_format =
+              (camera_img->Format() == GL_LUMINANCE ? GL_LUMINANCE : GL_RGBA);
           // Only initialise now we know format.
           gl_tex[cam_id].Reinitialise(
-                camera_img->Width(), camera_img->Height(), internal_format,
-                false, 0, camera_img->Format(), camera_img->Type(), 0);
+              camera_img->Width(), camera_img->Height(), internal_format, false,
+              0, camera_img->Format(), camera_img->Type(), 0);
         }
       }
 
@@ -496,15 +483,15 @@ void Run()
       gui_vars.handler->image_width = image_width;
 
       std::vector<cv::Mat> cvmat_images;
-      for (int ii = 0; ii < images->Size() ; ++ii) {
+      for (int ii = 0; ii < images->Size(); ++ii) {
         cvmat_images.push_back(images->at(ii)->Mat());
       }
       ProcessImage(cvmat_images);
     }
 
     if (camera_img && camera_img->data()) {
-      for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
-           cam_id < images->Size(); ++cam_id) {
+      for (uint32_t cam_id = 0;
+           cam_id < rig.cameras_.size() && cam_id < images->Size(); ++cam_id) {
         camera_img = images->at(cam_id);
         gui_vars.camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
@@ -524,8 +511,7 @@ void Run()
   }
 }
 
-void InitTracker()
-{
+void InitTracker() {
   patch_size = 9;
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = patch_size;
@@ -539,7 +525,7 @@ void InitTracker()
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
   tracker_options.patch_dim = patch_size;
-  tracker_options.default_rho = 1.0/5.0;
+  tracker_options.default_rho = 1.0 / 5.0;
   tracker_options.feature_cells = feature_cells;
   tracker_options.iteration_exponent = 2;
   tracker_options.center_weight = tracker_center_weight;
@@ -549,24 +535,20 @@ void InitTracker()
   tracker.Initialize(keypoint_options, tracker_options, &rig);
 }
 
-void InitGui()
-{
+void InitGui() {
   InitTrackerGui(gui_vars, window_width, window_height, image_width,
                  image_height, rig.cameras_.size());
 
   //  std::cerr << "Viewport: " << gui_vars.camera_view->v.l << " " <<
-  //               gui_vars.camera_view->v.r() << " " << gui_vars.camera_view->v.b << " " <<
+  //               gui_vars.camera_view->v.r() << " " <<
+  // gui_vars.camera_view->v.b << " " <<
   //               gui_vars.camera_view->v.t() << std::endl;
 
   pangolin::RegisterKeyPressCallback(
-        pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
-        [&]() {
-    is_stepping = true;
-  });
+      pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
+      [&]() { is_stepping = true; });
 
-  pangolin::RegisterKeyPressCallback(
-        pangolin::PANGO_CTRL + 'r',
-        [&]() {
+  pangolin::RegisterKeyPressCallback(pangolin::PANGO_CTRL + 'r', [&]() {
     camera_img.reset();
     is_keyframe = true;
     is_prev_keyframe = true;
@@ -582,25 +564,21 @@ void InitGui()
     last_t_ba = Sophus::SE3d();
   });
 
-  pangolin::RegisterKeyPressCallback(
-        pangolin::PANGO_CTRL + 's',
-        [&]() {
+  pangolin::RegisterKeyPressCallback(pangolin::PANGO_CTRL + 's', [&]() {
     // write all the poses to a file.
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
     for (auto pose : poses) {
       pose_file << pose->t_wp.translation().transpose().format(
-                     sdtrack::kLongCsvFmt) << std::endl;
+                       sdtrack::kLongCsvFmt) << std::endl;
     }
   });
 
-  pangolin::RegisterKeyPressCallback(' ', [&]() {
-    is_running = !is_running;
-  });
+  pangolin::RegisterKeyPressCallback(' ', [&]() { is_running = !is_running; });
 
   pangolin::RegisterKeyPressCallback('b', [&]() {
     // last_optimization_level = 0;
-    tracker.OptimizeTracks(last_optimization_level,
-                           optimize_landmarks, optimize_pose);
+    tracker.OptimizeTracks(last_optimization_level, optimize_landmarks,
+                           optimize_pose);
     UpdateCurrentPose();
   });
 
@@ -614,21 +592,17 @@ void InitGui()
     std::cerr << "Do SNL:" << do_start_new_landmarks << std::endl;
   });
 
-  pangolin::RegisterKeyPressCallback('2', [&]() {
-    last_optimization_level = 2;
-  });
+  pangolin::RegisterKeyPressCallback('2',
+                                     [&]() { last_optimization_level = 2; });
 
-  pangolin::RegisterKeyPressCallback('3', [&]() {
-    last_optimization_level = 3;
-  });
+  pangolin::RegisterKeyPressCallback('3',
+                                     [&]() { last_optimization_level = 3; });
 
-  pangolin::RegisterKeyPressCallback('1', [&]() {
-    last_optimization_level = 1;
-  });
+  pangolin::RegisterKeyPressCallback('1',
+                                     [&]() { last_optimization_level = 1; });
 
-  pangolin::RegisterKeyPressCallback('0', [&]() {
-    last_optimization_level = 0;
-  });
+  pangolin::RegisterKeyPressCallback('0',
+                                     [&]() { last_optimization_level = 0; });
 
   pangolin::RegisterKeyPressCallback('9', [&]() {
     last_optimization_level = 0;
@@ -659,8 +633,7 @@ void InitGui()
   });
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(),
+    tracker.Do2dAlignment(tracker.GetImagePyramid(), tracker.GetCurrentTracks(),
                           last_optimization_level, false);
   });
 }
