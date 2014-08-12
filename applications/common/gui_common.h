@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <SceneGraph/GLDynamicGrid.h>
 #include <SceneGraph/SceneGraph.h>
 #include <HAL/Camera/CameraDevice.h>
 #include <calibu/cam/camera_crtp.h>
@@ -71,7 +72,7 @@ struct TrackerGuiVars {
   int image_width;
   int image_height;
   SceneGraph::GLSceneGraph  scene_graph;
-  SceneGraph::GLGrid grid;
+  SceneGraph::GLDynamicGrid grid;
   pangolin::View *grid_view;
   std::vector<pangolin::View*> camera_view;
   pangolin::View patch_view;
@@ -259,8 +260,8 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glEnable( GL_BLEND );
 
-  vars.grid.SetNumLines(20);
-  vars.grid.SetLineSpacing(5.0);
+  // vars.grid.SetNumLines(20);
+  // vars.grid.SetLineSpacing(5.0);
   vars.scene_graph.AddChild(&vars.grid);
 
   // Add named OpenGL viewport to window and provide 3D Handler

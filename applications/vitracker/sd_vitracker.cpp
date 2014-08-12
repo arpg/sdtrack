@@ -12,7 +12,6 @@
 #include <PbMsgs/Matrix.h>
 #include <unistd.h>
 #include <SceneGraph/SceneGraph.h>
-#include <SceneGraph/GLDynamicGrid.h>
 #include <pangolin/pangolin.h>
 #include <ba/BundleAdjuster.h>
 #include <ba/InterpolationBuffer.h>
@@ -60,15 +59,10 @@ calibu::CameraRigT<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 hal::IMU imu_device;
-sdtrack::SemiDenseTracker tracker;
-std::shared_ptr<GetPot> cl;
 
-pangolin::View* camera_view, *grid_view;
-pangolin::View patch_view;
-pangolin::OpenGlRenderState  gl_render3d;
-std::unique_ptr<SceneGraph::HandlerSceneGraph> sg_handler_;
-SceneGraph::GLSceneGraph  scene_graph;
-SceneGraph::GLDynamicGrid grid;
+sdtrack::SemiDenseTracker tracker;
+TrackerGuiVars gui_vars;
+std::shared_ptr<GetPot> cl;
 
 std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
@@ -88,9 +82,6 @@ int orig_num_aac_poses = num_aac_poses;
 double prev_cond_error;
 int imu_cond_start_pose_id = -1;
 int imu_cond_residual_id = -1;
-
-TrackerHandler *handler;
-pangolin::OpenGlRenderState render_state;
 
 // Plotters.
 std::vector<pangolin::DataLog> plot_logs;
@@ -620,7 +611,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
     axes_.push_back(std::unique_ptr<SceneGraph::GLAxis>(
                       new SceneGraph::GLAxis(0.5)));
-    scene_graph.AddChild(axes_.back().get());
+    gui_vars.scene_graph.AddChild(axes_.back().get());
   }
 
   // Set the timestamp of the latest pose to this image's timestamp.
@@ -746,35 +737,43 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                std::endl;
 }
 
-void DrawImageData()
+void DrawImageData(uint32_t cam_id)
 {
-  handler->track_centers.clear();
+  if (cam_id == 0) {
+    gui_vars.handler->track_centers.clear();
+  }
 
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
     axes_[ii]->SetPose(poses[ii]->t_wp.matrix());
-    aabb.Insert(poses[ii]->t_wp.translation());
   }
-  grid.set_bounds(aabb);
 
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
-    DrawTrackData(track, image_width, image_height,  center,
-                  handler->selected_track == track, 0);
-    handler->track_centers.push_back(
-          std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
-            center, track));
+    if (track->keypoints.back()[cam_id].tracked) {
+      DrawTrackData(track, image_width, image_height, center,
+                    gui_vars.handler->selected_track == track, cam_id);
+    }
+    if (cam_id == 0) {
+      gui_vars.handler->track_centers.push_back(
+            std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
+              center, track));
+    }
   }
 
   // Populate the first column with the reference from the selected track.
-  if (handler->selected_track != nullptr) {
-    DrawTrackPatches(handler->selected_track, patches);
+  if (gui_vars.handler->selected_track != nullptr) {
+    DrawTrackPatches(gui_vars.handler->selected_track, patches);
+  }
+
+  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    gui_vars.camera_view[cam_id]->RenderChildren();
   }
 }
 
 void Run()
 {
-  pangolin::GlTexture gl_tex;
+  std::vector<pangolin::GlTexture> gl_tex;
 
   // pangolin::Timer timer;
   bool capture_success = false;
@@ -796,19 +795,25 @@ void Run()
     }
 
     if (capture_success) {
+      gl_tex.resize(images->Size());
+
+      for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
+        if (!gl_tex[cam_id].tid) {
+          camera_img = images->at(cam_id);
+          GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
+                                     GL_LUMINANCE : GL_RGBA);
+          // Only initialise now we know format.
+          gl_tex[cam_id].Reinitialise(
+                camera_img->Width(), camera_img->Height(), internal_format,
+                false, 0, camera_img->Format(), camera_img->Type(), 0);
+        }
+      }
+
       camera_img = images->at(0);
       image_width = camera_img->Width();
       image_height = camera_img->Height();
-      handler->image_height = image_height;
-      handler->image_width = image_width;
-      if (!gl_tex.tid) {
-        GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
-                                   GL_LUMINANCE : GL_RGBA);
-        // Only initialise now we know format.
-        gl_tex.Reinitialise(camera_img->Width() , camera_img->Height(),
-                            internal_format, false, 0,
-                            camera_img->Format(), camera_img->Type(), 0);
-      }
+      gui_vars.handler->image_height = image_height;
+      gui_vars.handler->image_width = image_width;
 
       std::vector<cv::Mat> cvmat_images;
       for (int ii = 0; ii < images->Size() ; ++ii) {
@@ -816,15 +821,20 @@ void Run()
       }
       ProcessImage(cvmat_images, images->Timestamp());
     }
-    if (camera_img && camera_img->data()) {
-      camera_view->ActivateAndScissor();
-      gl_tex.Upload(camera_img->data(), camera_img->Format(),
-                    camera_img->Type());
-      gl_tex.RenderToViewportFlipY();
-      DrawImageData();
-      // camera_view->RenderChildren();
 
-      grid_view->ActivateAndScissor(gl_render3d);
+    if (camera_img && camera_img->data()) {
+      for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
+           cam_id < images->Size(); ++cam_id) {
+        camera_img = images->at(cam_id);
+        gui_vars.camera_view[cam_id]->ActivateAndScissor();
+        gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
+                      camera_img->Type());
+        gl_tex[cam_id].RenderToViewportFlipY();
+        DrawImageData(cam_id);
+      }
+      // gui_vars.camera_view->RenderChildren();
+
+      gui_vars.grid_view->ActivateAndScissor(gui_vars.gl_render3d);
       const ba::ImuCalibrationT<Scalar>& imu =
           vi_bundle_adjuster.GetImuCalibration();
       std::vector<ba::ImuPoseT<Scalar>> imu_poses;
@@ -863,44 +873,11 @@ void Run()
         }
       }
 
-
-      /*for (uint32_t id : aac_imu_residual_ids) {
-        const ba::ImuResidualT<Scalar>& res =
-            aac_bundle_adjuster.GetImuResidual(id);
-        const ba::PoseT<Scalar>& pose =
-            aac_bundle_adjuster.GetPose(res.pose1_id);
-        std::vector<ba::ImuMeasurementT<Scalar> > meas =
-            imu_buffer.GetRange(res.measurements.front().time,
-                                res.measurements.back().time +
-                                imu_extra_integration_time);
-        res.IntegrateResidual(pose, meas, pose.b.head<3>(), pose.b.tail<3>(),
-                              imu.g_vec, imu_poses);
-        // std::cerr << "integrating residual with " << res.measurements.size() <<
-        //              " measurements " << std::endl;
-        if (pose.is_active) {
-          glColor3f(0.0, 1.0, 1.0);
-        } else {
-          glColor3f(0.5, 0.2, 1.0);
-        }
-
-        for (size_t ii = 1 ; ii < imu_poses.size() ; ++ii) {
-          ba::ImuPoseT<Scalar>& prev_imu_pose = imu_poses[ii - 1];
-          ba::ImuPoseT<Scalar>& imu_pose = imu_poses[ii];
-          pangolin::glDrawLine(prev_imu_pose.t_wp.translation()[0],
-              prev_imu_pose.t_wp.translation()[1],
-              prev_imu_pose.t_wp.translation()[2],
-              imu_pose.t_wp.translation()[0],
-              imu_pose.t_wp.translation()[1],
-              imu_pose.t_wp.translation()[2]);
-        }
-      }*/
-
-
       if (draw_landmarks) {
-        DrawLandmarks(min_lm_measurements_for_drawing, poses, rig, handler,
-                      selected_track_id);
+        DrawLandmarks(min_lm_measurements_for_drawing, poses, rig,
+                      gui_vars.handler, selected_track_id);
       }
-      // grid_view->RenderChildren();
+      // gui_vars.grid_view->RenderChildren();
     }
     pangolin::FinishFrame();
   }
@@ -959,52 +936,8 @@ bool LoadCameras()
 
 void InitGui()
 {
-  pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
-
-  render_state.SetModelViewMatrix( pangolin::IdentityMatrix() );
-  render_state.SetProjectionMatrix(
-        pangolin::ProjectionMatrixOrthographic(0, window_width, 0,
-                                               window_height, 0, 1000));
-  handler = new TrackerHandler(render_state, image_width, image_height);
-
-  glPixelStorei(GL_PACK_ALIGNMENT,1);
-  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
-
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glEnable( GL_BLEND );
-
-  scene_graph.AddChild(&grid);
-
-  // Add named OpenGL viewport to window and provide 3D Handler
-  camera_view = &pangolin::Display("image")
-      .SetAspect(-(float)window_width/(float)window_height);
-  grid_view = &pangolin::Display("grid")
-      .SetAspect(-(float)window_width/(float)window_height);
-
-  gl_render3d.SetProjectionMatrix(
-        pangolin::ProjectionMatrix(640,480,420,420,320,240,0.01,5000));
-  gl_render3d.SetModelViewMatrix(
-        pangolin::ModelViewLookAt(-3,-3,-4, 0,0,0, pangolin::AxisNegZ));
-  sg_handler_.reset(new SceneGraph::HandlerSceneGraph(
-                      scene_graph, gl_render3d, pangolin::AxisNegZ, 50.0f));
-  grid_view->SetHandler(sg_handler_.get());
-  grid_view->SetDrawFunction(SceneGraph::ActivateDrawFunctor(
-                               scene_graph, gl_render3d));
-
-  //.SetBounds(0.0, 1.0, 0, 1.0, -(float)window_width/(float)window_height);
-
-  pangolin::Display("multi")
-      .SetBounds(1.0, 0.0, 0.0, 1.0)
-      .SetLayout(pangolin::LayoutEqual)
-      .AddDisplay(*camera_view)
-      .AddDisplay(*grid_view);
-
-  SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
-  glClearColor(0.0,0.0,0.0,1.0);
-
-  std::cerr << "Viewport: " << camera_view->v.l << " " <<
-               camera_view->v.r() << " " << camera_view->v.b << " " <<
-               camera_view->v.t() << std::endl;
+  InitTrackerGui(gui_vars, window_width, window_height, image_width,
+                 image_height, rig.cameras_.size());
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
@@ -1024,8 +957,8 @@ void InitGui()
     ba_imu_residual_ids.clear();
     aac_imu_residual_ids.clear();
     imu_buffer.Clear();
-    scene_graph.Clear();
-    scene_graph.AddChild(&grid);
+    gui_vars.scene_graph.Clear();
+    gui_vars.scene_graph.AddChild(&gui_vars.grid);
     axes_.clear();
     LoadCameras();
   });
@@ -1150,11 +1083,11 @@ void InitGui()
   });
 
   // Create the patch grid.
-  camera_view->AddDisplay(patch_view);
-  camera_view->SetHandler(handler);
-  patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
+  gui_vars.camera_view[0]->AddDisplay(gui_vars.patch_view);
+  gui_vars.camera_view[0]->SetHandler(gui_vars.handler);
+  gui_vars.patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
 
-  CreatePatchGrid(3, 3,  patches, patch_view);
+  CreatePatchGrid(3, 3,  patches, gui_vars.patch_view);
 
   // Initialize the plotters.
   plot_views.resize(3);
