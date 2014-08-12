@@ -46,6 +46,7 @@ set(PROJ_LIBRARIES
   ${Calibu_LIBRARY}
   ${OpenCV2_LIBRARIES}
   ${CVARS_LIBRARY}
+  ${MINIGLOG_LIBRARIES}
   )
 
 include_directories(${PROJ_INCLUDE_DIRS})
