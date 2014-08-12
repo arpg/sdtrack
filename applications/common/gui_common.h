@@ -11,6 +11,7 @@
 #include <sdtrack/keypoint.h>
 #include <sdtrack/track.h>
 #include <sdtrack/semi_dense_tracker.h>
+#include "etc_common.h"
 
 typedef std::shared_ptr<sdtrack::DenseTrack> TrackPtr ;
 typedef std::vector<std::pair<Eigen::Vector2d, TrackPtr>> TrackCenterMap;
