@@ -48,9 +48,9 @@ struct TrackerHandler : pangolin::Handler3D {
         std::cerr << "selected kp " << selected_track->id <<
                      "with response: " << kp.response << " response2 " <<
                      kp.response2 << " rmse " <<
-                     selected_track->transfer[0].rmse << " ncc: " << ncc << " track ncc " <<
-                     selected_track->transfer[0].ncc << " rho " <<
-                     selected_track->ref_keypoint.rho << std::endl;
+                     selected_track->transfer[0].rmse << " ncc: " << ncc <<
+                     " track ncc " << selected_track->transfer[0].ncc <<
+                     " rho " << selected_track->ref_keypoint.rho << std::endl;
         break;
       }
     }
@@ -78,6 +78,7 @@ struct TrackerGuiVars {
   pangolin::View patch_view;
   pangolin::OpenGlRenderState  gl_render3d;
   std::unique_ptr<SceneGraph::HandlerSceneGraph> sg_handler_;
+  std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 };
 
 
@@ -96,7 +97,8 @@ void DrawTrackPatches(
 //  for (uint32_t ii = 0; ii < kp.patch_pyramid.size() &&
 //       ii <= 0 ; ++ii) {
     int ii = 0;
-    const sdtrack::Patch& ref_patch = kp.patch_pyramid[track->transfer[0].level];
+    const sdtrack::Patch& ref_patch =
+        kp.patch_pyramid[track->transfer[0].level];
     std::vector<unsigned char> disp_values;
     std::vector<unsigned char> disp_proj_values;
     std::vector<unsigned char> res_values;
@@ -298,6 +300,13 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
 
   SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
   glClearColor(0.0,0.0,0.0,1.0);
+
+  // Create the patch grid.
+  vars.camera_view[0]->AddDisplay(vars.patch_view);
+  vars.camera_view[0]->SetHandler(vars.handler);
+  vars.patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
+
+  CreatePatchGrid(3, 3,  vars.patches, vars.patch_view);
 }
 
 bool LoadCameraAndRig(GetPot& cl,

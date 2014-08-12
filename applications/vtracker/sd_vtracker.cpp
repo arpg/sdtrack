@@ -56,7 +56,6 @@ std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
 // std::shared_ptr<sdtrack::DenseTrack> selected_track = nullptr;
 std::shared_ptr<pb::Image> camera_img;
-std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
@@ -396,7 +395,7 @@ void DrawImageData(uint32_t cam_id)
 
   // Populate the first column with the reference from the selected track.
   if (gui_vars.handler->selected_track != nullptr) {
-    DrawTrackPatches(gui_vars.handler->selected_track, patches);
+    DrawTrackPatches(gui_vars.handler->selected_track, gui_vars.patches);
   }
 
   for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
@@ -633,13 +632,6 @@ void InitGui()
                           tracker.GetCurrentTracks(),
                           last_optimization_level, true);
   });
-
-  // Create the patch grid.
-  gui_vars.camera_view[0]->AddDisplay(gui_vars.patch_view);
-  gui_vars.camera_view[0]->SetHandler(gui_vars.handler);
-  gui_vars.patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
-
-  CreatePatchGrid(3, 3,  patches, gui_vars.patch_view);
 }
 
 int main(int argc, char** argv) {

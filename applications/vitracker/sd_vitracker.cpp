@@ -69,7 +69,7 @@ int last_optimization_level = 0;
 std::shared_ptr<pb::Image> camera_img;
 std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
-std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes_;
+std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
 SceneGraph::AxisAlignedBoundingBox aabb;
 
 // Inertial stuff.
@@ -609,9 +609,9 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       std::unique_lock<std::mutex>(aac_mutex);
       poses.push_back(new_pose);
     }
-    axes_.push_back(std::unique_ptr<SceneGraph::GLAxis>(
+    axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
                       new SceneGraph::GLAxis(0.5)));
-    gui_vars.scene_graph.AddChild(axes_.back().get());
+    gui_vars.scene_graph.AddChild(axes.back().get());
   }
 
   // Set the timestamp of the latest pose to this image's timestamp.
@@ -744,7 +744,7 @@ void DrawImageData(uint32_t cam_id)
   }
 
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
-    axes_[ii]->SetPose(poses[ii]->t_wp.matrix());
+    axes[ii]->SetPose(poses[ii]->t_wp.matrix());
   }
 
   // Draw the tracks
@@ -763,7 +763,7 @@ void DrawImageData(uint32_t cam_id)
 
   // Populate the first column with the reference from the selected track.
   if (gui_vars.handler->selected_track != nullptr) {
-    DrawTrackPatches(gui_vars.handler->selected_track, patches);
+    DrawTrackPatches(gui_vars.handler->selected_track, gui_vars.patches);
   }
 
   for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
@@ -959,7 +959,7 @@ void InitGui()
     imu_buffer.Clear();
     gui_vars.scene_graph.Clear();
     gui_vars.scene_graph.AddChild(&gui_vars.grid);
-    axes_.clear();
+    axes.clear();
     LoadCameras();
   });
 
@@ -1081,13 +1081,6 @@ void InitGui()
     is_manual_mode = !is_manual_mode;
     std::cerr << "Manual mode:" << is_manual_mode << std::endl;
   });
-
-  // Create the patch grid.
-  gui_vars.camera_view[0]->AddDisplay(gui_vars.patch_view);
-  gui_vars.camera_view[0]->SetHandler(gui_vars.handler);
-  gui_vars.patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
-
-  CreatePatchGrid(3, 3,  patches, gui_vars.patch_view);
 
   // Initialize the plotters.
   plot_views.resize(3);
