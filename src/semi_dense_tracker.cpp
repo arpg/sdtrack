@@ -1259,31 +1259,6 @@ void SemiDenseTracker::OptimizePyramidLevel(
       mean_di_dx /= transfer.valid_rays.size();
       stats.jacobian_time += Toc(jacobian_time);
 
-      // Test the jacobians calculated for this patch.
-      // std::vector<double> di_dray_fd(ref_patch.projected_values);
-      // if (options.optimize_landmarks) {
-      //   double eps = 1e-9;
-      //   double rho_backup = track->ref_keypoint.rho;
-
-      //   track->ref_keypoint.rho = rho_backup + eps;
-      //   PatchTransfer plus_transfer;
-      //   TransferPatch(track, level, track_t_ba, camera_rig_->cameras_[0],
-      //       plus_transfer, false, false);
-      //   di_dray_fd = ref_patch.projected_values;
-
-      //   track->ref_keypoint.rho = rho_backup - eps;
-      //   PatchTransfer minus_transfer;
-      //   TransferPatch(track, level, track_t_ba, camera_rig_->cameras_[0],
-      //       minus_transfer, false, false);
-      //   // Now calculate the jacobian
-      //   for (size_t kk = 0; kk < di_dray_fd.size() ; ++kk) {
-      //     di_dray_fd[kk] = ((di_dray_fd[kk] - plus_transfer.mean_value) -
-      //         (ref_patch.projected_values[kk] - minus_transfer.mean_value)) /
-      //         (2 * eps);
-      //   }
-      // }
-
-
       schur_time = Tic();
       for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
         if (options.optimize_landmarks) {
