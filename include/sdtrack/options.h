@@ -43,6 +43,16 @@ namespace sdtrack
 
   struct OptimizationOptions
   {
+    bool optimize_landmarks = true;
+    bool optimize_pose = true;
+    bool trust_guess = false;
+    /// Whether to align tracks started in all cameras, or just a particular
+    /// camera. Specifying -1 will align tracks started in any camera.
+    int only_optimize_camera_id = -1;
+  };
+
+  struct PyramidLevelOptimizationOptions
+  {
     bool transfer_patches = true;
     bool optimize_landmarks = true;
     bool optimize_pose = true;

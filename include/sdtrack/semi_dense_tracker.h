@@ -38,6 +38,9 @@ public:
 
   void TransformTrackTabs(const Sophus::SE3t& t_cb);
 
+  void OptimizeTracks(const OptimizationOptions& options, uint32_t level = -1);
+  /// This is legacy to ensure backwards compatibility. Remove when all
+  /// libraries update to the new version
   void OptimizeTracks(uint32_t level = -1, bool optimize_landmarks = true,
                       bool optimize_pose = true, bool trust_guess = false);
 
@@ -47,7 +50,7 @@ public:
     uint32_t level,
     const std::vector<std::vector<cv::Mat>>& image_pyrmaid,
     std::list<std::shared_ptr<DenseTrack>>& tracks,
-    const OptimizationOptions& options,
+    const PyramidLevelOptimizationOptions& options,
     OptimizationStats& stats);
 
   void AddImage(const std::vector<cv::Mat>& images,

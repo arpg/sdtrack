@@ -527,10 +527,21 @@ void SemiDenseTracker::TransformTrackTabs(const Sophus::SE3d& t_cb) {
 }
 
 void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
-                                      bool optimize_pose, bool trust_guess) {
+                                      bool optimize_pose, bool trust_guess)
+{
+  OptimizationOptions options;
+  options.optimize_landmarks = optimize_landmarks;
+  options.optimize_pose = optimize_pose;
+  options.trust_guess = trust_guess;
+  OptimizeTracks(options, level);
+}
+
+
+void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
+                                      uint32_t level) {
   const double time = Tic();
   OptimizationStats stats;
-  OptimizationOptions options;
+  PyramidLevelOptimizationOptions level_options;
   bool roll_back = false;
   Sophus::SE3d t_ba_old_;
   int last_level = level;
@@ -540,25 +551,25 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
     for (int ii = tracker_options_.pyramid_levels - 1 ; ii >= 0 ; ii--) {
       last_level = ii;
 
-      if (trust_guess) {
-        options.optimize_landmarks = true;
-        options.optimize_pose = false;
+      if (options.trust_guess) {
+        level_options.optimize_landmarks = true;
+        level_options.optimize_pose = false;
       } else {
         if (average_track_length_ > 5) {
           if (optimized_pose == false) {
-            options.optimize_landmarks = false;
-            options.optimize_pose = true;
+            level_options.optimize_landmarks = false;
+            level_options.optimize_pose = true;
             if (last_level < 3) {
               ii = tracker_options_.pyramid_levels;
               optimized_pose = true;
             }
           } else {
-            options.optimize_landmarks = true;
-            options.optimize_pose = !options.optimize_landmarks;
+            level_options.optimize_landmarks = true;
+            level_options.optimize_pose = !level_options.optimize_landmarks;
           }
         } else {
-          options.optimize_landmarks = true;
-          options.optimize_pose = true;
+          level_options.optimize_landmarks = true;
+          level_options.optimize_pose = true;
         }
       }
 
@@ -568,7 +579,7 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
       do {
         t_ba_old_ = t_ba_;
         OptimizePyramidLevel(last_level, image_pyramid_, current_tracks_,
-                             options, stats);
+                             level_options, stats);
 
         double post_error = EvaluateTrackResiduals(
             last_level, image_pyramid_, current_tracks_, false, true);
@@ -594,11 +605,11 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
     }
   } else {
     // The user has specified the pyramid level they want optimized.
-    options.optimize_landmarks = optimize_landmarks;
-    options.optimize_pose = optimize_pose;
+    level_options.optimize_landmarks = options.optimize_landmarks;
+    level_options.optimize_pose = options.optimize_pose;
     t_ba_old_ = t_ba_;
     OptimizePyramidLevel(level, image_pyramid_, current_tracks_,
-                         options, stats);
+                         level_options, stats);
     ///zzzzzz evaluate residuals at all levels so we can see
     for (uint32_t ii = 0 ; ii < tracker_options_.pyramid_levels ; ++ii)  {
       if (ii != level) {
@@ -648,7 +659,7 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
   // Print pre-post errors
   LOG(g_sdtrack_debug) << "Level " << level << " solve took " << Toc(time) << "s" <<
       " with delta_p_norm: " << stats.delta_pose_norm << " and delta "
-      "lm norm: " << stats.delta_lm_norm << std::endl;
+                          "lm norm: " << stats.delta_lm_norm << std::endl;
 }
 
 void SemiDenseTracker::PruneTracks() {
@@ -1055,7 +1066,7 @@ void SemiDenseTracker::OptimizePyramidLevel(
     uint32_t level,
     const std::vector<std::vector<cv::Mat>>& image_pyrmaid,
     std::list<std::shared_ptr<DenseTrack>>& tracks,
-    const OptimizationOptions& options,
+    const PyramidLevelOptimizationOptions& options,
     OptimizationStats& stats) {
 
   static Eigen::Matrix<double, 6, 6> u;
