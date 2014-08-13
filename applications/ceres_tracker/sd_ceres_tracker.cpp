@@ -101,22 +101,6 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
   if (current_tracks && poses.size() > 1) {
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
 
-    if (do_calibration) {
-      for (int ii = 0; ii < rig.cameras_.size(); ++ii) {
-        problem.AddParameterBlock(rig.t_wc_[ii].data(), 7, local_param);
-        std::cerr << "Params for cam " << ii << " "
-                  << rig.cameras_[ii]->GetParams().transpose() << std::endl;
-        std::cerr << "t_wc for cam " << ii << " " << std::endl
-                  << rig.t_wc_[ii].matrix() << std::endl;
-      }
-
-      // If we don't have an imu, set the first t_vc to static as it is
-      // overparameterized.
-      if (!has_imu) {
-        problem.SetParameterBlockConstant(rig.t_wc_[0].data());
-      }
-    }
-
     // First add all the poses and landmarks to ba.
     for (uint32_t ii = start_pose; ii < poses.size(); ++ii) {
       std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
@@ -157,7 +141,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
                 !(jj == 0 && cam_id == track->ref_cam_id)) {
               lm_residuals[track->id].push_back(AddProjectionResidualToCeres(
                   problem, track, poses[ii]->t_wp, poses[ii + jj]->t_wp,
-                  track->keypoints[jj][cam_id].kp, cam_id, rig, do_calibration,
+                  track->keypoints[jj][cam_id].kp, cam_id, rig, false,
                   &loss_function));
             }
           }
@@ -180,14 +164,6 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
     solve_time = sdtrack::Toc(solve_time);
 
     double write_time = sdtrack::Tic();
-    // We need to backproject tracks if the calibration changed.
-    if (do_calibration) {
-      for (size_t ii = 0; ii < poses.size(); ++ii) {
-        for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
-          tracker.BackProjectTrack(track);
-        }
-      }
-    }
 
     // Read out the pose and landmark values.
     for (uint32_t ii = start_pose; ii < poses.size(); ++ii) {
@@ -329,11 +305,7 @@ void ProcessImage(std::vector<cv::Mat>& images) {
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
-    //    if (do_calibration && rig.cameras_.size() > 1) {
-    //      tracker.Do2dTracking(tracker.GetCurrentTracks());
-    //    } else {
     tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
-    //    }
     tracker.PruneTracks();
   }
   // Update the pose t_ab based on the result from the tracker.
