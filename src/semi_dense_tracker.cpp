@@ -607,15 +607,18 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
     // The user has specified the pyramid level they want optimized.
     level_options.optimize_landmarks = options.optimize_landmarks;
     level_options.optimize_pose = options.optimize_pose;
+    level_options.only_optimize_camera_id = options.only_optimize_camera_id;
     t_ba_old_ = t_ba_;
     OptimizePyramidLevel(level, image_pyramid_, current_tracks_,
                          level_options, stats);
     ///zzzzzz evaluate residuals at all levels so we can see
     for (uint32_t ii = 0 ; ii < tracker_options_.pyramid_levels ; ++ii)  {
       if (ii != level) {
-        LOG(g_sdtrack_debug) << "post rmse: " << ii << " " << EvaluateTrackResiduals(
-            ii, image_pyramid_, current_tracks_, false, true) <<
-            std::endl;
+        LOG(g_sdtrack_debug) << "post rmse: " << ii << " " <<
+                                EvaluateTrackResiduals(ii, image_pyramid_,
+                                                       current_tracks_, false,
+                                                       true) <<
+                                std::endl;
       }
     }
     double post_error = EvaluateTrackResiduals(
@@ -649,20 +652,21 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
   // Do final 2d alignment of tracks.
   AlignmentOptions alignment_options;
   alignment_options.apply_to_kp = false;
+  alignment_options.only_optimize_camera_id = options.only_optimize_camera_id;
   Do2dAlignment(alignment_options, GetImagePyramid(), GetCurrentTracks(), 0);
 
   // Reproject patch centers. This will add to the keypoints vector in each
   // patch which is used to pass on center values to an outside 2d BA.
   ReprojectTrackCenters();
 
-
   // Print pre-post errors
-  LOG(g_sdtrack_debug) << "Level " << level << " solve took " << Toc(time) << "s" <<
-      " with delta_p_norm: " << stats.delta_pose_norm << " and delta "
-                          "lm norm: " << stats.delta_lm_norm << std::endl;
+  LOG(g_sdtrack_debug) << "Level " << level << " solve took " << Toc(time) <<
+                          "s" << " with delta_p_norm: " <<
+                          stats.delta_pose_norm << " and delta lm norm: " <<
+                          stats.delta_lm_norm << std::endl;
 }
 
-void SemiDenseTracker::PruneTracks() {
+void SemiDenseTracker::PruneTracks(int only_prune_camera) {
   if (image_pyramid_.size() == 0) {
     return;
   }

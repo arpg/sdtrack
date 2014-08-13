@@ -44,7 +44,7 @@ public:
   void OptimizeTracks(uint32_t level = -1, bool optimize_landmarks = true,
                       bool optimize_pose = true, bool trust_guess = false);
 
-  void PruneTracks();
+  void PruneTracks(int only_prune_camera = -1);
 
   void OptimizePyramidLevel(
     uint32_t level,
