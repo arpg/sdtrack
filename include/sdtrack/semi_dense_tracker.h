@@ -82,9 +82,10 @@ public:
   void BackProjectTrack(std::shared_ptr<DenseTrack> track,
                         bool initialize_pixel_vals = false);
 
-  void Do2dAlignment(const std::vector<std::vector<cv::Mat>>& image_pyrmaid,
+  void Do2dAlignment(const AlignmentOptions &options,
+                     const std::vector<std::vector<cv::Mat>>& image_pyrmaid,
                      std::list<std::shared_ptr<DenseTrack>>& tracks,
-                     uint32_t level, bool apply_to_kp);
+                     uint32_t level);
   void Do2dTracking(std::list<std::shared_ptr<DenseTrack>>& tracks);
 private:
   uint32_t StartNewTracks(std::vector<cv::Mat>& image_pyrmaid,

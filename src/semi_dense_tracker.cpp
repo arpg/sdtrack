@@ -534,9 +534,9 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
   bool roll_back = false;
   Sophus::SE3d t_ba_old_;
   int last_level = level;
+  // Level -1 means that we will optimize the entire pyramid.
   if (level == static_cast<uint32_t>(-1)) {
     bool optimized_pose = false;
-    // Initialize the dense matrices that will be used to solve the problem.
     for (int ii = tracker_options_.pyramid_levels - 1 ; ii >= 0 ; ii--) {
       last_level = ii;
 
@@ -563,6 +563,8 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
       }
 
       uint32_t iterations = 0;
+      // Continuously iterate this pyramid level until we meet a stop
+      // condition.
       do {
         t_ba_old_ = t_ba_;
         OptimizePyramidLevel(last_level, image_pyramid_, current_tracks_,
@@ -571,12 +573,15 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
         double post_error = EvaluateTrackResiduals(
             last_level, image_pyramid_, current_tracks_, false, true);
 
+        // Exit if the error increased. (This also forces a roll-back).
         if (post_error > stats.pre_solve_error) {
           roll_back = true;
           break;
         }
         const double change = post_error == 0 ? 0 :
             fabs(stats.pre_solve_error - post_error) / post_error;
+
+        // Exit if the change in the params was less than a threshold.
         if (change < 0.01) {
           break;
         }
@@ -587,22 +592,8 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
       } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm >
                1e-4 * current_tracks_.size());
     }
-
-    //    std::list<std::shared_ptr<DenseTrack>> new_tracks;
-    //    for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
-    //      if (track-) {
-    //        track->offset_2d.setZero();
-    //        new_tracks.push_back(track);
-    //      }
-    //    }
-    //    // Now that we've done 3d to 2d tracking, do 2d to 2d tracking for new
-    //    // tracks.
-    //    for (int ii = tracker_options_.pyramid_levels - 1 ; ii >= 0 ; ii--) {
-    //      Do2dAlignment(image_pyrmaid_, new_tracks, ii);
-    //    }
-
-
   } else {
+    // The user has specified the pyramid level they want optimized.
     options.optimize_landmarks = optimize_landmarks;
     options.optimize_pose = optimize_pose;
     t_ba_old_ = t_ba_;
@@ -629,6 +620,7 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
     }
   }
 
+  // If a roll back is required, undo the changes.
   if (roll_back) {
     // Roll back the changes.
     t_ba_ = t_ba_old_;
@@ -638,15 +630,15 @@ void SemiDenseTracker::OptimizeTracks(uint32_t level, bool optimize_landmarks,
         continue;
       }
       track->ref_keypoint.rho = track->ref_keypoint.old_rho;
-
     }
-
     EvaluateTrackResiduals(
         last_level, image_pyramid_, current_tracks_, false, true);
   }
 
   // Do final 2d alignment of tracks.
-  Do2dAlignment(GetImagePyramid(), GetCurrentTracks(), 0, false);
+  AlignmentOptions alignment_options;
+  alignment_options.apply_to_kp = false;
+  Do2dAlignment(alignment_options, GetImagePyramid(), GetCurrentTracks(), 0);
 
   // Reproject patch centers. This will add to the keypoints vector in each
   // patch which is used to pass on center values to an outside 2d BA.
@@ -907,18 +899,20 @@ void SemiDenseTracker::GetImageDerivative(
 
 void SemiDenseTracker::Do2dTracking(
     std::list<std::shared_ptr<DenseTrack>>& tracks) {
+  AlignmentOptions alignment_options;
+  alignment_options.apply_to_kp = false;
   for (int level = tracker_options_.pyramid_levels - 1 ; level >= 0 ; --level) {
-    Do2dAlignment(GetImagePyramid(), GetCurrentTracks(), level, false);
+    Do2dAlignment(alignment_options, GetImagePyramid(), GetCurrentTracks(),
+                  level);
   }
   ReprojectTrackCenters();
 }
 
 void SemiDenseTracker::Do2dAlignment(
+    const AlignmentOptions &options,
     const std::vector<std::vector<cv::Mat>>& image_pyrmaid,
     std::list<std::shared_ptr<DenseTrack>>& tracks,
-    uint32_t level,
-    bool apply_to_kp) {
-
+    uint32_t level) {
   Eigen::LDLT<Eigen::Matrix2d> solver;
   Eigen::Matrix2d jtj;
   Eigen::Vector2d jtr, delta_pix, delta_pix_0th_level;
@@ -929,10 +923,19 @@ void SemiDenseTracker::Do2dAlignment(
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
     for (std::shared_ptr<DenseTrack>& track : tracks) {
       const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
+      // If we are only optimizing tracks from a single camera, skip track if
+      // it wasn't initialized in the specified camera.
+      if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=
+          options.only_optimize_camera_id) {
+        continue;
+      }
+
+      // Don't align newly created tracks.
       if (track->keypoints.size() < 2) {
         continue;
       }
 
+      // 2D Alignment optimization loop.
       while (true) {
         jtj.setZero();
         jtr.setZero();
@@ -1027,20 +1030,18 @@ void SemiDenseTracker::Do2dAlignment(
         const double prev_ncc = transfer.ncc;
         transfer.ncc = denom == 0 ? 0 : ncc_num / denom;
 
+        // If the residual increases, quit and roll back the changes.
         if (post_res_total >= res_total) {
           // roll back the changes
           transfer.ncc = prev_ncc;
           break;
         } else {
           track->offset_2d[cam_id] -= delta_pix_0th_level;
-          if (apply_to_kp) {
+          if (options.apply_to_kp) {
             track->keypoints.back()[cam_id].kp -= delta_pix_0th_level;
           }
         }
 
-        //      if ((track->ncc - prev_ncc) / prev_ncc < 0.01) {
-        //        break;
-        //      }
         if (delta_pix.norm() < 0.01) {
           break;
         }
@@ -1115,6 +1116,13 @@ void SemiDenseTracker::OptimizePyramidLevel(
   }
 
   for (std::shared_ptr<DenseTrack>& track : tracks) {
+    // If we are only optimizing tracks from a single camera, skip track if
+    // it wasn't initialized in the specified camera.
+    if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=
+        options.only_optimize_camera_id) {
+      continue;
+    }
+
     const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
     track->opt_id = UINT_MAX;
     track->residual_used = false;
@@ -1296,8 +1304,8 @@ void SemiDenseTracker::OptimizePyramidLevel(
     if (track->id == longest_track_id_ && track->keypoints.size() <= 2 &&
         options.optimize_landmarks && options.optimize_pose &&
         num_cameras_ == 1) {
-      LOG(g_sdtrack_debug) << "omitting longest track id " << longest_track_id_ <<
-          std::endl;
+      LOG(g_sdtrack_debug) << "omitting longest track id " <<
+                              longest_track_id_ << std::endl;
       omit_track = true;
     }
 
@@ -1357,7 +1365,8 @@ void SemiDenseTracker::OptimizePyramidLevel(
   const double lm_time = Tic();
   stats.delta_lm_norm = 0;
   uint32_t delta_lm_count = 0;
-  // Now back-substitute all the keypoints
+
+  // Now back-substitute all the tracks.
   if (options.optimize_landmarks) {
     for (std::shared_ptr<DenseTrack>& track : tracks) {
       if (track->opt_id != UINT_MAX) {

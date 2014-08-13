@@ -1003,9 +1003,11 @@ void InitGui()
   });
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), last_optimization_level,
-                          true);
+    sdtrack::AlignmentOptions options;
+    options.apply_to_kp = true;
+    tracker.Do2dAlignment(options,
+                          tracker.GetImagePyramid(),
+                          tracker.GetCurrentTracks(), last_optimization_level);
   });
 
   pangolin::RegisterKeyPressCallback('B', [&]() {
