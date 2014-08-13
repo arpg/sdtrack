@@ -179,6 +179,7 @@ struct TrackerPose {
   Eigen::Vector3t v_w;
   Eigen::Vector6t b;
   std::vector<uint32_t> opt_id;
+  std::vector<Sophus::SE3t> calib_t_wp;
   double time;
   uint32_t longest_track;
 };
