@@ -692,6 +692,8 @@ void SemiDenseTracker::PruneTracks(int only_prune_camera) {
                                       (dim_ratio > 2.0 || dim_ratio < 0.5))) {
         track->keypoints.back()[cam_id].tracked = true;
         num_successful_cams++;
+      } else {
+        track->keypoints.back()[cam_id].tracked = false;
       }
     }
 
