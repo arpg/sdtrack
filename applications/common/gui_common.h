@@ -39,19 +39,27 @@ struct TrackerHandler : pangolin::Handler3D {
       Eigen::Vector2d center = track_centers[ii].first;
       const double dist = sqrt(sdtrack::powi(x_val - center[0], 2) +
                                sdtrack::powi(y_val - center[1], 2));
-      if (dist < 4) {
+      if (dist < 10) {
         // Then this is the selected track.
         selected_track = track_centers[ii].second;
         sdtrack::DenseKeypoint& kp = selected_track->ref_keypoint;
-        sdtrack::Patch& p = selected_track->ref_keypoint.patch_pyramid[0];
-        const double ncc = sdtrack::ScorePatchesNCC(
-            p.values, selected_track->transfer[0].projected_values, 9, 9);
         std::cerr << "selected kp " << selected_track->id
                   << "with response: " << kp.response << " response2 "
-                  << kp.response2 << " rmse "
-                  << selected_track->transfer[0].rmse << " ncc: " << ncc
-                  << " track ncc " << selected_track->transfer[0].ncc << " rho "
-                  << selected_track->ref_keypoint.rho << std::endl;
+                  << kp.response2 << " rmse: ";
+        for (int cam_id = 0; cam_id < selected_track->transfer.size();
+             ++cam_id) {
+          std::cerr << selected_track->transfer[cam_id].rmse << ", ";
+        }
+
+        std::cerr << "ncc: ";
+        for (int cam_id = 0; cam_id < selected_track->transfer.size();
+             ++cam_id) {
+          std::cerr << selected_track->transfer[cam_id].ncc << ", ";
+        }
+
+        std::cerr << " rho " << selected_track->ref_keypoint.rho
+                  << " tracked: " << selected_track->tracked << " outlier: "
+                  << selected_track->is_outlier << std::endl;
         break;
       }
     }
@@ -96,7 +104,7 @@ void DrawTrackPatches(
   sdtrack::DenseKeypoint& kp = track->ref_keypoint;
   //  for (uint32_t ii = 0; ii < kp.patch_pyramid.size() &&
   //       ii <= 0 ; ++ii) {
-  int ii = 0;
+  // int ii = 0;
   const sdtrack::Patch& ref_patch = kp.patch_pyramid[track->transfer[0].level];
   std::vector<unsigned char> disp_values;
   std::vector<unsigned char> disp_proj_values;
