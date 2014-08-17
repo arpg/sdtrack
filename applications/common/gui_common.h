@@ -314,7 +314,8 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
 }
 
 bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
-                      calibu::CameraRigT<Scalar>& rig) {
+                      calibu::CameraRigT<Scalar>& rig,
+                      bool transform_to_robotics_coords = true) {
   std::string cam_string = cl.follow("", "-cam");
   try {
     camera_device = hal::Camera(hal::Uri(cam_string));
@@ -338,15 +339,18 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
     LOG(FATAL) << "XML Camera rig is empty!";
   }
 
-  calibu::CameraRigT<Scalar> crig;
-  crig = calibu::ToCoordinateConvention<Scalar>(
-      xmlrig, calibu::RdfRobotics.cast<Scalar>());
+  calibu::CameraRigT<Scalar> crig = xmlrig;
+  if (transform_to_robotics_coords) {
+    crig = calibu::ToCoordinateConvention<Scalar>(
+        xmlrig, calibu::RdfRobotics.cast<Scalar>());
 
-  Sophus::SE3t M_rv;
-  M_rv.so3() = calibu::RdfRobotics;
-  for (calibu::CameraModelAndTransformT<Scalar>& model : crig.cameras) {
-    model.T_wc = model.T_wc * M_rv;
+    Sophus::SE3t M_rv;
+    M_rv.so3() = calibu::RdfRobotics;
+    for (calibu::CameraModelAndTransformT<Scalar>& model : crig.cameras) {
+      model.T_wc = model.T_wc * M_rv;
+    }
   }
+
   LOG(INFO) << "Starting Tvs: " << crig.cameras[0].T_wc.matrix();
 
   rig.cameras.clear();
