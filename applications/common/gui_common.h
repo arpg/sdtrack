@@ -105,19 +105,21 @@ void DrawTrackPatches(
   disp_proj_values.reserve(disp_values.size());
   res_values.reserve(disp_values.size());
 
-  for (uint32_t jj = 0; jj < ref_patch.values.size(); ++jj) {
-    disp_values.push_back(ref_patch.values[jj]);
-    disp_proj_values.push_back(track->transfer[0].projected_values[jj]);
-    res_values.push_back(fabs(track->transfer[0].residuals[jj]));
+  for (int ii = 0 ; ii < track->transfer.size() ; ++ii) {
+    for (uint32_t jj = 0; jj < ref_patch.values.size(); ++jj) {
+      disp_values.push_back(ref_patch.values[jj]);
+      disp_proj_values.push_back(track->transfer[ii].projected_values[jj]);
+      res_values.push_back(fabs(track->transfer[ii].residuals[jj]));
+    }
+    patches[ii][0]->SetImage(&disp_values[0], ref_patch.dim, ref_patch.dim,
+                             GL_LUMINANCE8, GL_LUMINANCE);
+
+    patches[ii][1]->SetImage(&disp_proj_values[0], ref_patch.dim, ref_patch.dim,
+                             GL_LUMINANCE8, GL_LUMINANCE);
+
+    patches[ii][2]->SetImage(&res_values[0], ref_patch.dim, ref_patch.dim,
+                             GL_LUMINANCE8, GL_LUMINANCE);
   }
-  patches[ii][0]->SetImage(&disp_values[0], ref_patch.dim, ref_patch.dim,
-                           GL_LUMINANCE8, GL_LUMINANCE);
-
-  patches[ii][1]->SetImage(&disp_proj_values[0], ref_patch.dim, ref_patch.dim,
-                           GL_LUMINANCE8, GL_LUMINANCE);
-
-  patches[ii][2]->SetImage(&res_values[0], ref_patch.dim, ref_patch.dim,
-                           GL_LUMINANCE8, GL_LUMINANCE);
   // }
 }
 
