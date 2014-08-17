@@ -21,6 +21,8 @@
 namespace sdtrack {
 class SemiDenseTracker {
 public:
+  static const int kUnusedCell = -1;
+
   SemiDenseTracker() :
     generator_(0) {}
   void Initialize(const KeypointOptions& keypoint_options,
@@ -90,6 +92,8 @@ public:
                      std::list<std::shared_ptr<DenseTrack>>& tracks,
                      uint32_t level);
   void Do2dTracking(std::list<std::shared_ptr<DenseTrack>>& tracks);
+  std::vector<Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic>>&
+    feature_cells() { return feature_cells_; }
 private:
   uint32_t StartNewTracks(std::vector<cv::Mat>& image_pyrmaid,
                           std::vector<cv::KeyPoint>& cv_keypoints,
@@ -125,7 +129,6 @@ private:
   Sophus::SE3t t_ba_;
   uint32_t num_cameras_;
   bool last_image_was_keyframe_ = true;
-  double lm_per_cell_;
   double average_track_length_;
   TrackerOptions  tracker_options_;
   KeypointOptions keypoint_options_;
@@ -143,8 +146,9 @@ private:
   std::vector<Eigen::Vector2t> pyramid_coord_ratio_;
   std::vector<std::vector<cv::Mat>> image_pyramid_;
   std::vector<double> pyramid_error_thresholds_;
-  std::vector<Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic>>
+  std::vector<Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic>>
     feature_cells_;
+  std::vector<uint32_t> active_feature_cells_;
   calibu::Rig<Scalar>* camera_rig_;
   Eigen::Matrix4d generators_[6];
   std::default_random_engine generator_;

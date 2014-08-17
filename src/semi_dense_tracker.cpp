@@ -85,11 +85,14 @@ void SemiDenseTracker::Initialize(const KeypointOptions& keypoint_options,
   }
 
   feature_cells_.resize(num_cameras_);
+  active_feature_cells_.resize(num_cameras_);
   for (size_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
     // Inititalize the feature cells.
     feature_cells_[cam_id].resize(tracker_options_.feature_cells,
                                   tracker_options_.feature_cells);
     feature_cells_[cam_id].setZero();
+    active_feature_cells_[cam_id] = tracker_options_.feature_cells *
+        tracker_options_.feature_cells;
   }
 
   for (size_t ii = 0; ii < rig->cameras_.size(); ++ii) {
@@ -106,6 +109,8 @@ void SemiDenseTracker::Initialize(const KeypointOptions& keypoint_options,
 void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
                                         std::vector<cv::KeyPoint>& keypoints,
                                         uint32_t cam_id) {
+  const double req_lm_per_cell = (double)tracker_options_.num_active_tracks /
+      active_feature_cells_[cam_id];
   std::vector<cv::KeyPoint> cell_kp;
   keypoints.clear();
   keypoints.reserve(keypoint_options_.max_num_features);
@@ -115,7 +120,8 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
   const double time = Tic();
   for (uint32_t ii = 0  ; ii < tracker_options_.feature_cells ; ++ii) {
     for (uint32_t jj = 0  ; jj < tracker_options_.feature_cells ; ++jj) {
-      if (feature_cells_[cam_id](jj, ii) >= lm_per_cell_) {
+      const auto feature_cell = feature_cells_[cam_id](jj, ii);
+      if (feature_cell >= req_lm_per_cell || feature_cell == kUnusedCell) {
         continue;
       }
 
@@ -277,6 +283,9 @@ uint32_t SemiDenseTracker::StartNewTracks(
     std::vector<cv::KeyPoint>& cv_keypoints,
     uint32_t num_to_start,
     uint32_t cam_id) {
+  const double req_lm_per_cell = (double)tracker_options_.num_active_tracks /
+      active_feature_cells_[cam_id];
+
   // Initialize the random inverse depth generator.
   const double range = tracker_options_.default_rho * 0.1;
   std::uniform_real_distribution<double> distribution(
@@ -305,7 +314,9 @@ uint32_t SemiDenseTracker::StartNewTracks(
         (kp.pt.x / image_pyrmaid[0].cols) * tracker_options_.feature_cells;
     const uint32_t addressy =
         (kp.pt.y / image_pyrmaid[0].rows) * tracker_options_.feature_cells;
-    if (feature_cells_[cam_id](addressy, addressx) >= lm_per_cell_) {
+
+    const auto feature_cell = feature_cells_[cam_id](addressy, addressx);
+    if (feature_cell >= req_lm_per_cell || feature_cell == kUnusedCell) {
       continue;
     }
 
@@ -315,7 +326,9 @@ uint32_t SemiDenseTracker::StartNewTracks(
     }
 
     mask_.SetMask(cam_id, kp.pt.x, kp.pt.y);
-    feature_cells_[cam_id](addressy, addressx)++;
+    if (feature_cells_[cam_id](addressy, addressx) != kUnusedCell) {
+      feature_cells_[cam_id](addressy, addressx)++;
+    }
 
 
     // Otherwise extract pyramid for this keypoint, and also backproject all
@@ -499,7 +512,9 @@ void SemiDenseTracker::ReprojectTrackCenters() {
           LOG(g_sdtrack_debug) << "Out of bounds feature cell access at : " << addressy <<
               ", " << addressx << std::endl;
         }
-        feature_cells_[cam_id](addressy, addressx)++;
+        if (feature_cells_[cam_id](addressy, addressx) != kUnusedCell) {
+          feature_cells_[cam_id](addressy, addressx)++;
+        }
 
         if (track->keypoints.size() > 1) {
           average_track_length_ +=
@@ -1439,7 +1454,17 @@ void SemiDenseTracker::AddImage(const std::vector<cv::Mat>& images,
 
   // Clear out all 2d offsets for new tracks
   for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
-    feature_cells_[cam_id].setZero();
+    active_feature_cells_[cam_id] = 0;
+    // Clear out the feature cells that are not marked as unused.
+    for (int row = 0; row < feature_cells_[cam_id].rows(); ++row) {
+      for (int col = 0; col < feature_cells_[cam_id].cols(); ++col) {
+        if (feature_cells_[cam_id](row, col) != kUnusedCell) {
+          feature_cells_[cam_id](row, col) = 0;
+          active_feature_cells_[cam_id]++;
+        }
+      }
+    }
+
     for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
       track->offset_2d[cam_id].setZero();
       track->transfer[cam_id].level = UNINITIALIZED_TRANSFER;
