@@ -29,7 +29,7 @@ public:
                   const TrackerOptions& tracker_options,
                   calibu::Rig<Scalar>* rig);
 
-  void StartNewLandmarks();
+  void StartNewLandmarks(int only_start_in_camera = -1);
 
   double EvaluateTrackResiduals(
     uint32_t level,

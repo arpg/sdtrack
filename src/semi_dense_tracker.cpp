@@ -618,6 +618,12 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
       } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm >
                1e-4 * current_tracks_.size());
     }
+
+    // Do final 2d alignment of tracks.
+    AlignmentOptions alignment_options;
+    alignment_options.apply_to_kp = false;
+    alignment_options.only_optimize_camera_id = options.only_optimize_camera_id;
+    Do2dAlignment(alignment_options, GetImagePyramid(), GetCurrentTracks(), 0);
   } else {
     // The user has specified the pyramid level they want optimized.
     level_options.optimize_landmarks = options.optimize_landmarks;
@@ -664,13 +670,7 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
         last_level, image_pyramid_, current_tracks_, false, true);
   }
 
-  // Do final 2d alignment of tracks.
-  AlignmentOptions alignment_options;
-  alignment_options.apply_to_kp = false;
-  alignment_options.only_optimize_camera_id = options.only_optimize_camera_id;
-  Do2dAlignment(alignment_options, GetImagePyramid(), GetCurrentTracks(), 0);
-
-  // Reproject patch centers. This will add to the keypoints vector in each
+  // Reproject patch centers. This will update the keypoints vector in each
   // patch which is used to pass on center values to an outside 2d BA.
   ReprojectTrackCenters();
 
@@ -696,6 +696,10 @@ void SemiDenseTracker::PruneTracks(int only_prune_camera) {
 
     uint32_t num_successful_cams = 0;
     for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
+      if (only_prune_camera != -1 && track->ref_cam_id != only_prune_camera) {
+        continue;
+      }
+
       PatchTransfer& transfer = track->transfer[cam_id];
       const double dim_ratio = transfer.dimension / tracker_options_.patch_dim;
       const double percent_tracked =
@@ -888,12 +892,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
   ref_patch.projected_mean = result.mean_value;
 }
 
-void SemiDenseTracker::StartNewLandmarks() {
-  // Figure out the number of landmarks per cell that's required. For this we
-  // will look at the previous cells to see how many active cells there were.
-  const uint32_t num_cells = powi(tracker_options_.feature_cells, 2);
-  lm_per_cell_ = tracker_options_.num_active_tracks / num_cells;
-
+void SemiDenseTracker::StartNewLandmarks(int only_start_in_camera) {
   // Afterwards, we must spawn a number of new tracks
   const int num_new_tracks =
       std::max(0, (int)tracker_options_.num_active_tracks -
@@ -904,6 +903,10 @@ void SemiDenseTracker::StartNewLandmarks() {
 
   // Start tracks in every camera.
   for (uint32_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
+    if (only_start_in_camera != -1 && cam_id != only_start_in_camera) {
+      continue;
+    }
+
     std::vector<cv::KeyPoint> cv_keypoints;
     // Extract features and descriptors from this image
     ExtractKeypoints(image_pyramid_[cam_id][0], cv_keypoints, cam_id);
