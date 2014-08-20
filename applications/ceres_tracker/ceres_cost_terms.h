@@ -1,6 +1,11 @@
 #pragma once
 #include <ceres/ceres.h>
 #include <calibu/cam/camera_crtp.h>
+#include <sophus/se3.hpp>
+#include <ba/CeresCostFunctions.h>
+
+#include <Eigen/Core>
+#include <Eigen/StdVector>
 
 ///
 /// \brief Cost function for inverse depth projection residuals. Optimizes the
@@ -21,9 +26,10 @@ struct InvepthCost {
               const Sophus::SE3d& t_vc_m,
               const Eigen::Vector3d& l_c_r,
               const Eigen::Vector2d& z,
-              const Eigen::VectorXd& params)
+              const Eigen::VectorXd& params,
+              bool posegraph_mode)
       : t_vc_r_(t_vc_r), t_cv_m_(t_vc_m.inverse()), l_c_r_(l_c_r), z_(z),
-        params_(params)
+        params_(params), posegraph_mode_(posegraph_mode)
   {}
 
   ///
@@ -47,7 +53,9 @@ struct InvepthCost {
 
     // Transformation from reference to measurement camera.
     const Sophus::SE3Group<T> t_mr =
-        t_cv_m_.cast<T>() * t_wv_m.inverse() * t_wv_r * t_vc_r_.cast<T>();
+        posegraph_mode_ ?
+          t_wv_m.inverse() * t_wv_r :
+          t_cv_m_.cast<T>() * t_wv_m.inverse() * t_wv_r * t_vc_r_.cast<T>();
     const Eigen::Matrix<T, 3, 1> l_c_m =
         t_mr.rotationMatrix() * l_c_r_.cast<T>() + *_rho * t_mr.translation();
     Eigen::Matrix<T, 2, 1> pix;
@@ -62,6 +70,7 @@ struct InvepthCost {
   Eigen::Vector3d l_c_r_;
   Eigen::Vector2d z_;
   Eigen::VectorXd params_;
+  bool posegraph_mode_;
 };
 
 ///
@@ -75,8 +84,10 @@ struct InvepthCost {
 ///
 template<typename CameraType>
 struct CalibratingInvDepthCost {
-  CalibratingInvDepthCost(const Eigen::Vector2d& z, const Eigen::Vector2d& z_ref)
-      : z_(z), z_ref_(z_ref)
+  CalibratingInvDepthCost(const Eigen::Vector2d& z,
+                          const Eigen::Vector2d& z_ref,
+                          bool posegraph_mode)
+      : z_(z), z_ref_(z_ref), posegraph_mode_(posegraph_mode)
   {}
 
   template<typename T>
@@ -100,7 +111,9 @@ struct CalibratingInvDepthCost {
 
     // Transformation from reference to measurement camera.
     const Sophus::SE3Group<T> t_mr =
-        t_vc.inverse() * t_wv_m.inverse() * t_wv_r * t_vc;
+        posegraph_mode_ ?
+          t_wv_m.inverse() * t_wv_r :
+          t_vc.inverse() * t_wv_m.inverse() * t_wv_r * t_vc;
     const Eigen::Matrix<T, 3, 1> l_c =
         t_mr.rotationMatrix() * l_c_r + *_rho * t_mr.translation();
     Eigen::Matrix<T, 2, 1> pix;
@@ -112,6 +125,7 @@ struct CalibratingInvDepthCost {
 
   Eigen::Vector2d z_;    // measurement location in the image.
   Eigen::Vector2d z_ref_;    // reference location of landmark in the first img.
+  bool posegraph_mode_;
 };
 
 ///
@@ -122,8 +136,9 @@ struct CalibratingInvDepthCost {
 template<typename CameraType>
 struct DifCamCalibratingInvDepthCost {
   DifCamCalibratingInvDepthCost(const Eigen::Vector2d& z,
-                                const Eigen::Vector2d& z_ref)
-      : z_(z), z_ref_(z_ref)
+                                const Eigen::Vector2d& z_ref,
+                                bool posegraph_mode)
+      : z_(z), z_ref_(z_ref), posegraph_mode_(posegraph_mode)
   {}
 
   template<typename T>
@@ -150,7 +165,9 @@ struct DifCamCalibratingInvDepthCost {
 
     // Transformation from reference to measurement camera.
     const Sophus::SE3Group<T> t_mr =
-        t_vc_m.inverse() * t_wv_m.inverse() * t_wv_r * t_vc_r;
+        posegraph_mode_ ?
+          t_vc_m.inverse() * t_wv_m.inverse() * t_wv_r * t_vc_r :
+          t_wv_m.inverse() * t_wv_r;
     const Eigen::Matrix<T, 3, 1> l_c =
         t_mr.rotationMatrix() * l_c_r + *_rho * t_mr.translation();
     Eigen::Matrix<T, 2, 1> pix;
@@ -162,6 +179,7 @@ struct DifCamCalibratingInvDepthCost {
 
   Eigen::Vector2d z_;    // measurement location in the image.
   Eigen::Vector2d z_ref_;    // reference location of landmark in the first img.
+  bool posegraph_mode_;
 };
 
 template <typename CamType>
@@ -174,6 +192,7 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
     uint32_t meas_cam_id,
     calibu::Rig<Scalar>& cam_rig,
     bool calibrating,
+    bool posegraph_mode,
     const Eigen::Vector2d& z,
     ceres::LossFunctionWrapper* loss_function)
 {
@@ -186,7 +205,7 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
             new ceres::AutoDiffCostFunction<
             CalibratingInvDepthCost<CamType>, 2, 7, 7, 7,
             CamType::kParamSize, 1>(
-              new CalibratingInvDepthCost<CamType>(z, z_ref)),
+              new CalibratingInvDepthCost<CamType>(z, z_ref, posegraph_mode)),
             loss_function,
             ref_pose.data(),
             meas_pose.data(),
@@ -199,7 +218,8 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
             new ceres::AutoDiffCostFunction<
             DifCamCalibratingInvDepthCost<CamType>, 2, 7, 7, 7, 7,
             CamType::kParamSize, CamType::kParamSize, 1>(
-              new DifCamCalibratingInvDepthCost<CamType>(z, z_ref)),
+              new DifCamCalibratingInvDepthCost<CamType>(
+                z, z_ref, posegraph_mode)),
             loss_function,
             ref_pose.data(),
             meas_pose.data(),
@@ -219,7 +239,8 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
               cam_rig.t_wc_[meas_cam_id],  // Meas. cam extrinsics.
               track->ref_keypoint.ray,
               z,
-              cam_rig.cameras_[meas_cam_id]->GetParams())),
+              cam_rig.cameras_[meas_cam_id]->GetParams(),
+              posegraph_mode)),
           loss_function,
           ref_pose.data(),
           meas_pose.data(),
@@ -238,6 +259,7 @@ ceres::ResidualBlockId AddProjectionResidualToCeres(
     uint32_t cam_id,
     calibu::Rig<Scalar>& cam_rig,
     bool calibrating,
+    bool posegraph_mode,
     ceres::LossFunctionWrapper* loss_function)
 {
   const uint32_t ref_cam_id = track->ref_cam_id;
@@ -246,13 +268,13 @@ ceres::ResidualBlockId AddProjectionResidualToCeres(
     residual_id =
     AddProjectionResidualBlockToCeres<calibu::FovCamera<double>>(
         problem, ref_pose, meas_pose, track, ref_cam_id, cam_id, cam_rig,
-        calibrating, z, loss_function);
+        calibrating, posegraph_mode, z, loss_function);
   } else if (dynamic_cast<calibu::LinearCamera<double>*>(
                cam_rig.cameras_[cam_id])) {
     residual_id =
     AddProjectionResidualBlockToCeres<calibu::LinearCamera<double>>(
         problem, ref_pose, meas_pose, track, ref_cam_id, cam_id, cam_rig,
-        calibrating, z, loss_function);
+        calibrating, posegraph_mode, z, loss_function);
   } else {
     LOG(FATAL) << "Unsupported camera type.";
   }
