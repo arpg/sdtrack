@@ -50,6 +50,7 @@ bool is_stepping = false;
 bool is_manual_mode = false;
 bool do_bundle_adjustment = true;
 bool do_start_new_landmarks = true;
+bool use_system_time = false;
 int image_width;
 int image_height;
 std::shared_ptr<std::thread> aac_thread;
@@ -85,18 +86,20 @@ int imu_cond_residual_id = -1;
 
 // Plotters.
 std::vector<pangolin::DataLog> plot_logs;
-std::vector<pangolin::View*> plot_views;
+std::vector<pangolin::Plotter*> plot_views;
 
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
 void ImuCallback(const pb::ImuMsg& ref) {
+  const double timestamp = use_system_time ? ref.system_time() :
+                                             ref.device_time();
   Eigen::VectorXd a, w;
   pb::ReadVector(ref.accel(), &a);
   pb::ReadVector(ref.gyro(), &w);
-  imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, ref.device_time()));
-  // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
-  //              w.transpose() << " at time " << ref.device_time() << std::endl;
+  imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
+   std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
+                w.transpose() << " at time " << timestamp << std::endl;
 }
 
 template <typename BaType>
@@ -117,7 +120,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
     reset_outliers = false;
   }
 
-  ba::debug_level_threshold = ba_debug_level;
+  vi_bundle_adjuster.debug_level_threshold = ba_debug_level;
+  bundle_adjuster.debug_level_threshold = ba_debug_level;
+
   imu_residual_ids.clear();
   ba::Options<double> options;
   options.gyro_sigma = gyro_sigma;
@@ -162,7 +167,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       }
       ba.Init(options, end_pose_id + 1,
               current_tracks->size() * (end_pose_id + 1));
-      for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+      for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
         ba.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
       }
 
@@ -170,14 +175,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
         std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
         const bool is_active = ii >= start_active_pose && !initialize_lm;
-        if (use_imu) {
-          pose->opt_id[id] = ba.AddPose(
-                pose->t_wp, Sophus::SE3t(), Eigen::VectorXt(), pose->v_w, pose->b,
-                is_active, pose->time + imu_time_offset);
-        } else {
-          pose->opt_id[id] = ba.AddPose(
-                pose->t_wp, is_active, pose->time + imu_time_offset);
-        }
+        pose->opt_id[id] = ba.AddPose(
+              pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
+              is_active, pose->time + imu_time_offset);
+
         if (use_imu && ii >= start_active_pose && ii > 0) {
           std::vector<ba::ImuMeasurementT<Scalar>> meas =
               imu_buffer.GetRange(poses[ii - 1]->time, pose->time);
@@ -187,7 +188,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
                      " measurements" << std::endl;
                      */
           imu_residual_ids.push_back(
-                ba.AddImuResidual(poses[ii - 1]->opt_id[id], pose->opt_id[id], meas));
+                ba.AddImuResidual(poses[ii - 1]->opt_id[id],
+                pose->opt_id[id], meas));
           // Store the conditioning edge of the IMU.
           if (do_adaptive_conditioning) {
             if (imu_cond_start_pose_id == -1 &&
@@ -750,7 +752,8 @@ void DrawImageData(uint32_t cam_id)
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
-    if (track->keypoints.back()[cam_id].tracked) {
+    if (track->keypoints.back()[cam_id].tracked ||
+        track->keypoints.size() <= 2) {
       DrawTrackData(track, image_width, image_height, center,
                     gui_vars.handler->selected_track == track, cam_id);
     }
@@ -766,7 +769,7 @@ void DrawImageData(uint32_t cam_id)
     DrawTrackPatches(gui_vars.handler->selected_track, gui_vars.patches);
   }
 
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     gui_vars.camera_view[cam_id]->RenderChildren();
   }
 }
@@ -779,6 +782,7 @@ void Run()
   bool capture_success = false;
   std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
   camera_device.Capture(*images);
+
   while(!pangolin::ShouldQuit()) {
     capture_success = false;
     const bool go = is_stepping;
@@ -795,6 +799,17 @@ void Run()
     }
 
     if (capture_success) {
+      double timestamp = use_system_time ? images->Ref().system_time() :
+                                           images->Ref().device_time();
+
+      // Wait until we have enough measurements to interpolate this frame's
+      // timestamp
+      const double start_time = sdtrack::Tic();
+      while (imu_buffer.end_time < timestamp &&
+             sdtrack::Toc(start_time) < 0.1) {
+        usleep(10);
+      }
+
       gl_tex.resize(images->Size());
 
       for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
@@ -819,7 +834,7 @@ void Run()
       for (int ii = 0; ii < images->Size() ; ++ii) {
         cvmat_images.push_back(images->at(ii)->Mat());
       }
-      ProcessImage(cvmat_images, images->Timestamp());
+      ProcessImage(cvmat_images, timestamp);
     }
 
     if (camera_img && camera_img->data()) {
@@ -840,10 +855,7 @@ void Run()
       std::vector<ba::ImuPoseT<Scalar>> imu_poses;
 
       glLineWidth(1.0f);
-      // glPushMatrix();
-      // glMultMatrixT(t_world_frame.matrix().data());
-      // Draw the inertial residuals
-
+      // Draw the inertial residual
       for (uint32_t id : ba_imu_residual_ids) {
         const ba::ImuResidualT<Scalar>& res = vi_bundle_adjuster.GetImuResidual(id);
         const ba::PoseT<Scalar>& pose = vi_bundle_adjuster.GetPose(res.pose1_id);
@@ -945,6 +957,12 @@ void InitGui()
     is_stepping = true;
   });
 
+  pangolin::RegisterKeyPressCallback('r', [&]() {
+    for (uint32_t ii = 0; ii < plot_views.size(); ++ii) {
+      plot_views[ii]->Keyboard(*plot_views[ii], 'a', 0, 0, true);
+    }
+  });
+
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_CTRL + 'r',
         [&]() {
@@ -984,7 +1002,7 @@ void InitGui()
     std::cerr << "Total distance travelled: " << total_dist << " error: " <<
                  error << " percentage error: " << error / total_dist * 100 <<
                  std::endl;
-    for (int ii = 0; ii < plot_logs.size() ; ++ii) {
+    for (uint32_t ii = 0; ii < plot_logs.size() ; ++ii) {
       pangolin::DataLog& log = plot_logs[ii];
       char filename[100];
       sprintf(filename, "log_%d.txt" , ii);
@@ -1102,6 +1120,10 @@ int main(int argc, char** argv) {
   if (cl->search("--help")) {
     LOG(INFO) << g_usage;
     exit(-1);
+  }
+
+  if (cl->search("-use_system_time")) {
+    use_system_time = true;
   }
 
   if (cl->search("-startnow")) {
