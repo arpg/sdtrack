@@ -46,13 +46,13 @@ struct TrackerHandler : pangolin::Handler3D {
         std::cerr << "selected kp " << selected_track->id
                   << "with response: " << kp.response << " response2 "
                   << kp.response2 << " rmse: ";
-        for (int cam_id = 0; cam_id < selected_track->transfer.size();
+        for (size_t cam_id = 0; cam_id < selected_track->transfer.size();
              ++cam_id) {
           std::cerr << selected_track->transfer[cam_id].rmse << ", ";
         }
 
         std::cerr << "ncc: ";
-        for (int cam_id = 0; cam_id < selected_track->transfer.size();
+        for (size_t cam_id = 0; cam_id < selected_track->transfer.size();
              ++cam_id) {
           std::cerr << selected_track->transfer[cam_id].ncc << ", ";
         }
@@ -113,8 +113,8 @@ void DrawTrackPatches(
   disp_proj_values.reserve(disp_values.size());
   res_values.reserve(disp_values.size());
 
-  for (int ii = 0 ; ii < track->transfer.size() ; ++ii) {
-    for (uint32_t jj = 0; jj < ref_patch.values.size(); ++jj) {
+  for (size_t ii = 0 ; ii < track->transfer.size() ; ++ii) {
+    for (size_t jj = 0; jj < ref_patch.values.size(); ++jj) {
       disp_values.push_back(ref_patch.values[jj]);
       disp_proj_values.push_back(track->transfer[ii].projected_values[jj]);
       res_values.push_back(fabs(track->transfer[ii].residuals[jj]));
@@ -273,7 +273,7 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
 
   // Add named OpenGL viewport to window and provide 3D Handler
   vars.camera_view.resize(num_cameras);
-  for (int cam_id = 0; cam_id < num_cameras; ++cam_id) {
+  for (size_t cam_id = 0; cam_id < num_cameras; ++cam_id) {
     vars.camera_view[cam_id] =
         &pangolin::CreateDisplay().SetAspect(-(float)window_width /
                                              (float)window_height);
@@ -296,7 +296,7 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
   pangolin::Display("multi").SetBounds(1.0, 0.0, 0.0, 1.0).SetLayout(
       pangolin::LayoutEqual);
 
-  for (int cam_id = 0; cam_id < num_cameras; ++cam_id) {
+  for (size_t cam_id = 0; cam_id < num_cameras; ++cam_id) {
     pangolin::Display("multi").AddDisplay(*vars.camera_view[cam_id]);
   }
 
