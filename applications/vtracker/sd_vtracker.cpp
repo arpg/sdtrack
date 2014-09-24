@@ -58,10 +58,13 @@ int last_optimization_level = 0;
 std::shared_ptr<pb::Image> camera_img;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
+std::shared_ptr<SceneGraph::GLPrimitives<>> line_strip;
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
 
 // State variables
 std::vector<cv::KeyPoint> keypoints;
+
+Sophus::SE3d guess;
 
 
 void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
@@ -230,8 +233,6 @@ void UpdateCurrentPose()
     max_track_length = std::max(track->keypoints.size(), max_track_length);
   }
   new_pose->longest_track = max_track_length;
-  std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
-               new_pose->longest_track << std::endl;
 }
 
 void BaAndStartNewLandmarks()
@@ -272,7 +273,6 @@ void ProcessImage(std::vector<cv::Mat>& images)
 //    exit(EXIT_SUCCESS);
 //  }
 
-  Sophus::SE3d guess;
   // If this is a keyframe, set it as one on the tracker.
   prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
 
@@ -294,20 +294,37 @@ void ProcessImage(std::vector<cv::Mat>& images)
     gui_vars.scene_graph.AddChild(axes.back().get());
   }
 
-  guess = prev_delta_t_ba * prev_t_ba;
+  if (((double)tracker.num_successful_tracks() / (double)num_features) > 0.3) {
+    guess = prev_delta_t_ba * prev_t_ba;
+  } else {
+    guess = Sophus::SE3d();
+  }
+
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0,0,-0.01);
+    guess.translation() = Eigen::Vector3d(0,0,0.001);
   }
+
+  std::cerr << "Guess: " << guess.matrix3x4() << std::endl;
 
   tracker.AddImage(images, guess);
   tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
-    tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
+    sdtrack::OptimizationOptions options;
+    options.optimize_landmarks = optimize_landmarks;
+    options.optimize_pose = optimize_pose;
+    tracker.OptimizeTracks(options);
     tracker.PruneTracks();
   }
+
+  if (tracker.num_successful_tracks() < 10) {
+    std::cerr << "Tracking failed. using guess." << std::endl;
+    tracker.set_t_ba(guess);
+    poses.back()->tracks.clear();
+  }
+
   // Update the pose t_ab based on the result from the tracker.
   UpdateCurrentPose();
 
@@ -375,14 +392,17 @@ void DrawImageData(uint32_t cam_id)
     gui_vars.handler->track_centers.clear();
   }
 
+  line_strip->Clear();
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
     axes[ii]->SetPose(poses[ii]->t_wp.matrix());
+    Eigen::Vector3f vertex = poses[ii]->t_wp.translation().cast<float>();
+    line_strip->AddVertex(vertex);
   }
 
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
     Eigen::Vector2d center;
-    if (track->keypoints.back()[cam_id].tracked) {
+    if (track->keypoints.back()[cam_id].tracked || is_manual_mode) {
       DrawTrackData(track, image_width, image_height, center,
                     gui_vars.handler->selected_track == track, cam_id);
     }
@@ -398,7 +418,7 @@ void DrawImageData(uint32_t cam_id)
     DrawTrackPatches(gui_vars.handler->selected_track, gui_vars.patches);
   }
 
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     gui_vars.camera_view[cam_id]->RenderChildren();
   }
 }
@@ -406,10 +426,9 @@ void DrawImageData(uint32_t cam_id)
 bool LoadCameras()
 {
   LoadCameraAndRig(*cl, camera_device, old_rig);
-  rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
- // rig.cameras_.resize(1);
- // rig.t_wc_.resize(1);
+  // rig.cameras_.resize(1);
+  // rig.t_wc_.resize(1);
   return true;
 }
 
@@ -420,7 +439,10 @@ void Run()
   // pangolin::Timer timer;
   bool capture_success = false;
   std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
-  camera_device.Capture(*images);
+  for (int ii = 0 ; ii < 10 ; ++ii) {
+    camera_device.Capture(*images);
+  }
+
   while(!pangolin::ShouldQuit()) {
     capture_success = false;
     const bool go = is_stepping;
@@ -509,12 +531,22 @@ void InitTracker()
   tracker_options.harris_score_threshold = 2e6;
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    for (int ii = 6 ; ii < feature_cells ; ++ii) {
+      for (int jj = 0 ; jj < feature_cells ; ++jj) {
+        tracker.feature_cells()[cam_id](ii, jj) =
+            sdtrack::SemiDenseTracker::kUnusedCell;
+      }
+    }
+  }
 }
 
 void InitGui()
 {
   InitTrackerGui(gui_vars, window_width, window_height, image_width,
                  image_height, rig.cameras_.size());
+  line_strip.reset(new SceneGraph::GLPrimitives<>);
+  gui_vars.scene_graph.AddChild(line_strip.get());
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
@@ -647,6 +679,7 @@ int main(int argc, char** argv) {
 
   if (cl->search("-startnow")) {
     is_running = true;
+    is_stepping = true;
   }
 
   LOG(INFO) << "Initializing camera...";
@@ -656,7 +689,7 @@ int main(int argc, char** argv) {
 
   InitGui();
 
-  ba::debug_level_threshold = -1;
+  bundle_adjuster.debug_level_threshold = -1;
 
   Run();
 
