@@ -1,5 +1,6 @@
 #include <miniglog/logging.h>
-#include <online_calibrator.h>
+#include "online_calibrator.h"
+#include "ftest.h"
 
 using namespace sdtrack;
 
@@ -11,9 +12,14 @@ OnlineCalibrator::OnlineCalibrator()
 void OnlineCalibrator::Init(calibu::Rig<Scalar> *rig,
                             uint32_t num_windows,
                             uint32_t window_length,
-                            Eigen::VectorXd covariance_weights)
+                            Eigen::VectorXd covariance_weights,
+                            double imu_time_offset_in,
+                            ba::InterpolationBufferT<
+                              ba::ImuMeasurementT<double>, double>* buffer)
 {
-  num_windows_ = num_windows;
+  imu_time_offset = imu_time_offset_in;
+  imu_buffer = buffer;
+  queue_length_ = num_windows;
   window_length_ = window_length;
   rig_ = rig;
   covariance_weights_ = covariance_weights;
@@ -31,7 +37,8 @@ void OnlineCalibrator::Init(calibu::Rig<Scalar> *rig,
   windows_.clear();
   windows_.reserve(num_windows);
 
-  ba::debug_level_threshold = 0;
+  selfcal_ba.debug_level_threshold = -1;
+  vi_selfcal_ba.debug_level_threshold = -1;
 }
 
 void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
@@ -65,58 +72,63 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                std::endl;
 }
 
+template<bool UseImu>
 void OnlineCalibrator::AnalyzePriorityQueue(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     CalibrationWindow &overal_window,
     uint32_t num_iterations, bool apply_results)
 {
-  // Backup the calibration params, in case we are not applying them.
-  Eigen::VectorXd params_backup(rig_->cameras_[0]->NumParams());
-  for (int ii = 0; ii < params_backup.rows() ; ++ii) {
-    params_backup[ii] = rig_->cameras_[0]->GetParams()[ii];
-  }
+  Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
+  Proxy<UseImu> ba_proxy(this);
+  auto& ba = ba_proxy.GetBa();
 
   ba::Options<double> options;
   options.write_reduced_camera_matrix = false;
   options.projection_outlier_threshold = 1.0;
-  options.trust_region_size = 10;
   options.use_dogleg = true;
   options.use_triangular_matrices = true;
   options.use_sparse_solver = false;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
-  options.trust_region_size = 100;
 
-  selfcal_ba.Init(options, poses.size(),
+  ba.Init(options, poses.size(),
                   current_tracks->size() * poses.size());
-  selfcal_ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
+  ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
 
   // Add all the windows to ba.
-  for (const CalibrationWindow& window : windows()) {
+  for (CalibrationWindow& window : windows_) {
     if (window.start_index < poses.size() && window.end_index < poses.size()) {
-      AddCalibrationWindowToBa(poses, window);
+      AddCalibrationWindowToBa<UseImu>(poses, window);
     }
   }
 
-  selfcal_ba.Solve(num_iterations);
+  ba.Solve(num_iterations);
+
 
   // Obtain the mean from the BA.
-  overal_window.mean = selfcal_ba.rig().cameras_[0]->GetParams();
+  overal_window.mean = ba.rig().cameras_[0]->GetParams();
   overal_window.covariance =
-      selfcal_ba.GetSolutionSummary().calibration_marginals;
+      ba.GetSolutionSummary().calibration_marginals;
 
-  // If we are not applying results, reset them.
-  if (!apply_results) {
-    // Replace the parameters with the backup.
-    rig_->cameras_[0]->SetParams(params_backup);
+  // At this point the BA rig t_wc_ does not update the external one, so we
+  // have to manually do it.
+  if (apply_results) {
+    rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
+    std::cerr << "new PQ t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
+  } else {
+    rig_->cameras_[0]->SetParams(cam_params_backup);
   }
 }
 
+template<bool UseImu>
 void OnlineCalibrator::AddCalibrationWindowToBa(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
-    const CalibrationWindow &window)
+    CalibrationWindow &window)
 {
+  window.num_measurements = 0;
+  Proxy<UseImu> ba_proxy(this);
+  auto& ba = ba_proxy.GetBa();
   const uint32_t start_active_pose = window.start_index;
 
   // First find the longest track id in the base frame. We will use this
@@ -137,9 +149,36 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   // First add all the poses and landmarks to ba.
   for (uint32_t ii = window.start_index; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
-    pose->opt_id[ba_id_] = selfcal_ba.AddPose(pose->t_wp, ii > start_active_pose);
+    // If not using an IMU, the first pose of the window is inactive. Otherwise
+    // all poses are active and we do a manual regularization below.
+    pose->opt_id[ba_id_] = ba.AddPose(
+          pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
+          (UseImu ? ii >= start_active_pose : ii > start_active_pose),
+          pose->time + imu_time_offset);
     // std::cerr << "Adding pose with opt_id " << pose->opt_id << " and t_wp " <<
-    //              pose->t_wp.matrix() << std::endl;
+    //              pose->t_wp.matrix() << std::endl
+
+    if (UseImu && ii > start_active_pose && ii > 0) {
+      std::vector<ba::ImuMeasurementT<Scalar>> meas =
+          imu_buffer->GetRange(poses[ii - 1]->time, pose->time);
+
+      /*std::cerr << "Adding OC imu residual between poses " << ii - 1 << " with "
+                 " time " << poses[ii - 1]->time <<  " and " << ii <<
+                 " with time " << pose->time << " with " << meas.size() <<
+                 " measurements" << std::endl;*/
+
+
+      ba.AddImuResidual(poses[ii - 1]->opt_id[ba_id_],
+          pose->opt_id[ba_id_], meas);
+
+      // If using an IMU and this is the first pose in the window, regularize
+      // the translation and gravity rotation so there are no nullspaces
+      if (ii == start_active_pose) {
+        /*std::cerr << "OC regularizing gravity and trans and bias of pose " <<
+                     pose->opt_id[ba_id_] << std::endl;*/
+        ba.RegularizePose(pose->opt_id[ba_id_], true, true, false);
+      }
+    }
 
     for (std::shared_ptr<DenseTrack> track: pose->tracks) {
       if (track->num_good_tracked_frames == 1 || track->is_outlier) {
@@ -153,7 +192,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ray = MultHomogeneous(pose->t_wp  * rig_->t_wc_[0], ray);
       bool active = track->id != longest_track->id;
       track->external_id[ba_id_] =
-          selfcal_ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
+          ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
       // std::cerr << "Adding lm with opt_id " << track->external_id << " and "
       //              " x_r " << ray.transpose() << " and x_orig: " <<
       //              x_r_orig_->transpose() << std::endl;
@@ -173,8 +212,9 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
            jj < (window.end_index - ii) ; ++jj) {
         if (track->keypoints[jj][0].tracked) {
           const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
-          selfcal_ba.AddProjectionResidual(
+          ba.AddProjectionResidual(
                 z, pose->opt_id[ba_id_] + jj, track->external_id[ba_id_], 0);
+          window.num_measurements++;
         }
       }
     }
@@ -232,7 +272,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   }
 
   // If we haven't got a full queue, insert the window if it doesn't overlap.
-  if (windows_.size() < num_windows_) {
+  if (windows_.size() < queue_length_) {
     if (num_overlaps == 0) {
       windows_.push_back(new_window);
       std::cerr << "Pushing back non overlapping window into position " <<
@@ -338,6 +378,91 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
 //  return false;
 //}
 
+double OnlineCalibrator::ComputeBhattacharyyaDistance(
+    const CalibrationWindow& window0,
+    const CalibrationWindow& window1)
+{
+  const double n0 = window0.num_measurements;
+  const double n1 = window1.num_measurements;
+  if (n0 == 0 || n1 == 0 ) {
+    return 0;
+  }
+
+  const Eigen::MatrixXd cov_pooled =
+      ((n0 - 1) * window0.covariance + (n1) * window1.covariance) /
+      (n0 + n1 - 2);
+  const Eigen::VectorXd mean_diff = window0.mean - window1.mean;
+  return 1.0 / 8.0 * mean_diff.transpose() * cov_pooled.inverse() * mean_diff;
+}
+
+///
+/// \brief One solution two the multivariate Behrens–Fisher problem.
+/// \param window0
+/// \param window1
+/// \return
+///
+double OnlineCalibrator::ComputeYao1965(
+    const CalibrationWindow& window0,
+    const CalibrationWindow& window1)
+{
+  const Eigen::MatrixXd& s0 = window0.covariance;
+  const Eigen::MatrixXd& s1 = window1.covariance;
+
+  const double p = window0.covariance.rows();
+  const double n0 = window0.num_measurements;
+  const double n1 = window1.num_measurements;
+  if (n0 == 0 || n1 == 0 || p == 0 || s0.fullPivLu().rank() != p ||
+      s1.fullPivLu().rank() != p) {
+    return 1.0;
+  }
+
+  const Eigen::MatrixXd s_inv = (s0 + s1).inverse();
+  const Eigen::VectorXd xd = window0.mean - window1.mean;
+  const double t2 = xd.transpose() * s_inv * xd;
+  const double v_denom = t2;
+  const double v = 1.0 /
+      ((1.0 / n0) *
+      powi((double)(xd.transpose() * s_inv * s0 * s_inv * xd) / v_denom, 2) +
+      (1.0 / n1) *
+      powi((double)(xd.transpose() * s_inv * s1 * s_inv * xd) / v_denom, 2));
+
+  const double f = t2 / ((v * p) / (v - p + 1));
+  const double p_score = compute_p_score(f, p, v - p + 1);
+
+  if (p_score < 0.1) {
+    std::cerr << "computing p score for f " << f << " p: " << p << " n0 " <<
+                 n0 << " n1 " << n1 << " with t^2 " << t2 <<
+                 " p_score: " << p_score << std::endl;
+    std::cerr << "with cov0:\n" << window0.covariance << std::endl;
+    std::cerr << "with mean0:\n" << window0.mean.transpose() << std::endl;
+    std::cerr << "with cov1:\n" << window1.covariance << std::endl;
+    std::cerr << "with mean1:\n" << window1.mean.transpose() << std::endl;
+  }
+  return p_score;
+}
+
+double OnlineCalibrator::ComputeHotellingScore(
+    const CalibrationWindow& window0,
+    const CalibrationWindow& window1)
+{
+  const double p = window0.covariance.rows();
+  const double n0 = window0.num_measurements;
+  const double n1 = window1.num_measurements;
+  if (n0 == 0 || n1 == 0 || p == 0) {
+    return 0;
+  }
+
+  const Eigen::MatrixXd cov_pooled =
+      ((n0 - 1) * window0.covariance + (n1) * window1.covariance) /
+      (n0 + n1 - 2);
+  const Eigen::VectorXd mean_diff = window0.mean - window1.mean;
+  const double t_squared = mean_diff.transpose() *
+      (cov_pooled * (1.0 / n0 + 1.0 / n1)).inverse() * mean_diff;
+  const double f_val = (n0 + n1 - p - 1.0) / (p * (n0 + n1 - 2.0)) * t_squared;
+  const double p_score = compute_p_score(f_val, p, n0 + n1 - p - 1);
+  return p_score;
+}
+
 double OnlineCalibrator::ComputeKlDivergence(
     const CalibrationWindow& window0,
     const CalibrationWindow& window1)
@@ -387,8 +512,7 @@ double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
        covariance_weights_.asDiagonal()).determinant();
 }
 
-
-
+template<bool UseImu>
 void OnlineCalibrator::AnalyzeCalibrationWindow(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
@@ -396,14 +520,14 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     CalibrationWindow &window,
     uint32_t num_iterations, bool apply_results)
 {
+  Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
+  std::cerr << "Analyzing calibration window with imu = " << UseImu <<
+               std::endl;
+  Proxy<UseImu> ba_proxy(this);
+  auto& ba = ba_proxy.GetBa();
+
   window.start_index = start_pose;
   window.end_index = end_pose;
-
-  // Backup the calibration params, in case we are not applying them.
-  Eigen::VectorXd params_backup(rig_->cameras_[0]->NumParams());
-  for (int ii = 0; ii < params_backup.rows() ; ++ii) {
-    params_backup[ii] = rig_->cameras_[0]->GetParams()[ii];
-  }
 
   ba::Options<double> options;
   options.write_reduced_camera_matrix = false;
@@ -419,29 +543,42 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
   // Do a bundle adjustment on the current set
   if (current_tracks && poses.size() > 1) {
-    selfcal_ba.Init(options, poses.size(),
+    // If using the IMU, we have to do a special regularization step for each
+    // candidate window, and so we disable the automatic one as it will only
+    // do so for the one root pose.
+    if (UseImu) {
+      options.enable_auto_regularization = false;
+    }
+
+    ba.Init(options, poses.size(),
                     current_tracks->size() * poses.size());
-    selfcal_ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
+    ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
 
 
-    AddCalibrationWindowToBa(poses, window);
+    AddCalibrationWindowToBa<UseImu>(poses, window);
 
     // Optimize the poses
-    selfcal_ba.Solve(num_iterations);
+    ba.Solve(num_iterations);
 
     const ba::SolutionSummary<double>& summary =
-        selfcal_ba.GetSolutionSummary();
+        ba.GetSolutionSummary();
     // Obtain the mean from the BA.
-    window.mean = selfcal_ba.rig().cameras_[0]->GetParams();
+    window.mean = ba.rig().cameras_[0]->GetParams();
     window.covariance = summary.calibration_marginals;
+    std::cerr << "BA cov is:\n" << window.covariance << std::endl;
+    std::cerr << "BA mean is:" << window.mean.transpose().format(kLongFmt) <<
+                 std::endl;
     window.score = GetWindowScore(window);
 
     if (apply_results) {
+      rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
+      std::cerr << "new t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
+
       Sophus::SE3d t_ba;
       std::shared_ptr<TrackerPose> last_pose = poses.back();
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
-      last_pose->t_wp = selfcal_ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
+      last_pose->t_wp = ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
       // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
       //              std::endl;
 
@@ -449,7 +586,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
         std::shared_ptr<TrackerPose> pose = poses[ii];
         const ba::PoseT<double>& ba_pose =
-            selfcal_ba.GetPose(pose->opt_id[ba_id_]);
+            ba.GetPose(pose->opt_id[ba_id_]);
         // std::cerr << "Pose " << pose->opt_id << " t_wp " << std::endl <<
         //              pose->t_wp.matrix() << std::endl << " after opt: " <<
         //              std::endl << ba_pose.t_wp.matrix() << std::endl;
@@ -469,7 +606,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
           // Get the landmark location in the world frame.
           const Eigen::Vector4d& x_w =
-              selfcal_ba.GetLandmark(track->external_id[ba_id_]);
+              ba.GetLandmark(track->external_id[ba_id_]);
           Eigen::Vector4d prev_ray;
           prev_ray.head<3>() = track->ref_keypoint.ray;
           prev_ray[3] = track->ref_keypoint.rho;
@@ -487,8 +624,39 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
         }
       }
     } else {
-      std::cerr << "Resetting parameters. " << std::endl;
-      rig_->cameras_[0]->SetParams(params_backup);
+      rig_->cameras_[0]->SetParams(cam_params_backup);
     }
   }
 }
+
+template void OnlineCalibrator::AnalyzePriorityQueue<false>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+    bool apply_results = false);
+
+template void OnlineCalibrator::AnalyzePriorityQueue<true>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+    bool apply_results = false);
+
+template void OnlineCalibrator::AddCalibrationWindowToBa<false>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    CalibrationWindow& window);
+
+template void OnlineCalibrator::AddCalibrationWindowToBa<true>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    CalibrationWindow& window);
+
+template void OnlineCalibrator::AnalyzeCalibrationWindow<false>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
+    uint32_t num_iterations = 1, bool apply_results = false);
+
+template void OnlineCalibrator::AnalyzeCalibrationWindow<true>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
+    uint32_t num_iterations = 1, bool apply_results = false);

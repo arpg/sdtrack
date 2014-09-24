@@ -130,6 +130,7 @@ private:
   uint32_t num_cameras_;
   bool last_image_was_keyframe_ = true;
   double average_track_length_;
+  uint32_t tracks_suitable_for_cam_localization = 0;
   TrackerOptions  tracker_options_;
   KeypointOptions keypoint_options_;
   std::vector<DenseKeypoint> previous_keypoints_;

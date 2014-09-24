@@ -483,6 +483,7 @@ double SemiDenseTracker::EvaluateTrackResiduals(
 
 void SemiDenseTracker::ReprojectTrackCenters() {
   average_track_length_ = 0;
+  tracks_suitable_for_cam_localization = 0;
   for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
     const calibu::CameraInterface<Scalar>& cam = *camera_rig_->cameras_[cam_id];
     const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
@@ -521,6 +522,11 @@ void SemiDenseTracker::ReprojectTrackCenters() {
               (track->keypoints.back()[cam_id].kp -
                track->keypoints.front()[cam_id].kp).norm();
         }
+
+        if (track->keypoints.size() >= MIN_OBS_FOR_CAM_LOCALIZATION) {
+          tracks_suitable_for_cam_localization++;
+        }
+
       } else {
         // invalidate this latest keypoint.
         track->keypoints.back()[cam_id].tracked = false;
@@ -570,7 +576,9 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
         level_options.optimize_landmarks = true;
         level_options.optimize_pose = false;
       } else {
-        if (average_track_length_ > 5) {
+        if (average_track_length_ > 10 &&
+            tracks_suitable_for_cam_localization >
+            tracker_options_.num_active_tracks) {
           if (optimized_pose == false) {
             level_options.optimize_landmarks = false;
             level_options.optimize_pose = true;
@@ -587,6 +595,12 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
           level_options.optimize_pose = true;
         }
       }
+
+      LOG(g_sdtrack_debug)
+          << "Auto optim. level " << last_level << " with pose : " <<
+             level_options.optimize_pose << " and lm : " <<
+             level_options.optimize_landmarks << " with av track " <<
+             average_track_length_ << std::endl;
 
       uint32_t iterations = 0;
       // Continuously iterate this pyramid level until we meet a stop
@@ -826,14 +840,11 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
         pix = cam->Transfer3d(t_ba, ref_patch.rays[ii],
                               ref_kp.rho) + track->offset_2d[cam_id];
       } else {
-        // LOG(g_sdtrack_debug) << "prev pix: " << pix.transpose() << std::endl;
-        // linearly interpolate this
         pix =
             tl_factor * corner_projections[0] +
             tr_factor * corner_projections[1] +
             bl_factor * corner_projections[2] +
             br_factor * corner_projections[3];
-        // LOG(g_sdtrack_debug) << "post pix: " << pix.transpose() << "\n" << std::endl;
       }
     }
 
@@ -848,9 +859,6 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
       result.residuals[ii] = 0;
       continue;
     } else {
-      // ray.head<3>() = ref_patch.rays[ii];
-      // ray[3] = ref_kp.rho;
-      // const Eigen::Vector4t ray_b = Sophus::MultHomogeneous(t_ba, ray);
       if (corners_project && transfer_jacobians) {
         ray.head<3>() = ref_patch.rays[ii];
         ray[3] = ref_kp.rho;

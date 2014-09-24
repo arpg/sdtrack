@@ -3,6 +3,7 @@
 #include <calibu/cam/camera_crtp_interop.h>
 #include <Eigen/Eigenvalues>
 #include <ba/BundleAdjuster.h>
+#include <ba/InterpolationBuffer.h>
 #include <sdtrack/semi_dense_tracker.h>
 #include "math_types.h"
 #include "etc_common.h"
@@ -25,33 +26,41 @@ struct CalibrationWindow {
   double kl_divergence = 0;
   Eigen::MatrixXd covariance;
   Eigen::VectorXd mean;
+  uint32_t num_measurements;
 };
 
 class OnlineCalibrator {
  public:
   OnlineCalibrator();
-  void Init(calibu::Rig<Scalar>* rig, uint32_t num_windows,
-            uint32_t window_length, Eigen::VectorXd covariance_weights);
+  void Init(
+      calibu::Rig<Scalar>* rig, uint32_t num_windows, uint32_t window_length,
+      Eigen::VectorXd covariance_weights, double imu_time_offset_in = 0,
+      ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* buffer =
+          nullptr);
   void TestJacobian(Eigen::Vector2t pix, Sophus::SE3t t_ba, Scalar rho);
 
+  template <bool UseImu>
   void AnalyzePriorityQueue(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       std::list<std::shared_ptr<DenseTrack>>* current_tracks,
       CalibrationWindow& overal_window, uint32_t num_iterations = 1,
       bool apply_results = false);
 
+  template <bool UseImu>
   void AddCalibrationWindowToBa(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
-      const CalibrationWindow& window);
+      CalibrationWindow& window);
 
   bool AnalyzeCalibrationWindow(CalibrationWindow& new_window);
 
+  template <bool UseImu>
   void AnalyzeCalibrationWindow(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       std::list<std::shared_ptr<DenseTrack>>* current_tracks,
       uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
       uint32_t num_iterations = 1, bool apply_results = false);
   const std::vector<CalibrationWindow>& windows() { return windows_; }
+  void ClearQueue() { windows_.clear(); }
   double GetWindowScore(const CalibrationWindow& window);
 
   double ComputeKlDivergence(const CalibrationWindow& window0,
@@ -59,14 +68,44 @@ class OnlineCalibrator {
   void SetPriorityQueueDistribution(const Eigen::MatrixXd& covariance,
                                     const Eigen::VectorXd& mean);
 
- private:
+  double ComputeHotellingScore(const CalibrationWindow& window0,
+                               const CalibrationWindow& window1);
+
+  double ComputeBhattacharyyaDistance(const CalibrationWindow &window0,
+                                      const CalibrationWindow &window1);
+  double ComputeYao1965(const CalibrationWindow &window0,
+                        const CalibrationWindow &window1);
+
+  uint32_t NumWindows() { return windows_.size(); }
+  uint32_t queue_length() { return queue_length_; }
+private:
   std::vector<CalibrationWindow> windows_;
-  uint32_t num_windows_ = 5;
+  uint32_t queue_length_ = 5;
   uint32_t window_length_ = 10;
   calibu::Rig<Scalar>* rig_;
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
+  ba::BundleAdjuster<double, 1, 15, 0, true> vi_selfcal_ba;
+  ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* imu_buffer;
   uint32_t ba_id_ = 1;
+  double imu_time_offset;
+
+  template <bool>
+  struct Proxy {};
+};
+
+template <>
+struct OnlineCalibrator::Proxy<true> {
+  Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
+  OnlineCalibrator* owner;
+  decltype(vi_selfcal_ba) & GetBa() const { return owner->vi_selfcal_ba; }
+};
+
+template <>
+struct OnlineCalibrator::Proxy<false> {
+  Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
+  OnlineCalibrator* owner;
+  decltype(selfcal_ba) & GetBa() const { return owner->selfcal_ba; }
 };
 }
