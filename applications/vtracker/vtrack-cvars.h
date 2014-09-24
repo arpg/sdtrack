@@ -3,7 +3,7 @@
 #include "../common/common_cvars.h"
 
 static int& pyramid_levels =
-    CVarUtils::CreateCVar<>("sd.PyramidLevels", 3, "");
+    CVarUtils::CreateCVar<>("sd.PyramidLevels", 4, "");
 static int& patch_size =
     CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
 static int& ba_debug_level =

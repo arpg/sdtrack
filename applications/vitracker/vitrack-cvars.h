@@ -65,5 +65,5 @@ static double& ncc_threshold =
     CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
 static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
-                            (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)
-                            , "");
+                            (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) *
+                                              ba::Gravity), "");
