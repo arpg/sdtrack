@@ -1128,6 +1128,7 @@ int main(int argc, char** argv) {
 
   if (cl->search("-startnow")) {
     is_running = true;
+    is_stepping = true;
   }
 
   LOG(INFO) << "Initializing camera...";
