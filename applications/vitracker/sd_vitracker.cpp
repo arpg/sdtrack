@@ -576,9 +576,11 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     } else {
       if (imu_buffer.elements.size() > 0) {
         Eigen::Vector3t down = -imu_buffer.elements.front().a.normalized();
+        std::cerr << "Down vector based on first imu meas: " <<
+                     down.transpose() << std::endl;
 
         // compute path transformation
-        Eigen::Vector3t forward(1.0,0.0,0.0);
+        Eigen::Vector3t forward(1.0, 0.0, 0.0);
         Eigen::Vector3t right = down.cross(forward);
         right.normalize();
         forward = right.cross(down);
@@ -588,7 +590,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         base.block<1, 3>(0, 0) = forward;
         base.block<1, 3>(1, 0) = right;
         base.block<1, 3>(2, 0) = down;
-        new_pose->t_wp = rig.t_wc_[0] * Sophus::SE3t(base);
+        new_pose->t_wp = /*rig.t_wc_[0] * */Sophus::SE3t(base);
       }
       // Set the initial velocity and bias. The initial pose is initialized to
       // align the gravity plane
