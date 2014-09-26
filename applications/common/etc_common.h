@@ -172,7 +172,7 @@ inline std::istream& operator>>(std::istream& Stream,
 
 namespace sdtrack {
 struct TrackerPose {
-  TrackerPose() { opt_id.resize(2); }
+  TrackerPose() { opt_id.resize(3); }
 
   std::list<std::shared_ptr<DenseTrack>> tracks;
   Sophus::SE3t t_wp;
