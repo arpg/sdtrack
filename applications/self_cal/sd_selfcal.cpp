@@ -42,6 +42,7 @@ bool unknown_imu_calibration = false;
 
 bool compare_self_cal_with_batch = false;
 bool do_self_cal = true;
+bool do_imu_self_cal = false;
 uint32_t num_self_cal_segments = 5;
 uint32_t self_cal_segment_length = 10;
 
@@ -354,6 +355,7 @@ void UpdateCurrentPose()
 
 void BaAndStartNewLandmarks()
 {
+  bool imu_selfcal_active = has_imu && use_imu_measurements && do_imu_self_cal;
   if (!is_keyframe) {
     return;
   }
@@ -363,7 +365,7 @@ void BaAndStartNewLandmarks()
   if (do_self_cal && (unknown_cam_calibration || unknown_imu_calibration)
       && poses.size() > self_cal_segment_length) {
     bool window_analyzed = false;
-    if (has_imu && poses.size() > min_poses_for_imu && use_imu_measurements &&
+    if (imu_selfcal_active && poses.size() > min_poses_for_imu &&
         unknown_imu_calibration) {
       online_calib.AnalyzeCalibrationWindow<true>(
             poses, current_tracks, unknown_imu_calibration_start_pose,
@@ -410,7 +412,7 @@ void BaAndStartNewLandmarks()
   }
 
   if (do_bundle_adjustment) {
-    if (has_imu && poses.size() > min_poses_for_imu && use_imu_measurements) {
+    if (imu_selfcal_active && poses.size() > min_poses_for_imu) {
       std::cerr << "doing VI BA." << std::endl;
       DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses, 0,
                          ba_imu_residual_ids);
@@ -424,7 +426,7 @@ void BaAndStartNewLandmarks()
       uint32_t start_pose =
           std::max(0, (int)poses.size() - (int)self_cal_segment_length);
       uint32_t end_pose = poses.size();
-      if (has_imu && use_imu_measurements) {
+      if (imu_selfcal_active) {
         online_calib.AnalyzeCalibrationWindow<true>(
               poses, current_tracks, start_pose, end_pose,
               candidate_window, 20);
@@ -468,7 +470,7 @@ void BaAndStartNewLandmarks()
         last_added_window_kl_divergence = last_window_kl_divergence;
         const bool apply_results =
             !(unknown_cam_calibration || unknown_imu_calibration);
-        if (has_imu && use_imu_measurements) {
+        if (imu_selfcal_active) {
           online_calib.AnalyzePriorityQueue<true>(
                 poses, current_tracks, pq_window, 50, apply_results);
         } else {
@@ -502,7 +504,7 @@ void BaAndStartNewLandmarks()
         if (compare_self_cal_with_batch && !unknown_cam_calibration) {
           // Also analyze the full batch solution.
           sdtrack::CalibrationWindow batch_window;
-          if (has_imu && use_imu_measurements) {
+          if (imu_selfcal_active) {
             online_calib.AnalyzeCalibrationWindow<true>(
                   poses, current_tracks, 0, poses.size(), batch_window, 50);
           } else {
