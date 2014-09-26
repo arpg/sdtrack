@@ -62,6 +62,7 @@ int image_width;
 int image_height;
 calibu::CameraRigT<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
+calibu::Rig<Scalar> selfcal_rig;
 hal::Camera camera_device;
 bool has_imu = false;
 hal::IMU imu_device;
@@ -377,6 +378,7 @@ void BaAndStartNewLandmarks()
             poses.size(), pq_window, 50, true);
       window_analyzed = true;
     }
+    rig.cameras_[0]->SetParams(selfcal_rig.cameras_[0]->GetParams());
     for (uint32_t ii = unknown_cam_calibration_start_pose ;
          ii < poses.size() ; ++ii) {
       for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
@@ -478,6 +480,7 @@ void BaAndStartNewLandmarks()
                 poses, current_tracks, pq_window, 50, apply_results);
         }
         if (apply_results) {
+          rig.cameras_[0]->SetParams(selfcal_rig.cameras_[0]->GetParams());
           for (size_t ii = unknown_cam_calibration_start_pose;
                ii < poses.size(); ++ii) {
             for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
@@ -1089,6 +1092,7 @@ bool LoadCameras(GetPot& cl)
   // perturb the values.
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
+  calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
   if (unknown_cam_calibration) {
     Eigen::VectorXd params = old_rig.cameras[0].camera.GenericParams();
     // fov in rads.
@@ -1106,6 +1110,7 @@ bool LoadCameras(GetPot& cl)
     }
 
     rig.cameras_[0]->SetParams(params);
+    selfcal_rig.cameras_[0]->SetParams(params);
 
     // Add a marker in the batch file for this initial, unknown calibration.
     Eigen::VectorXd initial_covariance(params.rows());
@@ -1119,7 +1124,9 @@ bool LoadCameras(GetPot& cl)
   if (has_imu && unknown_imu_calibration) {
     rig.t_wc_[0].so3() = rig.t_wc_[0].so3() * Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
+    selfcal_rig.t_wc_[0] = rig.t_wc_[0];
   }
+
   return true;
 }
 
@@ -1175,7 +1182,7 @@ int main(int argc, char** argv) {
   // weights = Eigen::VectorXd(6);
   // weights << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
 
-  online_calib.Init(&rig, num_self_cal_segments,
+  online_calib.Init(&selfcal_rig, num_self_cal_segments,
                     self_cal_segment_length, weights,
                     imu_time_offset, &imu_buffer);
 
