@@ -414,7 +414,7 @@ void BaAndStartNewLandmarks()
   }
 
   if (do_bundle_adjustment) {
-    if (imu_selfcal_active && poses.size() > min_poses_for_imu) {
+    if (has_imu && use_imu_measurements && poses.size() > min_poses_for_imu) {
       std::cerr << "doing VI BA." << std::endl;
       DoBundleAdjustment(vi_bundle_adjuster, true, num_ba_poses, 0,
                          ba_imu_residual_ids);
