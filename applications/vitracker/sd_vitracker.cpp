@@ -177,7 +177,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
         const bool is_active = ii >= start_active_pose && !initialize_lm;
         pose->opt_id[id] = ba.AddPose(
               pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
-              is_active, pose->time + imu_time_offset);
+              is_active, pose->time);
 
         if (use_imu && ii >= start_active_pose && ii > 0) {
           std::vector<ba::ImuMeasurementT<Scalar>> meas =
@@ -619,7 +619,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   }
 
   // Set the timestamp of the latest pose to this image's timestamp.
-  poses.back()->time = timestamp;
+  poses.back()->time = timestamp + imu_time_offset;
 
   guess = prev_delta_t_ba * prev_t_ba;
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
@@ -943,7 +943,16 @@ bool LoadCameras()
   }
   // Capture an image so we have some IMU data.
   std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
-  camera_device.Capture(*images);
+  while (imu_buffer.elements.size() == 0) {
+    camera_device.Capture(*images);
+  }
+
+  if (!use_system_time) {
+    imu_time_offset = imu_buffer.elements.back().time -
+        images->Ref().device_time();
+    std::cerr << "Setting initial time offset to " << imu_time_offset <<
+                 std:: endl;
+  }
 
   return true;
 }
