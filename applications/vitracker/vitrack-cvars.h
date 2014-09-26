@@ -12,9 +12,9 @@ static double& accel_bias_sigma =
     CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", IMU_ACCEL_BIAS_SIGMA, "");
 
 static int& pyramid_levels =
-    CVarUtils::CreateCVar<>("sd.PyramidLevels", 3, "");
+    CVarUtils::CreateCVar<>("sd.PyramidLevels", 4, "");
 static int& patch_size =
-    CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
+    CVarUtils::CreateCVar<>("sd.PatchSize", 9, "");
 static int& ba_debug_level =
     CVarUtils::CreateCVar<>("debug.BaDebugLevel",-1, "");
 static uint32_t& num_ba_poses =
