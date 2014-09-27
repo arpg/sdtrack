@@ -180,6 +180,7 @@ struct TrackerPose {
   Eigen::Vector6t b;
   std::vector<uint32_t> opt_id;
   std::vector<Sophus::SE3t> calib_t_wp;
+  Eigen::VectorXd cam_params;
   double time;
   uint32_t longest_track;
 };
