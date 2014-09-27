@@ -187,7 +187,7 @@ bool SemiDenseTracker::IsKeypointValid(const cv::KeyPoint& kp,
   }
 
   uint32_t margin =
-      tracker_options_.patch_dim * tracker_options_.pyramid_levels;
+      (tracker_options_.patch_dim + 1) * tracker_options_.pyramid_levels;
   // Key keypoint also can't be closer than a certain amount to the edge.
   if (kp.pt.x < margin || kp.pt.y < margin ||
       kp.pt.x > image_width - margin || kp.pt.y > image_height - margin) {
