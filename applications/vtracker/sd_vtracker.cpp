@@ -116,7 +116,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         const bool constrains_active =
             track->keypoints.size() + ii > start_active_pose;
-        if (track->num_good_tracked_frames == 1 || track->is_outlier ||
+        if (track->num_good_tracked_frames <= 1 || track->is_outlier ||
             !constrains_active) {
           track->external_id[id] = UINT_MAX;
           continue;
@@ -531,14 +531,6 @@ void InitTracker()
   tracker_options.harris_score_threshold = 2e6;
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
-  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-    for (int ii = 6 ; ii < feature_cells ; ++ii) {
-      for (int jj = 0 ; jj < feature_cells ; ++jj) {
-        tracker.feature_cells()[cam_id](ii, jj) =
-            sdtrack::SemiDenseTracker::kUnusedCell;
-      }
-    }
-  }
 }
 
 void InitGui()
