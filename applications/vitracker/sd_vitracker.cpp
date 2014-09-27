@@ -624,11 +624,9 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   guess = prev_delta_t_ba * prev_t_ba;
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0, 0, -0.01);
+    guess.translation() = Eigen::Vector3d(0, 0, 0.001);
   }
 
-
-  bool used_imu_for_guess = false;
   if (use_imu_measurements &&
       use_imu_for_guess && poses.size() >= min_poses_for_imu) {
     std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[poses.size() - 2];
