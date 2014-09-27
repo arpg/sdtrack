@@ -33,8 +33,9 @@ class OnlineCalibrator {
  public:
   OnlineCalibrator();
   void Init(
-      calibu::Rig<Scalar>* rig, uint32_t num_windows, uint32_t window_length,
-      Eigen::VectorXd covariance_weights, double imu_time_offset_in = 0,
+      std::mutex* ba_mutex, calibu::Rig<Scalar>* rig, uint32_t num_windows,
+      uint32_t window_length, Eigen::VectorXd covariance_weights,
+      double imu_time_offset_in = 0,
       ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* buffer =
           nullptr);
   void TestJacobian(Eigen::Vector2t pix, Sophus::SE3t t_ba, Scalar rho);
@@ -75,6 +76,8 @@ class OnlineCalibrator {
                                       const CalibrationWindow &window1);
   double ComputeYao1965(const CalibrationWindow &window0,
                         const CalibrationWindow &window1);
+  double ComputeNelVanDerMerwe1986(const CalibrationWindow &window0,
+                                   const CalibrationWindow &window1);
 
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
@@ -86,10 +89,11 @@ private:
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
-  ba::BundleAdjuster<double, 1, 15, 0, true> vi_selfcal_ba;
+  ba::BundleAdjuster<double, 1, 15, 5, false> vi_selfcal_ba;
   ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* imu_buffer;
   uint32_t ba_id_ = 2;
   double imu_time_offset;
+  std::mutex* ba_mutex_;
 
   template <bool>
   struct Proxy {};

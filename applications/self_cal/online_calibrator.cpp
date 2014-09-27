@@ -9,14 +9,16 @@ OnlineCalibrator::OnlineCalibrator()
 
 }
 
-void OnlineCalibrator::Init(calibu::Rig<Scalar> *rig,
+void OnlineCalibrator::Init(std::mutex* ba_mutex,
+                            calibu::Rig<Scalar> *rig,
                             uint32_t num_windows,
                             uint32_t window_length,
                             Eigen::VectorXd covariance_weights,
                             double imu_time_offset_in,
                             ba::InterpolationBufferT<
-                              ba::ImuMeasurementT<double>, double>* buffer)
+                            ba::ImuMeasurementT<double>, double>* buffer)
 {
+  ba_mutex_ = ba_mutex;
   imu_time_offset = imu_time_offset_in;
   imu_buffer = buffer;
   queue_length_ = num_windows;
@@ -97,9 +99,13 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
 
   // Add all the windows to ba.
-  for (CalibrationWindow& window : windows_) {
-    if (window.start_index < poses.size() && window.end_index < poses.size()) {
-      AddCalibrationWindowToBa<UseImu>(poses, window);
+  {
+    std::lock_guard<std::mutex> lock(*ba_mutex_);
+    for (CalibrationWindow& window : windows_) {
+      if (window.start_index < poses.size() &&
+          window.end_index < poses.size()) {
+        AddCalibrationWindowToBa<UseImu>(poses, window);
+      }
     }
   }
 
@@ -113,11 +119,14 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   // At this point the BA rig t_wc_ does not update the external one, so we
   // have to manually do it.
-  if (apply_results) {
-    rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
-    std::cerr << "new PQ t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
-  } else {
-    rig_->cameras_[0]->SetParams(cam_params_backup);
+  {
+    std::lock_guard<std::mutex> lock(*ba_mutex_);
+    if (apply_results) {
+      rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
+      std::cerr << "new PQ t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
+    } else {
+      rig_->cameras_[0]->SetParams(cam_params_backup);
+    }
   }
 }
 
@@ -596,10 +605,12 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
     ba.Init(options, poses.size(),
                     current_tracks->size() * poses.size());
-    ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
 
-
-    AddCalibrationWindowToBa<UseImu>(poses, window);
+    {
+      ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
+      std::lock_guard<std::mutex> lock(*ba_mutex_);
+      AddCalibrationWindowToBa<UseImu>(poses, window);
+    }
 
     // Optimize the poses
     ba.Solve(num_iterations);
@@ -615,6 +626,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     window.score = GetWindowScore(window);
 
     if (apply_results) {
+      std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
       std::cerr << "new t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
 
@@ -668,6 +680,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
         }
       }
     } else {
+      std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }
   }
