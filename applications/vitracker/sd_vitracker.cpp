@@ -590,7 +590,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         base.block<1, 3>(0, 0) = forward;
         base.block<1, 3>(1, 0) = right;
         base.block<1, 3>(2, 0) = down;
-        new_pose->t_wp = /*rig.t_wc_[0] * */Sophus::SE3t(base);
+        new_pose->t_wp = Sophus::SE3t(base);
       }
       // Set the initial velocity and bias. The initial pose is initialized to
       // align the gravity plane
