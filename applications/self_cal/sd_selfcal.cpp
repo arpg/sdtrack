@@ -67,6 +67,7 @@ int image_height;
 calibu::CameraRigT<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 calibu::Rig<Scalar> selfcal_rig;
+calibu::Rig<Scalar> aac_rig;
 hal::Camera camera_device;
 bool has_imu = false;
 hal::IMU imu_device;
@@ -159,6 +160,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
   options.error_change_threshold = 1e-3;
   options.use_robust_norm_for_proj_residuals = use_robust_norm_for_proj;
   options.projection_outlier_threshold = outlier_threshold;
+  options.use_per_pose_cam_params = false;
   options.regularize_biases_in_batch = poses.size() < POSES_TO_INIT ||
       regularize_biases_in_batch;
 
@@ -191,8 +193,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
       ba.Init(options, end_pose_id + 1, current_tracks->size() *
               (end_pose_id + 1));
-      for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-        ba.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
+      for (uint32_t cam_id = 0; cam_id < ba_rig.cameras_.size(); ++cam_id) {
+        ba.AddCamera(ba_rig.cameras_[cam_id], ba_rig.t_wc_[cam_id]);
       }
 
       // First add all the poses and landmarks to ba.
@@ -246,7 +248,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           Eigen::Vector4d ray;
           ray.head<3>() = track->ref_keypoint.ray;
           ray[3] = track->ref_keypoint.rho;
-          ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
+          ray = sdtrack::MultHomogeneous(pose->t_wp  * ba_rig.t_wc_[0], ray);
           bool active = track->id != tracker.longest_track_id() ||
               !all_poses_active || use_imu;
           if (!active) {
@@ -264,16 +266,20 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           if (track->external_id[id] == UINT_MAX) {
             continue;
           }
-          for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+          for (uint32_t cam_id = 0; cam_id < ba_rig.cameras_.size(); ++cam_id) {
             for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
               if (track->keypoints[jj][cam_id].tracked) {
                 const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
-                uint32_t proj_residual_id = ba.AddProjectionResidual(
-                      z, pose->opt_id[id] + jj, track->external_id[id], cam_id,
-                      2.0);
-                // Store reprojection constraint ids for the last frame.
-                if ((ii + jj) == end_pose_id) {
-                  last_frame_proj_residual_ids.push_back(proj_residual_id);
+                if (ba.GetNumPoses() > (pose->opt_id[id] + jj)) {
+                  const uint32_t res_id =
+                      ba.AddProjectionResidual(
+                        z, pose->opt_id[id] + jj,
+                        track->external_id[id], cam_id, 2.0);
+
+                  // Store reprojection constraint ids for the last frame.
+                  if ((ii + jj) == end_pose_id) {
+                    last_frame_proj_residual_ids.push_back(res_id);
+                  }
                 }
               }
             }
@@ -334,9 +340,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
 
           if (do_outlier_rejection && poses.size() > POSES_TO_INIT) {
-            if (ratio > 0.3 &&
-                ((track->keypoints.size() == num_ba_poses - 1) ||
-                 track->tracked == false)) {
+            if (ratio > 0.3 && track->tracked == false &&
+                (end_pose_id >= min_poses_for_imu - 1 || !use_imu)) {
+//            if (ratio > 0.3 &&
+//                ((track->keypoints.size() == num_ba_poses - 1) ||
+//                 track->tracked == false)) {
               num_outliers++;
               track->is_outlier = true;
             } else {
@@ -350,7 +358,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           // Make the ray relative to the pose.
           Eigen::Vector4d x_r =
               sdtrack::MultHomogeneous(
-                (pose->t_wp * rig.t_wc_[0]).inverse(), x_w);
+                (pose->t_wp * ba_rig.t_wc_[0]).inverse(), x_w);
           // Normalize the xyz component of the ray to compare to the original
           // ray.
           x_r /= x_r.head<3>().norm();
@@ -359,7 +367,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
       }
     }
   }
-  std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
+  // std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
 
   const ba::SolutionSummary<Scalar>& summary = ba.GetSolutionSummary();
   // std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
@@ -436,14 +444,23 @@ void DoAAC()
       uint32_t num_poses = poses.size();
       orig_num_aac_poses = num_aac_poses;
       while (true) {
-        if (poses.size() > min_poses_for_imu && use_imu_measurements) {
+        if (poses.size() > min_poses_for_imu &&
+            use_imu_measurements && has_imu) {
+          {
+            std::lock_guard<std::mutex> lock(aac_mutex);
+            aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
+            aac_rig.t_wc_[0] = rig.t_wc_[0];
+          }
           DoBundleAdjustment(aac_bundle_adjuster, true, do_adaptive,
-                             num_aac_poses, 1, aac_imu_residual_ids);
+                             num_aac_poses, 1, aac_imu_residual_ids,
+                             aac_rig);
         }
 
         if (num_aac_poses == orig_num_aac_poses || !do_adaptive) {
           break;
         }
+
+        usleep(10);
       }
 
       imu_cond_start_pose_id = -1;
@@ -477,15 +494,25 @@ void BaAndStartNewLandmarks()
             poses.size(), pq_window, 50, true);
       window_analyzed = true;
     }
-    rig.cameras_[0]->SetParams(selfcal_rig.cameras_[0]->GetParams());
-    for (uint32_t ii = unknown_cam_calibration_start_pose ;
-         ii < poses.size() ; ++ii) {
-      for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
-        if (track->external_id[0] == UINT_MAX) {
-          continue;
+    const Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
+    rig.cameras_[0]->SetParams(new_params);
+    rig.t_wc_[0] = selfcal_rig.t_wc_[0];
+    {
+      std::unique_lock<std::mutex>(aac_mutex);
+      for (uint32_t ii = unknown_cam_calibration_start_pose ;
+           ii < poses.size() ; ++ii) {
+        poses[ii]->cam_params = new_params;
+        for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
+          if (track->external_id[0] == UINT_MAX) {
+            continue;
+          }
+          // We also have to backproject this track again.
+          // tracker.BackProjectTrack(track);
+          track->ref_keypoint.ray =
+              rig.cameras_[0]->Unproject(
+                track->ref_keypoint.center_px).normalized();
+          track->needs_backprojection = true;
         }
-        // We also have to backproject this track again.
-        tracker.BackProjectTrack(track);
       }
     }
 
@@ -516,11 +543,11 @@ void BaAndStartNewLandmarks()
     if (has_imu && use_imu_measurements && poses.size() > min_poses_for_imu) {
       std::cerr << "doing VI BA." << std::endl;
       DoBundleAdjustment(vi_bundle_adjuster, true, false, num_ba_poses, 0,
-                         ba_imu_residual_ids);
+                         ba_imu_residual_ids, rig);
     } else {
       std::cerr << "doing visual BA." << std::endl;
       DoBundleAdjustment(bundle_adjuster, false, false, num_ba_poses, 0,
-                         ba_imu_residual_ids);
+                         ba_imu_residual_ids, rig);
     }
 
     if (do_self_cal && poses.size() >= self_cal_segment_length) {
@@ -530,11 +557,11 @@ void BaAndStartNewLandmarks()
       if (imu_selfcal_active) {
         online_calib.AnalyzeCalibrationWindow<true>(
               poses, current_tracks, start_pose, end_pose,
-              candidate_window, 20);
+              candidate_window, 50);
       } else {
         online_calib.AnalyzeCalibrationWindow<false>(
               poses, current_tracks, start_pose, end_pose,
-              candidate_window, 20);
+              candidate_window, 50);
       }
 
       std::ofstream("sigmas.txt", std::ios_base::app) << keyframe_id << ", " <<
@@ -559,11 +586,11 @@ void BaAndStartNewLandmarks()
           (online_calib.NumWindows() == online_calib.queue_length()) &&
           !unknown_cam_calibration) {
         std::cerr << "PARAM CHANGE DETECTED" << std::endl;
-        unknown_cam_calibration = true;
-        unknown_cam_calibration_start_pose = poses.size() - 2;
+        // unknown_cam_calibration = true;
+        // unknown_cam_calibration_start_pose = poses.size() - 2;
         std::cerr << "Unknown calibration = true with start pose " <<
                      unknown_cam_calibration_start_pose << std::endl;
-        online_calib.ClearQueue();
+        // online_calib.ClearQueue();
       }
 
       // If the priority queue was modified, calculate the new results for it.
@@ -579,11 +606,19 @@ void BaAndStartNewLandmarks()
                 poses, current_tracks, pq_window, 50, apply_results);
         }
         if (apply_results) {
-          rig.cameras_[0]->SetParams(selfcal_rig.cameras_[0]->GetParams());
+          std::unique_lock<std::mutex>(aac_mutex);
+          const Eigen::VectorXd new_params =
+              selfcal_rig.cameras_[0]->GetParams();
+          rig.cameras_[0]->SetParams(new_params);
           for (size_t ii = unknown_cam_calibration_start_pose;
                ii < poses.size(); ++ii) {
             for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
-              tracker.BackProjectTrack(track);
+              poses[ii]->cam_params = new_params;
+              track->ref_keypoint.ray =
+                  rig.cameras_[0]->Unproject(
+                    track->ref_keypoint.center_px).normalized();
+              // tracker.BackProjectTrack(track);
+              track->needs_backprojection = true;
             }
           }
         }
@@ -660,6 +695,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   }
   frame_count++;
 //  if (poses.size() > 100) {
+//    std::cerr << "last_pose\n " << poses.back()->t_wp.matrix().format(
+//                   sdtrack::kLongFmt) << std::endl;
 //    exit(EXIT_SUCCESS);
 //  }
 
@@ -709,6 +746,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     {
       std::unique_lock<std::mutex>(aac_mutex);
+      new_pose->cam_params = rig.cameras_[0]->GetParams();
       poses.push_back(new_pose);
     }
     axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
@@ -773,7 +811,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       tracker.PruneTracks();
     }
 
-    if (tracker.num_successful_tracks() < 10) {
+    if (tracker.num_successful_tracks() < 10 &&
+        !(has_imu && use_imu_measurements)) {
       std::cerr << "Tracking failed. using guess." << std::endl;
       tracker.set_t_ba(guess);
       poses.back()->tracks.clear();
@@ -789,8 +828,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     const double total_trans = tracker.t_ba().translation().norm();
     const double total_rot = tracker.t_ba().so3().log().norm();
 
-    bool keyframe_condition = track_ratio < 0.7 || total_trans > 1.0 ||
-        total_rot > 0.1;
+    bool keyframe_condition = track_ratio < 0.8 || total_trans > 0.2 ||
+        total_rot > 0.1 /*|| tracker.num_successful_tracks() < 64*/;
 
     std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
                  " rot: " << total_rot << std::endl;
@@ -826,7 +865,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   }
 
   if (do_self_cal || unknown_cam_calibration || unknown_imu_calibration) {
-    const bool imu_plots_needed = has_imu && use_imu_measurements;
+    const bool imu_plots_needed = has_imu && use_imu_measurements &&
+        do_imu_self_cal;
     const uint32_t num_cam_params = rig.cameras_[0]->NumParams();
     if (candidate_window.mean.rows() == 0) {
       candidate_window.mean = rig.cameras_[0]->GetParams();
@@ -1164,7 +1204,8 @@ void InitGui() {
           pangolin::LayoutEqualVertical);
     pangolin::Display("multi").AddDisplay(*params_plot_view);
 
-    const bool imu_plots_needed = has_imu && use_imu_measurements;
+    const bool imu_plots_needed = has_imu && use_imu_measurements &&
+        do_imu_self_cal;
     const uint32_t num_cam_params = rig.cameras_[0]->NumParams();
     const uint32_t num_plots = num_cam_params + (imu_plots_needed ? 6 : 0);
 
@@ -1240,6 +1281,7 @@ bool LoadCameras(GetPot& cl)
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
   calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
+  calibu::CreateFromOldRig(&old_rig, &aac_rig);
   if (unknown_cam_calibration) {
     Eigen::VectorXd params = old_rig.cameras[0].camera.GenericParams();
     // fov in rads.
@@ -1258,6 +1300,7 @@ bool LoadCameras(GetPot& cl)
 
     rig.cameras_[0]->SetParams(params);
     selfcal_rig.cameras_[0]->SetParams(params);
+    aac_rig.cameras_[0]->SetParams(params);
 
     // Add a marker in the batch file for this initial, unknown calibration.
     Eigen::VectorXd initial_covariance(params.rows());
@@ -1272,6 +1315,7 @@ bool LoadCameras(GetPot& cl)
     rig.t_wc_[0].so3() = rig.t_wc_[0].so3() * Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
     selfcal_rig.t_wc_[0] = rig.t_wc_[0];
+    aac_rig.t_wc_[0] = rig.t_wc_[0];
   }
 
   if (has_imu && use_imu_measurements) {
@@ -1324,6 +1368,7 @@ int main(int argc, char** argv) {
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
 
+
   // Initialize the online calibration component.
   Eigen::VectorXd weights(rig.cameras_[0]->NumParams());
   if (weights.rows() > 4) {
@@ -1337,14 +1382,15 @@ int main(int argc, char** argv) {
   // weights = Eigen::VectorXd(6);
   // weights << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
 
-  online_calib.Init(&selfcal_rig, num_self_cal_segments,
+  online_calib.Init(&aac_mutex, &selfcal_rig, num_self_cal_segments,
                     self_cal_segment_length, weights,
                     imu_time_offset, &imu_buffer);
 
   InitGui();
 
-  bundle_adjuster.debug_level_threshold = 0;
-  vi_bundle_adjuster.debug_level_threshold = 0;
+  bundle_adjuster.debug_level_threshold = -1;
+  vi_bundle_adjuster.debug_level_threshold = -1;
+  aac_bundle_adjuster.debug_level_threshold = -1;
 
   //////////////////////////
   /// ZZZZZZZZZZZZZZZZZZ: Get rid of this. Only valid for ICRA test rig
