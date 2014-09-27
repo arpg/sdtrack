@@ -199,7 +199,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ray.head<3>() = track->ref_keypoint.ray;
       ray[3] = track->ref_keypoint.rho;
       ray = MultHomogeneous(pose->t_wp  * rig_->t_wc_[0], ray);
-      bool active = track->id != longest_track->id;
+      bool active = UseImu ? true : track->id != longest_track->id;
       track->external_id[ba_id_] =
           ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
       // std::cerr << "Adding lm with opt_id " << track->external_id << " and "
