@@ -133,8 +133,6 @@ void ImuCallback(const pb::ImuMsg& ref) {
 template <typename BaType>
 void DoBundleAdjustment(BaType& ba, bool use_imu,
                         bool do_adaptive_conditioning,
-                        uint32_t num_active_poses, uint32_t id,
-                        std::vector<uint32_t>& imu_residual_ids)
                         uint32_t& num_active_poses, uint32_t id,
                         std::vector<uint32_t>& imu_residual_ids,
                         calibu::Rig<Scalar>& ba_rig)
