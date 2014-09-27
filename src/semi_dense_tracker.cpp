@@ -384,8 +384,10 @@ uint32_t SemiDenseTracker::StartNewTracks(
       }
     }
 
-    if (!seeded_from_closest_track) {
+    if (!seeded_from_closest_track && tracker_options_.use_random_rho_seeding) {
       new_kp.rho = distribution(generator_);
+    } else {
+      new_kp.rho = tracker_options_.default_rho;
     }
 
     BackProjectTrack(new_track, true);
