@@ -11,6 +11,7 @@ find_package(SceneGraph REQUIRED)
 include_directories(${SDTRACK_INCLUDE_DIRS}
                     ${BA_INCLUDE_DIRS}
                     ${HAL_INCLUDE_DIRS}
+                    ${PbMsgs_INCLUDE_DIRS}
                     ${Pangolin_INCLUDE_DIRS}
                     ${SceneGraph_INCLUDE_DIRS} 
                     ${CMAKE_CURRENT_SOURCE_DIR})
