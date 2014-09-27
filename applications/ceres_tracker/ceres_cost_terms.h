@@ -93,6 +93,7 @@ struct CalibratingInvDepthCost {
   template<typename T>
   bool operator()(const T* const _t_wv_r,
                   const T* const _t_wv_m,
+                  const T* const _r_vc,
                   const T* const _t_vc,
                   const T* const _params,
                   const T* const _rho,
@@ -102,7 +103,9 @@ struct CalibratingInvDepthCost {
     const Eigen::Map<const Sophus::SE3Group<T>> t_wv_r(_t_wv_r); // ref pose
     const Eigen::Map<const Sophus::SE3Group<T>> t_wv_m(_t_wv_m); // meas pose
 
-    const Eigen::Map<const Sophus::SE3Group<T>> t_vc(_t_vc);
+    const Eigen::Map<const Sophus::SO3Group<T> > r_vc(_r_vc);
+    const Eigen::Map<const Eigen::Matrix<T, 3, 1> > p_vc(_t_vc);
+    const Sophus::SE3Group<T> t_vc(r_vc, p_vc);
 
     // Reference pixel.
     const Eigen::Matrix<T, 2, 1> pix_r = z_ref_.cast<T>();
@@ -203,13 +206,14 @@ ceres::ResidualBlockId AddProjectionResidualBlockToCeres(
       residual_id =
           problem.AddResidualBlock(
             new ceres::AutoDiffCostFunction<
-            CalibratingInvDepthCost<CamType>, 2, 7, 7, 7,
+            CalibratingInvDepthCost<CamType>, 2, 7, 7, 4, 3,
             CamType::kParamSize, 1>(
               new CalibratingInvDepthCost<CamType>(z, z_ref, posegraph_mode)),
             loss_function,
             ref_pose.data(),
             meas_pose.data(),
-            cam_rig.t_wc_[ref_cam_id].data(),
+            cam_rig.t_wc_[ref_cam_id].so3().data(),
+            cam_rig.t_wc_[ref_cam_id].translation().data(),
             cam_rig.cameras_[ref_cam_id]->GetParams().data(),
             &track->ref_keypoint.rho);
     } else {

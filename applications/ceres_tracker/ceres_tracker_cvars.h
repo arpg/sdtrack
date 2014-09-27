@@ -44,3 +44,8 @@ static bool& do_extrinsics_calibration =
     CVarUtils::CreateCVar<>("sd.DoExtrinsicsCalibration", false, "");
 static bool& do_imu_ext_calibration =
     CVarUtils::CreateCVar<>("sd.DoImuExt", false, "");
+static bool& optimize_rotation_only =
+    CVarUtils::CreateCVar<>("sd.OptimizeRotationOnly", false, "");
+static bool& use_imu =
+    CVarUtils::CreateCVar<>("sd.UseImu", true, "");
+

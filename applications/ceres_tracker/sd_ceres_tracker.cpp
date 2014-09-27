@@ -58,13 +58,12 @@ std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
 // std::shared_ptr<sdtrack::DenseTrack> selected_track = nullptr;
 std::shared_ptr<pb::Image> camera_img;
-std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis>> axes;
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
 
 ceres::LossFunctionWrapper loss_function(new ceres::SoftLOneLoss(1),
-                                         ceres::TAKE_OWNERSHIP);
+                                         ceres::DO_NOT_TAKE_OWNERSHIP);
 
 // State variables
 std::vector<cv::KeyPoint> keypoints;
@@ -141,7 +140,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
                 !(jj == 0 && cam_id == track->ref_cam_id)) {
               lm_residuals[track->id].push_back(AddProjectionResidualToCeres(
                   problem, track, poses[ii]->t_wp, poses[ii + jj]->t_wp,
-                  track->keypoints[jj][cam_id].kp, cam_id, rig, false,
+                  track->keypoints[jj][cam_id].kp, cam_id, rig, false, false,
                   &loss_function));
             }
           }
@@ -179,7 +178,7 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
         track->t_ba = t_ba;
 
         std::vector<double> residuals;
-        uint32_t num_outliers = 0;
+        uint32_t num_outliers_meas = 0;
 
         ceres::Problem::EvaluateOptions ev_options;
         ev_options.residual_blocks = lm_residuals[track->id];
@@ -187,16 +186,16 @@ void DoBundleAdjustmentCeres(uint32_t num_active_poses, uint32_t id) {
         ev_options.apply_loss_function = false;
         problem.Evaluate(ev_options, NULL, &residuals, NULL, NULL);
 
-        for (int ii = 0; ii < residuals.size(); ii += 2) {
+        for (uint32_t ii = 0; ii < residuals.size(); ii += 2) {
           double cost = sqrt(residuals[ii] * residuals[ii] +
                              residuals[ii + 1] * residuals[ii + 1]);
           if (cost > outlier_threshold) {
-            num_outliers++;
+            num_outliers_meas++;
           }
         }
 
         const double outlier_ratio =
-            (double)num_outliers / (double)ev_options.residual_blocks.size();
+            (double)num_outliers_meas / (double)ev_options.residual_blocks.size();
 
         if (do_outlier_rejection) {
           if (outlier_ratio > 0.3 &&
@@ -240,8 +239,6 @@ void BaAndStartNewLandmarks() {
   if (!is_keyframe) {
     return;
   }
-
-  uint32_t keyframe_id = poses.size();
 
   if (do_bundle_adjustment) {
     // DoBundleAdjustment(10, 0);
@@ -297,7 +294,7 @@ void ProcessImage(std::vector<cv::Mat>& images) {
 
   guess = prev_delta_t_ba * prev_t_ba;
   if (guess.translation() == Eigen::Vector3d(0, 0, 0) && poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0, 0, -0.01);
+    guess.translation() = Eigen::Vector3d(0, 0, 0.01);
   }
 
   tracker.AddImage(images, guess);
@@ -381,10 +378,10 @@ void DrawImageData(uint32_t cam_id) {
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
     Eigen::Vector2d center;
-    // if (track->keypoints.back()[cam_id].tracked) {
-    DrawTrackData(track, image_width, image_height, center,
-                  gui_vars.handler->selected_track == track, cam_id);
-    //}
+    if (track->keypoints.back()[cam_id].tracked || is_manual_mode) {
+      DrawTrackData(track, image_width, image_height, center,
+                    gui_vars.handler->selected_track == track, cam_id);
+    }
     if (cam_id == 0) {
       gui_vars.handler->track_centers.push_back(
           std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
@@ -394,10 +391,10 @@ void DrawImageData(uint32_t cam_id) {
 
   // Populate the first column with the reference from the selected track.
   if (gui_vars.handler->selected_track != nullptr) {
-    DrawTrackPatches(gui_vars.handler->selected_track, patches);
+    DrawTrackPatches(gui_vars.handler->selected_track, gui_vars.patches);
   }
 
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     gui_vars.camera_view[cam_id]->RenderChildren();
   }
 }
@@ -505,6 +502,14 @@ void InitTracker() {
   tracker_options.harris_score_threshold = 2e6;
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    for (int ii = 6 ; ii < feature_cells ; ++ii) {
+      for (int jj = 0 ; jj < feature_cells ; ++jj) {
+        tracker.feature_cells()[cam_id](ii, jj) =
+            sdtrack::SemiDenseTracker::kUnusedCell;
+      }
+    }
+  }
 }
 
 void InitGui() {
