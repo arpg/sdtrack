@@ -204,6 +204,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
               pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
               ii >= start_active_pose , pose->time);
 
+        if (ii == start_pose_id && use_imu && all_poses_active) {
+          ba.RegularizePose(pose->opt_id[id], true, true, false);
+        }
+
         if (use_imu && ii >= start_active_pose && ii > 0) {
           std::vector<ba::ImuMeasurementT<Scalar>> meas =
               imu_buffer.GetRange(poses[ii - 1]->time, pose->time);
