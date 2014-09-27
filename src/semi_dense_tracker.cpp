@@ -783,6 +783,11 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
 
   result.mean_value = 0;
 
+  if (track->needs_backprojection) {
+    BackProjectTrack(track);
+    track->needs_backprojection = false;
+  }
+
   // If we are doing simplified (4 corner) patch transfer, transfer the four
   // corners.
   bool corners_project = true;

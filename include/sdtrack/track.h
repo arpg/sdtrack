@@ -109,6 +109,7 @@ namespace sdtrack
     bool is_new = true;
     std::vector<Eigen::Vector2d> offset_2d;
     bool is_outlier = false;
+    bool needs_backprojection = false;
     Sophus::SE3d t_ba;
 
     uint32_t external_data = UINT_MAX;
