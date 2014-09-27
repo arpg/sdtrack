@@ -16,6 +16,11 @@ include(def_executable)
 
 string( TOLOWER ${PROJECT_NAME} LIBRARY_NAME )
 
+if(NOT CMAKE_BUILD_TYPE)
+  message(STATUS "Build type not set (defaults to release)")
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DOS_OBJECT_USE_OBJC=0")
 endif()
