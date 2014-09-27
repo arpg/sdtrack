@@ -669,6 +669,8 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           // Make the ray relative to the pose.
           Eigen::Vector4d x_r = MultHomogeneous(
                 (pose->t_wp * rig_->t_wc_[0]).inverse(), x_w);
+
+          track->ref_keypoint.ray = x_r.head<3>();
           // Normalize the xyz component of the ray to compare to the original
           // ray.
           x_r /= x_r.head<3>().norm();
@@ -677,6 +679,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           //              x_r.transpose() << std::endl;
           // Update the inverse depth on the track
           track->ref_keypoint.rho = x_r[3];
+          track->needs_backprojection = true;
         }
       }
     } else {
