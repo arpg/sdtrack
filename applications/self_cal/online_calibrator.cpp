@@ -405,12 +405,13 @@ double OnlineCalibrator::ComputeYao1965(
     const CalibrationWindow& window0,
     const CalibrationWindow& window1)
 {
-  const Eigen::MatrixXd& s0 = window0.covariance;
-  const Eigen::MatrixXd& s1 = window1.covariance;
-
   const double p = window0.covariance.rows();
   const double n0 = window0.num_measurements;
   const double n1 = window1.num_measurements;
+  const Eigen::MatrixXd& s0 = window0.covariance;
+  const Eigen::MatrixXd& s1 = window1.covariance;
+
+  //// ZZZ IMPLEMENT CONDITION NUMBER INSTEAD OF RANK HERE
   if (n0 == 0 || n1 == 0 || p == 0 || s0.fullPivLu().rank() != p ||
       s1.fullPivLu().rank() != p) {
     return 1.0;
@@ -429,7 +430,50 @@ double OnlineCalibrator::ComputeYao1965(
   const double f = t2 / ((v * p) / (v - p + 1));
   const double p_score = compute_p_score(f, p, v - p + 1);
 
-  if (p_score < 0.1) {
+  if (p_score < 0.5 || isnan(p_score) || isinf(p_score)) {
+    std::cerr << "computing p score for f " << f << " p: " << p << " n0 " <<
+                 n0 << " n1 " << n1 << " with t^2 " << t2 <<
+                 " p_score: " << p_score << std::endl;
+    std::cerr << "with cov0:\n" << window0.covariance << std::endl;
+    std::cerr << "with mean0:\n" << window0.mean.transpose() << std::endl;
+    std::cerr << "with cov1:\n" << window1.covariance << std::endl;
+    std::cerr << "with mean1:\n" << window1.mean.transpose() << std::endl;
+  }
+  return p_score;
+}
+
+double OnlineCalibrator::ComputeNelVanDerMerwe1986(
+    const CalibrationWindow& window0,
+    const CalibrationWindow& window1)
+{
+  const double p = window0.covariance.rows();
+  const double n0 = window0.num_measurements;
+  const double n1 = window1.num_measurements;
+  const Eigen::MatrixXd& s0 = (1.0 / n0) * (1.0 / (n0 - 1.0)) *
+      window0.covariance;
+  const Eigen::MatrixXd& s1 = (1.0 / n1) * (1.0 / (n1 - 1.0)) *
+      window1.covariance;
+
+  //// ZZZ IMPLEMENT CONDITION NUMBER INSTEAD OF RANK HERE
+  if (n0 == 0 || n1 == 0 || p == 0 || s0.fullPivLu().rank() != p ||
+      s1.fullPivLu().rank() != p) {
+    return 1.0;
+  }
+
+  const Eigen::MatrixXd s = (s0 + s1);
+  const Eigen::MatrixXd s_inv = s.inverse();
+  const Eigen::MatrixXd s_2 = s * s;
+  const Eigen::MatrixXd s0_2 = s0 * s0;
+  const Eigen::MatrixXd s1_2 = s1 * s1;
+  const Eigen::VectorXd xd = window0.mean - window1.mean;
+  const double v = (s_2.trace() + powi(s.trace(), 2)) /
+      ((1.0 / n0 * (s0_2.trace() + powi(s0.trace(), 2))) +
+        (1.0 / n1 * (s1_2.trace() + powi(s1.trace(), 2))));
+  const double t2 = xd.transpose() * s_inv * xd;
+  const double f = t2 / ((v * p) / (v - p + 1));
+  const double p_score = compute_p_score(f, p, v - p + 1);
+
+  if (p_score < 0.1 || isnan(p_score) || isinf(p_score)) {
     std::cerr << "computing p score for f " << f << " p: " << p << " n0 " <<
                  n0 << " n1 " << n1 << " with t^2 " << t2 <<
                  " p_score: " << p_score << std::endl;
