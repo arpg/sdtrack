@@ -27,6 +27,7 @@
 *                              (www.jpmoreau.fr)          *
 **********************************************************/
 #include <stdio.h>
+#include <iostream>
 #include <math.h>
 
 #define MAXIT 100
@@ -124,10 +125,10 @@ double betacf(double a, double b, double x) {
     h *= del;
     if (fabs(del - 1.0) < EPS) break;
   }  // m loop
-  if (m > MAXIT)
-    printf(" a or b too big, or MAXIT too small.\n");
-  else
-    printf("\n Number of iterations: %d\n", m);
+  if (m > MAXIT) {
+    std::cerr << "a or b too big, or MAXIT too small." << std::endl;
+  }
+
   return h;
 }
 
