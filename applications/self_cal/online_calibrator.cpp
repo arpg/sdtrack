@@ -163,7 +163,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
     pose->opt_id[ba_id_] = ba.AddPose(
           pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
           (UseImu ? ii >= start_active_pose : ii > start_active_pose),
-          pose->time + imu_time_offset);
+          pose->time);
     // std::cerr << "Adding pose with opt_id " << pose->opt_id << " and t_wp " <<
     //              pose->t_wp.matrix() << std::endl
 
