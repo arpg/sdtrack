@@ -97,9 +97,9 @@ void ImuCallback(const pb::ImuMsg& ref) {
   Eigen::VectorXd a, w;
   pb::ReadVector(ref.accel(), &a);
   pb::ReadVector(ref.gyro(), &w);
+  // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
+  //             w.transpose() << " at time " << timestamp << std::endl;
   imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
-   std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
-                w.transpose() << " at time " << timestamp << std::endl;
 }
 
 template <typename BaType>
@@ -318,8 +318,6 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             const Eigen::Vector4d& x_w =
                 ba.GetLandmark(track->external_id[id]);
             double ratio = ba.LandmarkOutlierRatio(track->external_id[id]);
-            auto landmark =
-                ba.GetLandmarkObj(track->external_id[id]);
 
             if (do_outlier_rejection && poses.size() > POSES_TO_INIT &&
                 !initialize_lm /*&& (do_adaptive_conditioning || !do_async_ba)*/) {
@@ -657,7 +655,6 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       poses.back()->v_w = pose2->v_w;
       poses.back()->b = pose2->b;
       // std::cerr << "Imu guess t_ab is\n" << guess.matrix3x4() << std::endl;
-      used_imu_for_guess = true;
     }
   }
 
