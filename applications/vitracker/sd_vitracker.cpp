@@ -179,7 +179,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
               pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
               is_active, pose->time);
         if (ii == start_pose_id && use_imu && all_poses_active) {
-          ba.RegularizePose(pose->opt_id[id], true, true, false);
+          ba.RegularizePose(pose->opt_id[id], true, true, false, false);
         }
 
         if (use_imu && ii >= start_active_pose && ii > 0) {
