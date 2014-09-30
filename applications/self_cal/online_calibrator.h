@@ -79,6 +79,8 @@ class OnlineCalibrator {
   double ComputeNelVanDerMerwe1986(const CalibrationWindow &window0,
                                    const CalibrationWindow &window1);
 
+  void SetBaDebugLevel(int level);
+
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
 private:

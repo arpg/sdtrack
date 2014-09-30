@@ -1486,6 +1486,7 @@ void SemiDenseTracker::AddImage(const std::vector<cv::Mat>& images,
     for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
       track->offset_2d[cam_id].setZero();
       track->transfer[cam_id].level = UNINITIALIZED_TRANSFER;
+      track->transfer[cam_id].ncc = 0;
     }
   }
 

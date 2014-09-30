@@ -90,7 +90,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   options.projection_outlier_threshold = 1.0;
   options.use_dogleg = true;
   options.use_triangular_matrices = true;
-  options.use_sparse_solver = false;
+  options.use_sparse_solver = true;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
 
@@ -145,9 +145,6 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   uint32_t max_keypoints = 0;
   std::shared_ptr<DenseTrack> longest_track = nullptr;
   std::shared_ptr<TrackerPose> pose = poses[window.start_index];
-  if (pose->tracks.size() == 0) {
-    return;
-  }
   for (std::shared_ptr<DenseTrack> track : pose->tracks) {
     if (track->keypoints.size() > max_keypoints) {
       max_keypoints = track->keypoints.size();
@@ -164,6 +161,11 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
           pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
           (UseImu ? ii >= start_active_pose : ii > start_active_pose),
           pose->time);
+
+    if (pose->tracks.size() == 0 && !UseImu) {
+      ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
+    }
+
     // std::cerr << "Adding pose with opt_id " << pose->opt_id << " and t_wp " <<
     //              pose->t_wp.matrix() << std::endl
 
@@ -185,7 +187,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       if (ii == start_active_pose) {
         /*std::cerr << "OC regularizing gravity and trans and bias of pose " <<
                      pose->opt_id[ba_id_] << std::endl;*/
-        ba.RegularizePose(pose->opt_id[ba_id_], true, true, false);
+        ba.RegularizePose(pose->opt_id[ba_id_], true, true, false, false);
       }
     }
 
@@ -199,7 +201,8 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ray.head<3>() = track->ref_keypoint.ray;
       ray[3] = track->ref_keypoint.rho;
       ray = MultHomogeneous(pose->t_wp  * rig_->t_wc_[0], ray);
-      bool active = UseImu ? true : track->id != longest_track->id;
+      bool active = longest_track == nullptr ? true :
+        (UseImu ? true : track->id != longest_track->id);
       track->external_id[ba_id_] =
           ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
       // std::cerr << "Adding lm with opt_id " << track->external_id << " and "
@@ -420,26 +423,28 @@ double OnlineCalibrator::ComputeYao1965(
   const Eigen::MatrixXd& s0 = window0.covariance;
   const Eigen::MatrixXd& s1 = window1.covariance;
 
+  double p_score = 1.0;
+  double f = 0, t2 = 0;
   //// ZZZ IMPLEMENT CONDITION NUMBER INSTEAD OF RANK HERE
   if (n0 == 0 || n1 == 0 || p == 0 || s0.fullPivLu().rank() != p ||
       s1.fullPivLu().rank() != p) {
-    return 1.0;
+    p_score = 1.0;
+  } else {
+    const Eigen::MatrixXd s_inv = (s0 + s1).inverse();
+    const Eigen::VectorXd xd = window0.mean - window1.mean;
+    t2 = xd.transpose() * s_inv * xd;
+    const double v_denom = t2;
+    const double v = 1.0 /
+        ((1.0 / n0) *
+        powi((double)(xd.transpose() * s_inv * s0 * s_inv * xd) / v_denom, 2) +
+        (1.0 / n1) *
+        powi((double)(xd.transpose() * s_inv * s1 * s_inv * xd) / v_denom, 2));
+
+    f = t2 / ((v * p) / (v - p + 1));
+    p_score = compute_p_score(f, p, v - p + 1);
+
   }
-
-  const Eigen::MatrixXd s_inv = (s0 + s1).inverse();
-  const Eigen::VectorXd xd = window0.mean - window1.mean;
-  const double t2 = xd.transpose() * s_inv * xd;
-  const double v_denom = t2;
-  const double v = 1.0 /
-      ((1.0 / n0) *
-      powi((double)(xd.transpose() * s_inv * s0 * s_inv * xd) / v_denom, 2) +
-      (1.0 / n1) *
-      powi((double)(xd.transpose() * s_inv * s1 * s_inv * xd) / v_denom, 2));
-
-  const double f = t2 / ((v * p) / (v - p + 1));
-  const double p_score = compute_p_score(f, p, v - p + 1);
-
-  if (p_score < 0.5 || isnan(p_score) || isinf(p_score)) {
+  if (p_score < 0.5 || isnan(p_score) || isinf(p_score) || p_score == 1.0) {
     std::cerr << "computing p score for f " << f << " p: " << p << " n0 " <<
                  n0 << " n1 " << n1 << " with t^2 " << t2 <<
                  " p_score: " << p_score << std::endl;
@@ -492,6 +497,12 @@ double OnlineCalibrator::ComputeNelVanDerMerwe1986(
     std::cerr << "with mean1:\n" << window1.mean.transpose() << std::endl;
   }
   return p_score;
+}
+
+void OnlineCalibrator::SetBaDebugLevel(int level)
+{
+   selfcal_ba.debug_level_threshold = level;
+   vi_selfcal_ba.debug_level_threshold = level;
 }
 
 double OnlineCalibrator::ComputeHotellingScore(
@@ -575,7 +586,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
   std::cerr << "Analyzing calibration window with imu = " << UseImu <<
-               std::endl;
+               " from " << start_pose << " to " << end_pose << std::endl;
   Proxy<UseImu> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
 
