@@ -135,6 +135,7 @@ void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
                    std::vector<std::shared_ptr<sdtrack::TrackerPose>>& poses,
                    calibu::Rig<Scalar>& rig, TrackerHandler* handler,
                    int& selected_track_id) {
+  glPointSize(0.5);
   glBegin(GL_POINTS);
   for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
     for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
