@@ -90,7 +90,8 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   options.projection_outlier_threshold = 1.0;
   options.use_dogleg = true;
   options.use_triangular_matrices = true;
-  options.use_sparse_solver = true;
+  /// ZZZZZZ FIGURE OUT WHY USING SPARSE HERE FAILS SOMETIMES
+  options.use_sparse_solver = false;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
 
@@ -128,6 +129,8 @@ void OnlineCalibrator::AnalyzePriorityQueue(
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }
   }
+
+  needs_update_ = false;
 }
 
 template<bool UseImu>
@@ -162,6 +165,8 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
           (UseImu ? ii >= start_active_pose : ii > start_active_pose),
           pose->time);
 
+    /// ZZZZZZZZ: This is problematic. What if track size was zero but the pose
+    /// had projection residuals? we don't want to regularize in this case
     if (pose->tracks.size() == 0 && !UseImu) {
       ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
     }
@@ -289,6 +294,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       windows_.push_back(new_window);
       std::cerr << "Pushing back non overlapping window into position " <<
                    windows_.size() << std::endl;
+      needs_update_ = true;
       return true;
     } else {
       std::cerr << "Rejecting window as queue is incomplete and window "
@@ -318,6 +324,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
                    new_window.score << " start: " << new_window.start_index <<
                    " end: " << new_window.end_index << std::endl;
       windows_[max_id] = new_window;
+      needs_update_ = true;
       return true;
     }
     return false;
@@ -570,10 +577,14 @@ void OnlineCalibrator::SetPriorityQueueDistribution(
 
 double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
 {
-  // First transform the covariance given the weights.
-  return
-      (covariance_weights_.asDiagonal() * window.covariance *
-       covariance_weights_.asDiagonal()).determinant();
+  if (window.covariance.fullPivLu().rank() == covariance_weights_.rows()) {
+    // First transform the covariance given the weights.
+    return
+        (covariance_weights_.asDiagonal() * window.covariance *
+         covariance_weights_.asDiagonal()).determinant();
+  } else {
+    return 0;
+  }
 }
 
 template<bool UseImu>
@@ -598,7 +609,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   options.projection_outlier_threshold = 1.0;
   options.trust_region_size = 10;
   options.use_dogleg = true;
-  options.use_sparse_solver = (end_pose - start_pose) > window_length_ * 10;
+  options.use_sparse_solver = false;//(end_pose - start_pose) > window_length_ * 10;
   /// ZZZZ WHY IS THIS NEEDED? SPARSE IS BROKEN WITH TRIANGULAR IT SEEMS.
   options.use_triangular_matrices = !options.use_sparse_solver;
   options.calculate_calibration_marginals = true;
@@ -665,6 +676,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           if (track->external_id[ba_id_] == UINT_MAX) {
             continue;
           }
+          /*
           // Set the t_ab on this track.
           //std::cerr << "Changing track t_ba from " << std::endl <<
           //             track->t_ba.matrix() << std::endl << " to " <<
@@ -689,7 +701,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           //              prev_ray.transpose() << " after opt: " <<
           //              x_r.transpose() << std::endl;
           // Update the inverse depth on the track
-          track->ref_keypoint.rho = x_r[3];
+          track->ref_keypoint.rho = x_r[3];*/
           track->needs_backprojection = true;
         }
       }

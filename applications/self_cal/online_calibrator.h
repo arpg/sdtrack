@@ -83,7 +83,9 @@ class OnlineCalibrator {
 
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
+  bool needs_update() { return needs_update_; }
 private:
+  bool needs_update_ = false;
   std::vector<CalibrationWindow> windows_;
   uint32_t queue_length_ = 5;
   uint32_t window_length_ = 10;

@@ -42,7 +42,7 @@ uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 // Self calibration params
 uint32_t num_change_detected = 0;
-uint32_t num_change_needed = 5;
+uint32_t num_change_needed = 3;
 bool unknown_cam_calibration = true;
 bool unknown_imu_calibration = false;
 
@@ -502,6 +502,8 @@ void BaAndStartNewLandmarks()
     return;
   }
 
+  sdtrack::CalibrationWindow current_window;
+
   uint32_t keyframe_id = poses.size();
   // If we have no idea about the calibration, do batch mode.
   double batch_time = sdtrack::Tic();
@@ -552,6 +554,10 @@ void BaAndStartNewLandmarks()
       }
     }
 
+    if (pq_window.mean.rows() != 0) {
+      current_window = pq_window;
+    }
+
     // Write this to the batch file.
     std::ofstream("batch.txt", std::ios_base::app) << keyframe_id << ", " <<
       pq_window.covariance.diagonal().transpose().format(
@@ -565,7 +571,7 @@ void BaAndStartNewLandmarks()
     std::cerr << "Batch score: " << score << std::endl;
 
     // If the determinant is smaller than a heuristic, switch to self_cal.
-    if (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) {
+    if (score < 1e6 && score != 0 && !std::isnan(score) && !std::isinf(score)) {
       std::cerr << "Determinant small enough, switching to self-cal" <<
                    std::endl;
       unknown_cam_calibration = false;
@@ -576,20 +582,21 @@ void BaAndStartNewLandmarks()
 
   if (do_bundle_adjustment) {
     ba_time = sdtrack::Tic();
+    uint32_t ba_size = std::max(num_ba_poses, unknown_cam_calibration ?
+                                  batch_end - batch_start : num_ba_poses);
     if (has_imu && use_imu_measurements &&
         poses.size() > min_poses_for_imu) {
       std::cerr << "doing VI BA." << std::endl;
-      DoBundleAdjustment(vi_bundle_adjuster, true, false, num_ba_poses, 0,
+      DoBundleAdjustment(vi_bundle_adjuster, true, false, ba_size, 0,
                          ba_imu_residual_ids, rig);
     } else {
       std::cerr << "doing visual BA." << std::endl;
-      DoBundleAdjustment(bundle_adjuster, false, false, num_ba_poses, 0,
+      DoBundleAdjustment(bundle_adjuster, false, false, ba_size, 0,
                          ba_imu_residual_ids, rig);
     }
     ba_time = sdtrack::Toc(ba_time);
 
-    if (do_self_cal && poses.size() >= self_cal_segment_length &&
-        !unknown_cam_calibration) {
+    if (do_self_cal && (batch_end - batch_start) >= self_cal_segment_length) {
       analyze_time = sdtrack::Tic();
       uint32_t start_pose =
           std::max(0, (int)poses.size() - (int)self_cal_segment_length);
@@ -604,19 +611,14 @@ void BaAndStartNewLandmarks()
               candidate_window, 50);
       }
 
-      std::ofstream("sigmas.txt", std::ios_base::app) << keyframe_id << ", " <<
-        candidate_window.covariance.diagonal(). transpose().format(
-          sdtrack::kLongCsvFmt) << ", " <<
-        candidate_window.mean.transpose().format(sdtrack::kLongCsvFmt) <<
-        ", " << last_window_kl_divergence << ", " << candidate_window.score <<
-        std::endl;
-
-      // Now potentially add this to the priority queue.
       bool added = online_calib.AnalyzeCalibrationWindow(candidate_window);
-
       last_window_kl_divergence =
           online_calib.ComputeYao1965(
             pq_window, candidate_window);
+
+      if (candidate_window.mean.rows() != 0) {
+        current_window = candidate_window;
+      }
 
       std::cerr << "KL divergence for last window: " <<
                    last_window_kl_divergence << " num change: " <<
@@ -645,7 +647,7 @@ void BaAndStartNewLandmarks()
       analyze_time = sdtrack::Toc(analyze_time);
 
       // If the priority queue was modified, calculate the new results for it.
-      if (added) {
+      if (online_calib.needs_update() && !unknown_cam_calibration) {
         queue_time = sdtrack::Toc(ba_time);
         last_added_window_kl_divergence = last_window_kl_divergence;
         const bool apply_results =
@@ -722,6 +724,15 @@ void BaAndStartNewLandmarks()
         queue_time = sdtrack::Toc(queue_time);
       }
     }
+
+    if (do_self_cal && current_window.mean.rows() != 0) {
+      std::ofstream("sigmas.txt", std::ios_base::app) << keyframe_id << ", " <<
+        current_window.covariance.diagonal(). transpose().format(
+          sdtrack::kLongCsvFmt) << ", " <<
+        current_window.mean.transpose().format(sdtrack::kLongCsvFmt) <<
+        ", " << last_window_kl_divergence << ", " << current_window.score <<
+        std::endl;
+    }
   }
 
   if (do_start_new_landmarks) {
@@ -734,7 +745,7 @@ void BaAndStartNewLandmarks()
                " analyze: " << analyze_time << " queue: " << queue_time <<
                " snl: " << snl_time << std::endl;
 
-  std::ofstream("batch.txt", std::ios_base::app) << keyframe_id << ", " <<
+  std::ofstream("timings.txt", std::ios_base::app) << keyframe_id << ", " <<
     ba_time << ", " << analyze_time << ", " << queue_time << ", " <<
     snl_time << std::endl;
 
@@ -820,7 +831,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       poses.push_back(new_pose);
     }
     axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
-                      new SceneGraph::GLAxis(0.05)));
+                      new SceneGraph::GLAxis(0.2)));
     gui_vars.scene_graph.AddChild(axes.back().get());
   }
 
@@ -1416,6 +1427,13 @@ bool LoadCameras(GetPot& cl)
 }
 
 int main(int argc, char** argv) {
+  // Clear the log files.
+  {
+    std::ofstream sigmas_file("sigmas.txt", std::ios_base::trunc);
+    std::ofstream pq_file("pq.txt", std::ios_base::trunc);
+    std::ofstream batch_file("batch.txt", std::ios_base::trunc);
+    std::ofstream pose_file("timings.txt", std::ios_base::trunc);
+  }
   srand(0);
   GetPot cl(argc, argv);
   if (cl.search("--help")) {
@@ -1434,7 +1452,7 @@ int main(int argc, char** argv) {
   LOG(INFO) << "Initializing camera...";
   LoadCameras(cl);
 
-  pyramid_levels = 4;
+  pyramid_levels = 3;
   patch_size = 7;
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = patch_size;
@@ -1444,7 +1462,7 @@ int main(int argc, char** argv) {
   sdtrack::TrackerOptions tracker_options;
   tracker_options.pyramid_levels = pyramid_levels;
   tracker_options.detector_type = sdtrack::TrackerOptions::Detector_GFTT;
-  tracker_options.num_active_tracks = num_features ;
+  tracker_options.num_active_tracks = num_features;
   tracker_options.use_robust_norm_ = false;
   tracker_options.robust_norm_threshold_ = 30;
   tracker_options.patch_dim = patch_size;
