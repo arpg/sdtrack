@@ -571,7 +571,7 @@ void BaAndStartNewLandmarks()
     std::cerr << "Batch score: " << score << std::endl;
 
     // If the determinant is smaller than a heuristic, switch to self_cal.
-    if (score < 1e6 && score != 0 && !std::isnan(score) && !std::isinf(score)) {
+    if (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) {
       std::cerr << "Determinant small enough, switching to self-cal" <<
                    std::endl;
       unknown_cam_calibration = false;
@@ -746,8 +746,8 @@ void BaAndStartNewLandmarks()
                " snl: " << snl_time << std::endl;
 
   std::ofstream("timings.txt", std::ios_base::app) << keyframe_id << ", " <<
-    ba_time << ", " << analyze_time << ", " << queue_time << ", " <<
-    snl_time << std::endl;
+    batch_time << ", " << ba_time << ", " << analyze_time << ", " <<
+    queue_time << ", " << snl_time << std::endl;
 
   std::shared_ptr<sdtrack::TrackerPose> new_pose = poses.back();
   // Update the tracks on this new pose.
