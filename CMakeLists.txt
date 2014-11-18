@@ -82,7 +82,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sdtrackerConfig.h"
 # For the examples to find this and only this version of sdtracker
 set(SDTRACKER_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
-option(BUILD_APPLICATIONS "Build Applications" OFF)
+option(BUILD_APPLICATIONS "Build Applications" ON)
 
 if( BUILD_APPLICATIONS )
   add_subdirectory(applications)

@@ -25,6 +25,7 @@
 #endif
 
 #include <sdtrack/semi_dense_tracker.h>
+#include "Timer.h"
 
 uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
@@ -74,9 +75,13 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
+//Timer data
+Timer runTimes;
+
 
 void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
 {
+  runTimes.Tic("DoBundleAdjustment");
   if (reset_outliers) {
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
@@ -102,6 +107,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
   GetBaPoseRange(poses, num_active_poses, start_pose, start_active_pose);
 
   if (start_pose == poses.size()) {
+    runTimes.Toc("DoBundleAdjustment");
     return;
   }
 
@@ -112,7 +118,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
     bundle_adjuster.Init(options, poses.size(),
                          current_tracks->size() * poses.size());
-    for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    for (unsigned int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
       bundle_adjuster.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
     }
 
@@ -223,6 +229,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
 
   }
   std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
+  runTimes.Toc("DoBundleAdjustment");
 }
 
 void UpdateCurrentPose()
@@ -409,7 +416,7 @@ void DrawImageData(uint32_t cam_id)
     DrawTrackPatches(handler->selected_track, patches);
   }
 
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+  for (unsigned int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     camera_view[cam_id]->RenderChildren();
   }
 }
@@ -450,7 +457,7 @@ void Run()
     if (capture_success) {
       gl_tex.resize(images->Size());
 
-      for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
+      for (int32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
         if (!gl_tex[cam_id].tid) {
           camera_img = images->at(cam_id);
           GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
@@ -477,7 +484,7 @@ void Run()
 
     if (camera_img && camera_img->data()) {
       for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
-           cam_id < images->Size(); ++cam_id) {
+	     (int32_t)cam_id < images->Size(); ++cam_id) {
         camera_img = images->at(cam_id);
         camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
@@ -544,7 +551,7 @@ void InitGui()
 
   // Add named OpenGL viewport to window and provide 3D Handler
   camera_view.resize(rig.cameras_.size());
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+  for (unsigned int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     camera_view[cam_id] = &pangolin::CreateDisplay()
         .SetAspect(-(float)window_width/(float)window_height);
   }
@@ -567,7 +574,7 @@ void InitGui()
       .SetBounds(1.0, 0.0, 0.0, 1.0)
       .SetLayout(pangolin::LayoutEqual);
 
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+  for (unsigned int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     pangolin::Display("multi").AddDisplay(*camera_view[cam_id]);
   }
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Eigen/Eigen>
-#include <Sophus/se3.hpp>
+#include <sophus/se3.hpp>
 
 namespace Sophus {
   typedef SE3Group<Scalar> SE3t;

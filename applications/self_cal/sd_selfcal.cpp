@@ -90,6 +90,16 @@ pangolin::OpenGlRenderState render_state;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
+pangolin::Plotter& CreatePlotter(const char* name, pangolin::DataLog* log)
+{
+  pangolin::Plotter* v = new pangolin::Plotter(log);
+  //context->all_views[name] = v;
+  //bool inserted = context->named_managed_views.insert(name,v).second;
+  //if(!inserted) throw exception();
+  //context->base.views.push_back(v);
+  return *v;
+}
+
 void DoBundleAdjustment()
 {
   ba::Options<double> options;
@@ -719,7 +729,7 @@ void InitGui()
     plot_logs.resize(rig.cameras_[0]->NumParams());
     double bottom = 0;
     for (size_t ii = 0; ii < rig.cameras_[0]->NumParams(); ++ii) {
-      plot_views[ii] = &pangolin::CreatePlotter("plot", &plot_logs[ii])
+      plot_views[ii] = &CreatePlotter("plot", &plot_logs[ii])
               .SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
       bottom += 0.1;
       pangolin::DisplayBase().AddDisplay(*plot_views[ii]);
