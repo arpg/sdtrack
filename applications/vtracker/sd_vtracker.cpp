@@ -25,7 +25,7 @@
 #endif
 
 #include <sdtrack/semi_dense_tracker.h>
-#include "Timer.h"
+#include <sdtrack/Timer.h>
 
 uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;
@@ -234,6 +234,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
 
 void UpdateCurrentPose()
 {
+  runTimes.Tic("UpdateCurrentPose");
   std::shared_ptr<sdtrack::TrackerPose> new_pose = poses.back();
   if (poses.size() > 1) {
     new_pose->t_wp = poses[poses.size() - 2]->t_wp * tracker.t_ba().inverse();
@@ -248,11 +249,14 @@ void UpdateCurrentPose()
   new_pose->longest_track = max_track_length;
   std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
                new_pose->longest_track << std::endl;
+  runTimes.Toc("UpdateCurrentPose");
 }
 
 void BaAndStartNewLandmarks()
 {
+  runTimes.Tic("BaAndStartNewLandmarks");
   if (!is_keyframe) {
+    runTimes.Toc("BaAndStartNewLandmarks");
     return;
   }
 
@@ -273,10 +277,12 @@ void BaAndStartNewLandmarks()
   if (!do_bundle_adjustment) {
     tracker.TransformTrackTabs(tracker.t_ba());
   }
+  runTimes.Toc("BaAndStartNewLandmarks");
 }
 
 void ProcessImage(std::vector<cv::Mat>& images)
 {
+  runTimes.Tic("ProcessImage");
 #ifdef CHECK_NANS
   _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
                          ~(_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
@@ -385,10 +391,12 @@ void ProcessImage(std::vector<cv::Mat>& images)
 
   std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
                std::endl;
+  runTimes.Toc("ProcessImage");
 }
 
 void DrawImageData(uint32_t cam_id)
 {
+  runTimes.Tic("DrawImageData");
   if (cam_id == 0) {
     handler->track_centers.clear();
   }
@@ -419,20 +427,24 @@ void DrawImageData(uint32_t cam_id)
   for (unsigned int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     camera_view[cam_id]->RenderChildren();
   }
+  runTimes.Toc("DrawImageData");
 }
 
 bool LoadCameras()
 {
+  runTimes.Tic("LoadCameras");
   LoadCameraAndRig(*cl, camera_device, old_rig);
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
  // rig.cameras_.resize(1);
  // rig.t_wc_.resize(1);
+  runTimes.Toc("LoadCameras");
   return true;
 }
 
 void Run()
 {
+  runTimes.Tic("Run");
   std::vector<pangolin::GlTexture> gl_tex;
 
   // pangolin::Timer timer;
@@ -502,10 +514,12 @@ void Run()
     }
     pangolin::FinishFrame();
   }
+  runTimes.Toc("Run");
 }
 
 void InitTracker()
 {
+  runTimes.Tic("InitTracker");
   patch_size = 9;
   sdtrack::KeypointOptions keypoint_options;
   keypoint_options.gftt_feature_block_size = patch_size;
@@ -527,10 +541,12 @@ void InitTracker()
   tracker_options.harris_score_threshold = 2e6;
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
+  runTimes.Toc("InitTracker");
 }
 
 void InitGui()
 {
+  runTimes.Tic("InitGUI");
   pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
 
   render_state.SetModelViewMatrix( pangolin::IdentityMatrix() );
@@ -708,6 +724,10 @@ void InitGui()
                           tracker.GetCurrentTracks(),
                           last_optimization_level);
   });
+  
+  pangolin::RegisterKeyPressCallback('q', [&]() {
+      pangolin::Quit();      
+  });
 
   // Create the patch grid.
   camera_view[0]->AddDisplay(patch_view);
@@ -715,9 +735,11 @@ void InitGui()
   patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
 
   CreatePatchGrid(3, 3,  patches, patch_view);
+  runTimes.Toc("InitGUI");
 }
 
 int main(int argc, char** argv) {
+  runTimes.Tic("Total");
   srand(0);
   cl = std::shared_ptr<GetPot>(new GetPot(argc, argv));
   if (cl->search("--help")) {
@@ -739,6 +761,8 @@ int main(int argc, char** argv) {
   ba::debug_level_threshold = -1;
 
   Run();
-
+ 
+  runTimes.Toc("Total");
+  runTimes.PrintToTerminal(8);
   return 0;
 }
