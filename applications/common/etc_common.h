@@ -1,11 +1,12 @@
 #pragma once
 
+#include <Eigen/Core>
+#include <sophus/se3.hpp>
 #include <sdtrack/track.h>
 #include <sdtrack/utils.h>
 #include <sdtrack/semi_dense_tracker.h>
 
 #include <CVars/CVarVectorIO.h>
-#include <Eigen/Core>
 
 ////////////////////////////////////////////////////////////////////////////
 // Overloading Eigen for CVars

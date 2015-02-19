@@ -1,6 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <Eigen/Eigen>
+#include <sophus/se3.hpp>
+#include <vector>
+#include <iostream>
 
 #ifdef REAL_TYPE
 typedef REAL_TYPE Scalar;
