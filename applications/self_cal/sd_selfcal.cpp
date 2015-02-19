@@ -53,13 +53,14 @@ bool do_imu_self_cal = false;
 uint32_t num_self_cal_segments = 5;
 uint32_t self_cal_segment_length = 10;
 
-const int window_width = 640;
-const int window_height = 480;
+const int window_width = 640 * 1.5;
+const int window_height = 480 * 1.5;
 std::string g_usage = "SD SELFCAL. Example usage:\n"
     "-cam file:[loop=1]///Path/To/Dataset/[left,right]*pgm -cmod cameras.xml";
 bool is_keyframe = true, is_prev_keyframe = true;
 bool optimize_landmarks = true;
 bool optimize_pose = true;
+bool follow_camera = false;
 bool is_running = false;
 bool is_stepping = false;
 bool is_manual_mode = false;
@@ -318,11 +319,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
       ////ZZZZZZZZZZ THIS IS NOT THREAD SAFE
       // Calculate the average reprojection error.
-      /*for (uint32_t id : last_frame_proj_residual_ids) {
+      for (uint32_t id : last_frame_proj_residual_ids) {
         const auto& res = ba.GetProjectionResidual(id);
         total_last_frame_proj_norm += res.z.norm();
       }
-      total_last_frame_proj_norm /= last_frame_proj_residual_ids.size();*/
+      total_last_frame_proj_norm /= last_frame_proj_residual_ids.size();
 
       uint32_t last_pose_id =
           is_keyframe ? poses.size() - 1 : poses.size() - 2;
@@ -388,6 +389,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           x_r /= x_r.head<3>().norm();
           track->ref_keypoint.rho = x_r[3];
         }
+      }
+
+      if (follow_camera) {
+        FollowCamera(gui_vars, poses.back()->t_wp);
       }
     }
   }
@@ -572,7 +577,8 @@ void BaAndStartNewLandmarks()
     std::cerr << "Batch score: " << score << std::endl;
 
     // If the determinant is smaller than a heuristic, switch to self_cal.
-    if (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) {
+    if ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
+        ((batch_end - batch_start) > self_cal_segment_length * 2)) {
       std::cerr << "Determinant small enough, switching to self-cal" <<
                    std::endl;
       unknown_cam_calibration = false;
@@ -903,6 +909,9 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     // Update the pose t_ab based on the result from the tracker.
     UpdateCurrentPose();
+    if (follow_camera) {
+      FollowCamera(gui_vars, poses.back()->t_wp);
+    }
   }
 
   if (do_keyframing) {
@@ -957,7 +966,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     for (size_t ii = 0; ii < num_cam_params; ++ii) {
       plot_logs[ii].Log(rig.cameras_[0]->GetParams()[ii],
-         old_rig.cameras[0].camera.GenericParams()[ii],
+//         old_rig.cameras[0].camera.GenericParams()[ii],
           candidate_window.mean[ii]);
     }
 
@@ -1001,12 +1010,15 @@ void DrawImageData(uint32_t cam_id)
     gui_vars.handler->track_centers.clear();
   }
 
+  SceneGraph::AxisAlignedBoundingBox aabb;
   line_strip->Clear();
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
     axes[ii]->SetPose(poses[ii]->t_wp.matrix());
+    aabb.Insert(poses[ii]->t_wp.translation());
     Eigen::Vector3f vertex = poses[ii]->t_wp.translation().cast<float>();
     line_strip->AddVertex(vertex);
   }
+  gui_vars.grid.set_bounds(aabb);
 
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
@@ -1207,6 +1219,10 @@ void InitGui() {
     is_running = !is_running;
   });
 
+  pangolin::RegisterKeyPressCallback('f', [&]() {
+    follow_camera = !follow_camera;
+  });
+
   pangolin::RegisterKeyPressCallback('c', [&]() {
     do_self_cal = !do_self_cal;
   });
@@ -1310,6 +1326,12 @@ void InitGui() {
     plot_views.resize(num_plots);
     plot_logs.resize(num_plots);
 
+    plot_logs[0].SetLabels({"fx - p.q.", "fx - candidate seg."});
+    plot_logs[1].SetLabels({"fy - p.q.", "fy - candidate seg."});
+    plot_logs[2].SetLabels({"cx - p.q.", "cx - candidate seg."});
+    plot_logs[3].SetLabels({"cy - p.q.", "cy - candidate seg."});
+    plot_logs[4].SetLabels({"w - p.q.", "w - candidate seg."});
+
     for (size_t ii = 0; ii < num_cam_params; ++ii) {
       plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
       params_plot_view->AddDisplay(*plot_views[ii]);
@@ -1320,6 +1342,7 @@ void InitGui() {
       plot_views[ii]->SetViewSmooth(range);
       plot_views[ii]->ToggleTracking();
     }
+
 
     // Add the t_vs displays.
     if (imu_plots_needed) {
@@ -1344,14 +1367,14 @@ void InitGui() {
     analysis_views.resize(3);
     analysis_logs.resize(3);
 
+    analysis_logs[0].SetLabels({"p-value (candidate seg.)",
+                                "p-value (last p.q. window)"});
+    analysis_logs[1].SetLabels({"num. successful tracks"});
+    analysis_logs[2].SetLabels({"last frame mean reproj. error"});
+
     for (size_t ii = 0; ii < analysis_views.size(); ++ii) {
       analysis_views[ii] = new pangolin::Plotter(&analysis_logs[ii]);
       analysis_plot_view->AddDisplay(*analysis_views[ii]);
-      //double param = rig.cameras_[0]->GetParams()[ii];
-      //pangolin::XYRange range(0, 500, param - param * 0.5,
-      //                        param + param * 0.5);
-      // analysis_views[ii]->SetDefaultView(range);
-      // analysis_views[ii]->SetViewSmooth(range);
       analysis_views[ii]->ToggleTracking();
     }
   }

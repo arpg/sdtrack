@@ -16,6 +16,8 @@
 typedef std::shared_ptr<sdtrack::DenseTrack> TrackPtr;
 typedef std::vector<std::pair<Eigen::Vector2d, TrackPtr>> TrackCenterMap;
 
+static Sophus::SE3d t_wp_old;
+
 struct TrackerHandler : pangolin::Handler3D {
   TrackerHandler(pangolin::OpenGlRenderState& cam_state, uint32_t image_w,
                  uint32_t image_h,
@@ -254,7 +256,7 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
                     uint32_t handler_image_height, uint32_t num_cameras) {
   vars.image_height = handler_image_height;
   vars.image_width = handler_image_width;
-  pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
+  pangolin::CreateWindowAndBind("2dtracker", window_width, window_height);
 
   vars.render_state.SetModelViewMatrix(pangolin::IdentityMatrix());
   vars.render_state.SetProjectionMatrix(pangolin::ProjectionMatrixOrthographic(
@@ -283,7 +285,8 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
                         .SetAspect(-(float)window_width / (float)window_height);
 
   vars.gl_render3d.SetProjectionMatrix(
-      pangolin::ProjectionMatrix(640, 480, 420, 420, 320, 240, 0.01, 5000));
+      pangolin::ProjectionMatrix(window_width, window_height,
+                                 420, 420, 320, 240, 0.01, 5000));
   vars.gl_render3d.SetModelViewMatrix(
       pangolin::ModelViewLookAt(-3, -3, -4, 0, 0, 0, pangolin::AxisNegZ));
   vars.sg_handler_.reset(new SceneGraph::HandlerSceneGraph(
@@ -366,4 +369,53 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
               << rig.cameras[ii].T_wc.matrix();
   }
   return true;
+}
+
+inline pangolin::OpenGlMatrix LookAtModelViewMatrix(
+    const Eigen::Vector4t& target,
+    const Eigen::Vector4t& near_source,
+    const Eigen::Matrix4t& t_wp) {
+  const Eigen::Vector3t up = -t_wp.col(2).head<3>();
+  auto w_target = t_wp * target;
+  auto w_near_source = t_wp * near_source;
+
+  const Eigen::Vector3t dir = (w_target - w_near_source).head<3>().normalized();
+  Scalar dot = dir.dot(up.normalized());
+  CHECK(!std::isnan(dot));
+
+  return pangolin::ModelViewLookAt(
+      w_near_source[0], w_near_source[1], w_near_source[2],
+      w_target[0], w_target[1], w_target[2],
+      up[0], up[1], up[2]);
+}
+
+//pangolin::OpenGlMatrix FollowingCameraModelView(Sophus::SE3t t_wp) {
+//  static const Eigen::Vector4t target(0, 0, 0, 1);
+//  static const Eigen::Vector4t near_source(-30, 0, -9, 1);
+//  return LookAtModelViewMatrix(target, near_source, t_wp.matrix());
+//}
+
+void FollowCamera(TrackerGuiVars& vars, const Sophus::SE3t& t_wp_new) {
+  pangolin::OpenGlMatrix mat = vars.gl_render3d.GetModelViewMatrix();
+  #define M(row,col)  mat.m[col*4+row]
+  double e_x = M(0,3);
+  double e_y = M(1,3);
+  double e_z = M(2,3);
+  double ex = -(M(0,0)*e_x + M(1,0)*e_y + M(2,0)*e_z);
+  double ey = -(M(0,1)*e_x + M(1,1)*e_y + M(2,1)*e_z);
+  double ez = -(M(0,2)*e_x + M(1,2)*e_y + M(2,2)*e_z);
+  Eigen::Vector3d vec(ex, ey, ez);
+  Eigen::Vector3d offset = vec - t_wp_old.translation();
+  // vec = sdtrack::MultHomogeneous(poses.back()->t_wp * old_twp.inverse(), vec);
+  vec = t_wp_new.translation() + offset;
+  ex = vec[0];
+  ey = vec[1];
+  ez = vec[2];
+
+  M(0,3) = -(M(0,0)*ex + M(0,1)*ey + M(0,2)*ez);
+  M(1,3) = -(M(1,0)*ex + M(1,1)*ey + M(1,2)*ez);
+  M(2,3) = -(M(2,0)*ex + M(2,1)*ey + M(2,2)*ez);
+  #undef M
+  vars.gl_render3d.SetModelViewMatrix(mat);
+  t_wp_old = t_wp_new;
 }

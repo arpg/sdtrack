@@ -34,11 +34,12 @@
 
 
 uint32_t keyframe_tracks = UINT_MAX;
+double start_time = 0;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 
-const int window_width = 640;
-const int window_height = 480;
+const int window_width = 1024;
+const int window_height = 764;
 std::string g_usage = "SD VITRACKER. Example usage:\n"
     "-cam file:[loop=1]///Path/To/Dataset/[left,right]*pgm "
     "-imu join:///path/to/imu -cmod cameras.xml";
@@ -47,6 +48,7 @@ bool include_new_landmarks = true;
 bool optimize_landmarks = true;
 bool optimize_pose = true;
 bool is_running = false;
+bool follow_camera = false;
 bool is_stepping = false;
 bool is_manual_mode = false;
 bool do_bundle_adjustment = true;
@@ -86,6 +88,7 @@ int imu_cond_start_pose_id = -1;
 int imu_cond_residual_id = -1;
 
 // Plotters.
+std::vector<Eigen::VectorXd> plot_data;
 std::vector<pangolin::DataLog> plot_logs;
 std::vector<pangolin::Plotter*> plot_views;
 
@@ -121,8 +124,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
     reset_outliers = false;
   }
 
-  vi_bundle_adjuster.debug_level_threshold = ba_debug_level;
   bundle_adjuster.debug_level_threshold = ba_debug_level;
+  vi_bundle_adjuster.debug_level_threshold = vi_ba_debug_level;
+  aac_bundle_adjuster.debug_level_threshold = aac_ba_debug_level;
 
   imu_residual_ids.clear();
   ba::Options<double> options;
@@ -139,6 +143,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
   options.projection_outlier_threshold = outlier_threshold;
   options.regularize_biases_in_batch = poses.size() < POSES_TO_INIT ||
       regularize_biases_in_batch;
+  options.calculate_inertial_covariance_once = calculate_covariance_once;
   uint32_t num_outliers = 0;
   Sophus::SE3d t_ba;
   // Find the earliest pose touched by the current tracks.
@@ -153,6 +158,13 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
 
     if (start_pose_id == end_pose_id) {
       return;
+    }
+
+    // Add an extra pose to conditon the IMU
+    if (use_imu && use_imu_measurements && start_active_pose == start_pose_id &&
+        start_pose_id != 0) {
+      start_pose_id--;
+      std::cerr << "expanding sp from " << start_pose_id - 1 << " to " << start_pose_id << std::endl;
     }
   }
 
@@ -179,7 +191,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
         pose->opt_id[id] = ba.AddPose(
               pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
               is_active, pose->time);
-        if (ii == start_pose_id && use_imu && all_poses_active) {
+        if (ii == start_active_pose && use_imu && all_poses_active) {
           ba.RegularizePose(pose->opt_id[id], true, true, false, false);
         }
 
@@ -279,6 +291,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
 
     {
       std::lock_guard<std::mutex> lock(aac_mutex);
+
       uint32_t last_pose_id =
           is_keyframe ? poses.size() - 1 : poses.size() - 2;
       std::shared_ptr<sdtrack::TrackerPose> last_pose = is_keyframe ?
@@ -361,6 +374,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             track->ref_keypoint.rho = x_r[3];
           }
         }
+      }
+
+      if (follow_camera) {
+        FollowCamera(gui_vars, poses.back()->t_wp);
       }
     }
 
@@ -457,6 +474,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
     }
     // }
     plot_logs[1].Log(num_active_poses, poses.size());
+    Eigen::VectorXd data_to_save(6);
+    data_to_save << num_active_poses, poses.size(), cond_i_chi2_dist,
+        cond_inertial_error, cond_v_chi2_dist, summary.cond_proj_error;
+
+    plot_data.push_back(data_to_save);
   }
 }
 
@@ -527,9 +549,11 @@ void BaAndStartNewLandmarks()
 
   uint32_t keyframe_id = poses.size();
 
+  double ba_time = sdtrack::Tic();
   if (do_bundle_adjustment) {
     DoBA();
   }
+  ba_time = sdtrack::Toc(ba_time);
 
   if (do_start_new_landmarks) {
     tracker.StartNewLandmarks();
@@ -542,6 +566,8 @@ void BaAndStartNewLandmarks()
   if (!do_bundle_adjustment) {
     tracker.TransformTrackTabs(tracker.t_ba());
   }
+
+  std::cerr << "Timings ba: " << ba_time << std::endl;
 }
 
 void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
@@ -552,6 +578,10 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                          ~(_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
                            _MM_MASK_DIV_ZERO));
 #endif
+
+  if (frame_count == 0) {
+    start_time = sdtrack::Tic();
+  }
 
   frame_count++;
   //  if (poses.size() > 100) {
@@ -675,6 +705,9 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
     // Update the pose t_ab based on the result from the tracker.
     UpdateCurrentPose();
+    if (follow_camera) {
+      FollowCamera(gui_vars, poses.back()->t_wp);
+    }
   }
 
   if (do_keyframing) {
@@ -683,11 +716,24 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     const double total_trans = tracker.t_ba().translation().norm();
     const double total_rot = tracker.t_ba().so3().log().norm();
 
-    bool keyframe_condition = track_ratio < 0.7 || total_trans > 1.0 ||
-        total_rot > 0.1 /*|| tracker.num_successful_tracks() < 64*/;
+    double average_depth = 0;
+    if (current_tracks == nullptr || current_tracks->size() == 0) {
+      average_depth = 1;
+    } else {
+      for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
+          average_depth += (1.0 / track->ref_keypoint.rho);
+      }
+      average_depth /= current_tracks->size();
+    }
+
+
+    bool keyframe_condition = track_ratio < 0.7 ||
+        total_trans > 0.2 || total_rot > 0.1
+        /*|| tracker.num_successful_tracks() < 64*/;
 
     std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
-                 " rot: " << total_rot << std::endl;
+                 "av: depth: " << average_depth << " rot: " <<
+                 total_rot << std::endl;
 
     {
       std::lock_guard<std::mutex> lock(aac_mutex);
@@ -737,7 +783,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 #endif
 
   std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
-               std::endl;
+               " FPS: " << frame_count / sdtrack::Toc(start_time) << std::endl;
 }
 
 void DrawImageData(uint32_t cam_id)
@@ -746,9 +792,12 @@ void DrawImageData(uint32_t cam_id)
     gui_vars.handler->track_centers.clear();
   }
 
+  SceneGraph::AxisAlignedBoundingBox aabb;
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
     axes[ii]->SetPose(poses[ii]->t_wp.matrix());
+    aabb.Insert(poses[ii]->t_wp.translation());
   }
+  gui_vars.grid.set_bounds(aabb);
 
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
@@ -802,6 +851,7 @@ void Run()
     if (capture_success) {
       double timestamp = use_system_time ? images->Ref().system_time() :
                                            images->Ref().device_time();
+
 
       // Wait until we have enough measurements to interpolate this frame's
       // timestamp
@@ -919,6 +969,15 @@ void InitTracker()
   tracker_options.harris_score_threshold = 2e6;
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
+  /*for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    for (int ii = 0 ; ii < 3;  ++ii) {
+      for (int jj = 0 ; jj < feature_cells ; ++jj) {
+        tracker.feature_cells()[cam_id](ii, jj) =
+            sdtrack::SemiDenseTracker::kUnusedCell;
+      }
+    }
+  }*/
+
 }
 
 bool LoadCameras()
@@ -996,9 +1055,15 @@ void InitGui()
         [&]() {
     // write all the poses to a file.
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
+    std::ofstream log_file("logs.txt", std::ios_base::trunc);
     Sophus::SE3d last_pose = poses.front()->t_wp;
     double total_dist = 0;
     int count = 0;
+
+    for (Eigen::VectorXd& data: plot_data) {
+      log_file << data.transpose().format(sdtrack::kLongCsvFmt) << std::endl;
+    }
+
     for (auto pose : poses) {
       pose_file << pose->t_wp.translation().transpose().format(
                      sdtrack::kLongCsvFmt) << std::endl;
@@ -1012,16 +1077,38 @@ void InitGui()
     std::cerr << "Total distance travelled: " << total_dist << " error: " <<
                  error << " percentage error: " << error / total_dist * 100 <<
                  std::endl;
+
+    std::ofstream lm_file("landmarks.txt", std::ios_base::trunc);
+    for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
+      for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
+        if (track->num_good_tracked_frames < min_lm_measurements_for_drawing) {
+          continue;
+        }
+        Eigen::Vector4d ray;
+        ray.head<3>() = track->ref_keypoint.ray;
+        ray[3] = track->ref_keypoint.rho;
+        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.t_wc_[0], ray);
+        ray /= ray[3];
+        lm_file << ray.transpose().format(sdtrack::kLongCsvFmt) << ", " <<
+                   track->keypoints.size() << " , " <<
+                   track->is_outlier << std::endl;
+      }
+    }
+
     for (uint32_t ii = 0; ii < plot_logs.size() ; ++ii) {
       pangolin::DataLog& log = plot_logs[ii];
       char filename[100];
       sprintf(filename, "log_%d.txt" , ii);
-      log.Save(filename);
+      // log.Save(filename);
     }
   });
 
   pangolin::RegisterKeyPressCallback(' ', [&]() {
     is_running = !is_running;
+  });
+
+  pangolin::RegisterKeyPressCallback('f', [&]() {
+    follow_camera = !follow_camera;
   });
 
   pangolin::RegisterKeyPressCallback('b', [&]() {
@@ -1119,6 +1206,7 @@ void InitGui()
   for (size_t ii = 0; ii < plot_views.size(); ++ii) {
     plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
     plot_views[ii]->SetBounds(bottom, bottom + 0.1, 0.6, 1.0);
+    plot_views[ii]->ToggleTracking();
     bottom += 0.1;
     pangolin::DisplayBase().AddDisplay(*plot_views[ii]);
   }
@@ -1148,6 +1236,10 @@ int main(int argc, char** argv) {
   if (imu_buffer.elements.size() == 0) {
     LOG(ERROR) << "No initial IMU measurements were found.";
   }
+
+  //////////////////////////
+  /// ZZZZZZZZZZZZZZZZZZ: Get rid of this. Only valid for ICRA test rig
+  imu_time_offset = -0.0697;
 
   InitTracker();
 
