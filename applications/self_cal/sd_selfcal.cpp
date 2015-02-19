@@ -3,14 +3,17 @@
 #undef NDEBUG
 #include <assert.h>
 #include <Eigen/Eigen>
-#include <HAL/Camera/CameraDevice.h>
 #include <miniglog/logging.h>
-#include <calibu/utils/Xml.h>
 #include "GetPot"
+#include <unistd.h>
+#include <iomanip>
+
+#include "etc_common.h"
+#include <HAL/Camera/CameraDevice.h>
+#include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
 #include <PbMsgs/Matrix.h>
-#include <unistd.h>
 #include <SceneGraph/SceneGraph.h>
 #include <pangolin/pangolin.h>
 #include <ba/BundleAdjuster.h>
@@ -18,12 +21,10 @@
 #include <sdtrack/utils.h>
 #include "math_types.h"
 #include "gui_common.h"
-#include "etc_common.h"
 #include "CVars/CVar.h"
 #include <thread>
 #include "selfcal-cvars.h"
 #include "chi2inv.h"
-#include <iomanip>
 
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
