@@ -243,9 +243,11 @@ void BaAndStartNewLandmarks()
 
   uint32_t keyframe_id = poses.size();
 
+  double ba_time = sdtrack::Tic();
   if (do_bundle_adjustment) {
     DoBundleAdjustment(10, 0);
   }
+  ba_time = sdtrack::Toc(ba_time);
 
   if (do_start_new_landmarks) {
     tracker.StartNewLandmarks();
@@ -258,6 +260,8 @@ void BaAndStartNewLandmarks()
   if (!do_bundle_adjustment) {
     tracker.TransformTrackTabs(tracker.t_ba());
   }
+
+  std::cerr << "Timings ba: " << ba_time << std::endl;
 }
 
 void ProcessImage(std::vector<cv::Mat>& images)
