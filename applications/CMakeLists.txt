@@ -8,8 +8,8 @@ find_package(Ceres QUIET)
 
 
 #only build this if we have ceres
-if(Ceres_FOUND)
-  add_subdirectory(ceres_tracker)
-endif()
+#if(Ceres_FOUND)
+#  add_subdirectory(ceres_tracker)
+#endif()
 
 
