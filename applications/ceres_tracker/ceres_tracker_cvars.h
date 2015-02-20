@@ -28,9 +28,24 @@ static bool& use_robust_norm_for_proj =
     CVarUtils::CreateCVar<>("sd.UseRobustNormForProj", true, "");
 static int& num_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumBAIterations", 200, "");
+static int& num_ceres_threads =
+    CVarUtils::CreateCVar<>("sd.NumCeresThreads", 1, "");
 static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
     CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
 static bool& do_bundle_adjustment =
     CVarUtils::CreateCVar<>("sd.DoBundleAdjustment", true, "");
+static bool& do_calibration =
+    CVarUtils::CreateCVar<>("sd.DoCalibration", false, "");
+static bool& do_intrinsics_calibration =
+    CVarUtils::CreateCVar<>("sd.DoIntrinsicsCalibration", false, "");
+static bool& do_extrinsics_calibration =
+    CVarUtils::CreateCVar<>("sd.DoExtrinsicsCalibration", false, "");
+static bool& do_imu_ext_calibration =
+    CVarUtils::CreateCVar<>("sd.DoImuExt", false, "");
+static bool& optimize_rotation_only =
+    CVarUtils::CreateCVar<>("sd.OptimizeRotationOnly", false, "");
+static bool& use_imu =
+    CVarUtils::CreateCVar<>("sd.UseImu", true, "");
+

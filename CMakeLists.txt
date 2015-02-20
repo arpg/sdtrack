@@ -16,6 +16,11 @@ include(def_executable)
 
 string( TOLOWER ${PROJECT_NAME} LIBRARY_NAME )
 
+if(NOT CMAKE_BUILD_TYPE)
+  message(STATUS "Build type not set (defaults to release)")
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DOS_OBJECT_USE_OBJC=0")
 endif()
@@ -27,6 +32,7 @@ find_package(Calibu 0.1 REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(OpenCV2 REQUIRED)
 find_package(MINIGLOG REQUIRED)
+find_package(CVARS REQUIRED)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/SDTRACKERConfig.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/SDTRACKERConfig.h)
@@ -37,12 +43,15 @@ set(PROJ_INCLUDE_DIRS
   ${Calibu_INCLUDE_DIRS}
   ${Sophus_INCLUDE_DIR}
   ${MINIGLOG_INCLUDE_DIRS}
+  ${CVARS_INCLUDE_DIR}
   )
 
 set(PROJ_LIBRARIES
   ${Sophus_LIBRARIES}
   ${Calibu_LIBRARY}
   ${OpenCV2_LIBRARIES}
+  ${CVARS_LIBRARY}
+  ${MINIGLOG_LIBRARIES}
   )
 
 include_directories(${PROJ_INCLUDE_DIRS})

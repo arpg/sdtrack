@@ -3,7 +3,7 @@
 #include "../common/common_cvars.h"
 
 static double& gyro_sigma =
-    CVarUtils::CreateCVar<>("sd.GyroUncertainty", IMU_GYRO_SIGMA, "");
+    CVarUtils::CreateCVar<>("sd.GyroUncertainty", 1.3088444e-1 /*IMU_GYRO_SIGMA*/, "");
 static double& gyro_bias_sigma =
     CVarUtils::CreateCVar<>("sd.GyroBiasUncertainty", IMU_GYRO_BIAS_SIGMA, "");
 static double& accel_sigma =
@@ -12,11 +12,15 @@ static double& accel_bias_sigma =
     CVarUtils::CreateCVar<>("sd.AccelBiasUncertainty", IMU_ACCEL_BIAS_SIGMA, "");
 
 static int& pyramid_levels =
-    CVarUtils::CreateCVar<>("sd.PyramidLevels", 3, "");
+    CVarUtils::CreateCVar<>("sd.PyramidLevels", 4, "");
 static int& patch_size =
-    CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
+    CVarUtils::CreateCVar<>("sd.PatchSize", 9, "");
 static int& ba_debug_level =
-    CVarUtils::CreateCVar<>("debug.BaDebugLevel",-1, "");
+    CVarUtils::CreateCVar<>("debug.BaDebugLevel", -1, "");
+static int& vi_ba_debug_level =
+    CVarUtils::CreateCVar<>("debug.ViBaDebugLevel", -1, "");
+static int& aac_ba_debug_level =
+    CVarUtils::CreateCVar<>("debug.AacBaDebugLevel", -1, "");
 static uint32_t& num_ba_poses =
     CVarUtils::CreateCVar<>("sd.NumBAPoses",10u, "");
 static uint32_t& num_aac_poses =
@@ -37,6 +41,8 @@ static bool& use_dogleg =
     CVarUtils::CreateCVar<>("sd.UseDogleg", true, "");
 static bool& regularize_biases_in_batch =
     CVarUtils::CreateCVar<>("sd.RegularizeBiasesInBatch", false, "");
+static bool& calculate_covariance_once =
+    CVarUtils::CreateCVar<>("sd.CalculateCovarianceOnce", false, "");
 static bool& do_keyframing =
     CVarUtils::CreateCVar<>("sd.DoKeyframing", true, "");
 static bool& do_adaptive =
@@ -65,5 +71,5 @@ static double& ncc_threshold =
     CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
 static Eigen::Vector3d& gravity_vector =
     CVarUtils::CreateCVar<>("sd.Gravity",
-                            (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) * ba::Gravity)
-                            , "");
+                            (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) *
+                                              ba::Gravity), "");

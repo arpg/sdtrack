@@ -40,7 +40,6 @@ bool optimize_pose = true;
 bool is_running = false;
 bool is_stepping = false;
 bool is_manual_mode = false;
-bool do_bundle_adjustment = true;
 bool do_start_new_landmarks = true;
 int image_width;
 int image_height;
@@ -49,13 +48,7 @@ calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 sdtrack::SemiDenseTracker tracker;
 
-pangolin::View *grid_view;
-std::vector<pangolin::View*> camera_view;
-pangolin::View patch_view;
-pangolin::OpenGlRenderState  gl_render3d;
-std::unique_ptr<SceneGraph::HandlerSceneGraph> sg_handler_;
-SceneGraph::GLSceneGraph  scene_graph;
-SceneGraph::GLGrid grid;
+TrackerGuiVars gui_vars;
 std::shared_ptr<GetPot> cl;
 
 // TrackCenterMap current_track_centers;
@@ -63,16 +56,15 @@ std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
 // std::shared_ptr<sdtrack::DenseTrack> selected_track = nullptr;
 std::shared_ptr<pb::Image> camera_img;
-std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
+std::shared_ptr<SceneGraph::GLPrimitives<>> line_strip;
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
-
-TrackerHandler *handler;
-pangolin::OpenGlRenderState render_state;
 
 // State variables
 std::vector<cv::KeyPoint> keypoints;
+
+Sophus::SE3d guess;
 
 
 void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
@@ -124,7 +116,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         const bool constrains_active =
             track->keypoints.size() + ii > start_active_pose;
-        if (track->num_good_tracked_frames == 1 || track->is_outlier ||
+        if (track->num_good_tracked_frames <= 1 || track->is_outlier ||
             !constrains_active) {
           track->external_id[id] = UINT_MAX;
           continue;
@@ -132,14 +124,16 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
-        ray = sdtrack::MultHomogeneous(pose->t_wp  * rig.t_wc_[0], ray);
+        ray = sdtrack::MultHomogeneous(
+              pose->t_wp  * rig.t_wc_[track->ref_cam_id], ray);
         bool active = track->id != tracker.longest_track_id() ||
             !all_poses_active;
         if (!active) {
           std::cerr << "Landmark " << track->id << " inactive. " << std::endl;
         }
         track->external_id[id] =
-            bundle_adjuster.AddLandmark(ray, pose->opt_id[id], 0, active);
+            bundle_adjuster.AddLandmark(ray, pose->opt_id[id],
+                                        track->ref_cam_id, active);
       }
     }
 
@@ -213,7 +207,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         // Make the ray relative to the pose.
         Eigen::Vector4d x_r =
             sdtrack::MultHomogeneous(
-              (pose->t_wp * rig.t_wc_[0]).inverse(), x_w);
+              (pose->t_wp * rig.t_wc_[track->ref_cam_id]).inverse(), x_w);
         // Normalize the xyz component of the ray to compare to the original
         // ray.
         x_r /= x_r.head<3>().norm();
@@ -239,8 +233,6 @@ void UpdateCurrentPose()
     max_track_length = std::max(track->keypoints.size(), max_track_length);
   }
   new_pose->longest_track = max_track_length;
-  std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
-               new_pose->longest_track << std::endl;
 }
 
 void BaAndStartNewLandmarks()
@@ -251,9 +243,11 @@ void BaAndStartNewLandmarks()
 
   uint32_t keyframe_id = poses.size();
 
+  double ba_time = sdtrack::Tic();
   if (do_bundle_adjustment) {
     DoBundleAdjustment(10, 0);
   }
+  ba_time = sdtrack::Toc(ba_time);
 
   if (do_start_new_landmarks) {
     tracker.StartNewLandmarks();
@@ -266,6 +260,8 @@ void BaAndStartNewLandmarks()
   if (!do_bundle_adjustment) {
     tracker.TransformTrackTabs(tracker.t_ba());
   }
+
+  std::cerr << "Timings ba: " << ba_time << std::endl;
 }
 
 void ProcessImage(std::vector<cv::Mat>& images)
@@ -281,7 +277,6 @@ void ProcessImage(std::vector<cv::Mat>& images)
 //    exit(EXIT_SUCCESS);
 //  }
 
-  Sophus::SE3d guess;
   // If this is a keyframe, set it as one on the tracker.
   prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
 
@@ -300,25 +295,40 @@ void ProcessImage(std::vector<cv::Mat>& images)
     poses.push_back(new_pose);
     axes.push_back(std::unique_ptr<SceneGraph::GLAxis>(
                       new SceneGraph::GLAxis(0.05)));
-    scene_graph.AddChild(axes.back().get());
+    gui_vars.scene_graph.AddChild(axes.back().get());
   }
 
-  guess = prev_delta_t_ba * prev_t_ba;
+  if (((double)tracker.num_successful_tracks() / (double)num_features) > 0.3) {
+    guess = prev_delta_t_ba * prev_t_ba;
+  } else {
+    guess = Sophus::SE3d();
+  }
+
   if(guess.translation() == Eigen::Vector3d(0,0,0) &&
      poses.size() > 1) {
-    guess.translation() = Eigen::Vector3d(0,0,0.01);
+    guess.translation() = Eigen::Vector3d(0,0,0.001);
   }
+
+  std::cerr << "Guess: " << guess.matrix3x4() << std::endl;
 
   tracker.AddImage(images, guess);
   tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
                                  tracker.GetCurrentTracks());
 
   if (!is_manual_mode) {
-    tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
-                          tracker.GetCurrentTracks(), 0);
+    sdtrack::OptimizationOptions options;
+    options.optimize_landmarks = optimize_landmarks;
+    options.optimize_pose = optimize_pose;
+    tracker.OptimizeTracks(options);
     tracker.PruneTracks();
   }
+
+  if (tracker.num_successful_tracks() < 10) {
+    std::cerr << "Tracking failed. using guess." << std::endl;
+    tracker.set_t_ba(guess);
+    poses.back()->tracks.clear();
+  }
+
   // Update the pose t_ab based on the result from the tracker.
   UpdateCurrentPose();
 
@@ -383,44 +393,46 @@ void ProcessImage(std::vector<cv::Mat>& images)
 void DrawImageData(uint32_t cam_id)
 {
   if (cam_id == 0) {
-    handler->track_centers.clear();
+    gui_vars.handler->track_centers.clear();
   }
 
+  line_strip->Clear();
   for (uint32_t ii = 0; ii < poses.size() ; ++ii) {
     axes[ii]->SetPose(poses[ii]->t_wp.matrix());
+    Eigen::Vector3f vertex = poses[ii]->t_wp.translation().cast<float>();
+    line_strip->AddVertex(vertex);
   }
 
   // Draw the tracks
   for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {  
     Eigen::Vector2d center;
-    if (track->keypoints.back()[cam_id].tracked) {
+    if (track->keypoints.back()[cam_id].tracked || is_manual_mode) {
       DrawTrackData(track, image_width, image_height, center,
-                    handler->selected_track == track, cam_id);
+                    gui_vars.handler->selected_track == track, cam_id);
     }
     if (cam_id == 0) {
-      handler->track_centers.push_back(
+      gui_vars.handler->track_centers.push_back(
             std::pair<Eigen::Vector2d, std::shared_ptr<sdtrack::DenseTrack>>(
               center, track));
     }
   }
 
   // Populate the first column with the reference from the selected track.
-  if (handler->selected_track != nullptr) {
-    DrawTrackPatches(handler->selected_track, patches);
+  if (gui_vars.handler->selected_track != nullptr) {
+    DrawTrackPatches(gui_vars.handler->selected_track, gui_vars.patches);
   }
 
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-    camera_view[cam_id]->RenderChildren();
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    gui_vars.camera_view[cam_id]->RenderChildren();
   }
 }
 
 bool LoadCameras()
 {
   LoadCameraAndRig(*cl, camera_device, old_rig);
-  rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
- // rig.cameras_.resize(1);
- // rig.t_wc_.resize(1);
+  // rig.cameras_.resize(1);
+  // rig.t_wc_.resize(1);
   return true;
 }
 
@@ -431,7 +443,10 @@ void Run()
   // pangolin::Timer timer;
   bool capture_success = false;
   std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
-  camera_device.Capture(*images);
+  for (int ii = 0 ; ii < 10 ; ++ii) {
+    camera_device.Capture(*images);
+  }
+
   while(!pangolin::ShouldQuit()) {
     capture_success = false;
     const bool go = is_stepping;
@@ -465,8 +480,8 @@ void Run()
       camera_img = images->at(0);
       image_width = camera_img->Width();
       image_height = camera_img->Height();
-      handler->image_height = image_height;
-      handler->image_width = image_width;
+      gui_vars.handler->image_height = image_height;
+      gui_vars.handler->image_width = image_width;
 
       std::vector<cv::Mat> cvmat_images;
       for (int ii = 0; ii < images->Size() ; ++ii) {
@@ -479,18 +494,18 @@ void Run()
       for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
            cam_id < images->Size(); ++cam_id) {
         camera_img = images->at(cam_id);
-        camera_view[cam_id]->ActivateAndScissor();
+        gui_vars.camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
                       camera_img->Type());
         gl_tex[cam_id].RenderToViewportFlipY();
         DrawImageData(cam_id);
       }
 
-      grid_view->ActivateAndScissor(gl_render3d);
+      gui_vars.grid_view->ActivateAndScissor(gui_vars.gl_render3d);
 
       if (draw_landmarks) {
-        DrawLandmarks(min_lm_measurements_for_drawing, poses, rig, handler,
-                      selected_track_id);
+        DrawLandmarks(min_lm_measurements_for_drawing, poses, rig,
+                      gui_vars.handler, selected_track_id);
       }
     }
     pangolin::FinishFrame();
@@ -524,61 +539,10 @@ void InitTracker()
 
 void InitGui()
 {
-  pangolin::CreateWindowAndBind("2dtracker", window_width * 2, window_height);
-
-  render_state.SetModelViewMatrix( pangolin::IdentityMatrix() );
-  render_state.SetProjectionMatrix(
-        pangolin::ProjectionMatrixOrthographic(0, window_width, 0,
-                                               window_height, 0, 1000));
-  handler = new TrackerHandler(render_state, image_width, image_height);
-
-  glPixelStorei(GL_PACK_ALIGNMENT,1);
-  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
-
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glEnable( GL_BLEND );
-
-  grid.SetNumLines(20);
-  grid.SetLineSpacing(5.0);
-  scene_graph.AddChild(&grid);
-
-  // Add named OpenGL viewport to window and provide 3D Handler
-  camera_view.resize(rig.cameras_.size());
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-    camera_view[cam_id] = &pangolin::CreateDisplay()
-        .SetAspect(-(float)window_width/(float)window_height);
-  }
-  grid_view = &pangolin::Display("grid")
-      .SetAspect(-(float)window_width/(float)window_height);
-
-  gl_render3d.SetProjectionMatrix(
-        pangolin::ProjectionMatrix(640,480,420,420,320,240,0.01,5000));
-  gl_render3d.SetModelViewMatrix(
-        pangolin::ModelViewLookAt(-3,-3,-4, 0,0,0, pangolin::AxisNegZ));
-  sg_handler_.reset(new SceneGraph::HandlerSceneGraph(
-                      scene_graph, gl_render3d, pangolin::AxisNegZ, 50.0f));
-  grid_view->SetHandler(sg_handler_.get());
-  grid_view->SetDrawFunction(SceneGraph::ActivateDrawFunctor(
-                               scene_graph, gl_render3d));
-
-  //.SetBounds(0.0, 1.0, 0, 1.0, -(float)window_width/(float)window_height);
-
-  pangolin::Display("multi")
-      .SetBounds(1.0, 0.0, 0.0, 1.0)
-      .SetLayout(pangolin::LayoutEqual);
-
-  for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-    pangolin::Display("multi").AddDisplay(*camera_view[cam_id]);
-  }
-
-  pangolin::Display("multi").AddDisplay(*grid_view);
-
-  SceneGraph::GLSceneGraph::ApplyPreferredGlSettings();
-  glClearColor(0.0,0.0,0.0,1.0);
-
-//  std::cerr << "Viewport: " << camera_view->v.l << " " <<
-//               camera_view->v.r() << " " << camera_view->v.b << " " <<
-//               camera_view->v.t() << std::endl;
+  InitTrackerGui(gui_vars, window_width, window_height, image_width,
+                 image_height, rig.cameras_.size());
+  line_strip.reset(new SceneGraph::GLPrimitives<>);
+  gui_vars.scene_graph.AddChild(line_strip.get());
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_SPECIAL + pangolin::PANGO_KEY_RIGHT,
@@ -595,8 +559,8 @@ void InitGui()
     is_running = false;
     InitTracker();
     poses.clear();
-    scene_graph.Clear();
-    scene_graph.AddChild(&grid);
+    gui_vars.scene_graph.Clear();
+    gui_vars.scene_graph.AddChild(&gui_vars.grid);
     axes.clear();
     LoadCameras();
     prev_delta_t_ba = Sophus::SE3d();
@@ -628,11 +592,6 @@ void InitGui()
   pangolin::RegisterKeyPressCallback('B', [&]() {
     do_bundle_adjustment = !do_bundle_adjustment;
     std::cerr << "Do BA:" << do_bundle_adjustment << std::endl;
-  });
-
-  pangolin::RegisterKeyPressCallback('k', [&]() {
-    is_keyframe = !is_keyframe;
-    std::cerr << "is_keyframe:" << is_keyframe << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('S', [&]() {
@@ -697,17 +656,13 @@ void InitGui()
   });
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
-    tracker.Do2dAlignment(tracker.GetImagePyramid(),
+    sdtrack::AlignmentOptions options;
+    options.apply_to_kp = true;
+    tracker.Do2dAlignment(options,
+                          tracker.GetImagePyramid(),
                           tracker.GetCurrentTracks(),
                           last_optimization_level);
   });
-
-  // Create the patch grid.
-  camera_view[0]->AddDisplay(patch_view);
-  camera_view[0]->SetHandler(handler);
-  patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f/1.0f);
-
-  CreatePatchGrid(3, 3,  patches, patch_view);
 }
 
 int main(int argc, char** argv) {
@@ -720,6 +675,7 @@ int main(int argc, char** argv) {
 
   if (cl->search("-startnow")) {
     is_running = true;
+    is_stepping = true;
   }
 
   LOG(INFO) << "Initializing camera...";
@@ -729,7 +685,7 @@ int main(int argc, char** argv) {
 
   InitGui();
 
-  ba::debug_level_threshold = -1;
+  bundle_adjuster.debug_level_threshold = -1;
 
   Run();
 

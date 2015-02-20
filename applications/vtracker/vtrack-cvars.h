@@ -3,7 +3,7 @@
 #include "../common/common_cvars.h"
 
 static int& pyramid_levels =
-    CVarUtils::CreateCVar<>("sd.PyramidLevels", 3, "");
+    CVarUtils::CreateCVar<>("sd.PyramidLevels", 4, "");
 static int& patch_size =
     CVarUtils::CreateCVar<>("sd.PatchSize", 7, "");
 static int& ba_debug_level =
@@ -32,3 +32,5 @@ static double& tracker_center_weight =
     CVarUtils::CreateCVar<>("sd.TrackerCenterWeight", 100.0, "");
 static double& ncc_threshold =
     CVarUtils::CreateCVar<>("sd.NCCThreshold", 0.875, "");
+static bool& do_bundle_adjustment =
+    CVarUtils::CreateCVar<>("sd.DoBundleAdjustment", true, "");
