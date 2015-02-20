@@ -28,7 +28,7 @@
 #include <xmmintrin.h>
 #endif
 
-#define POSES_TO_INIT 30
+#define POSES_TO_INIT 10
 #include <sdtrack/semi_dense_tracker.h>
 
 
@@ -50,14 +50,13 @@ bool optimize_pose = true;
 bool is_running = false;
 bool follow_camera = false;
 bool is_stepping = false;
+bool has_gps = false;
 bool is_manual_mode = false;
 bool do_bundle_adjustment = true;
 bool do_start_new_landmarks = true;
 bool use_system_time = false;
 int image_width;
 int image_height;
-std::shared_ptr<std::thread> aac_thread;
-std::mutex aac_mutex;
 
 calibu::CameraRigT<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
@@ -76,7 +75,14 @@ std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
 SceneGraph::AxisAlignedBoundingBox aabb;
 
+// Gps structures
+std::vector<std::shared_ptr<sdtrack::TrackerPose>> gps_poses;
+std::shared_ptr<std::thread> gps_thread;
+
+
 // Inertial stuff.
+std::mutex aac_mutex;
+std::shared_ptr<std::thread> aac_thread;
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
 ba::BundleAdjuster<double, 1, 15, 0> vi_bundle_adjuster;
 ba::BundleAdjuster<double, 1, 15, 0> aac_bundle_adjuster;
@@ -173,6 +179,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
 
   // Do a bundle adjustment on the current set
   if (current_tracks && end_pose_id) {
+
+    if (!do_adaptive_conditioning) {
+      gui_vars.timer.Tic("ba_pre");
+    }
+
     {
       std::lock_guard<std::mutex> lock(aac_mutex);
       if (use_imu) {
@@ -283,11 +294,26 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
           }
         }
       }
+    }
 
+    if (!do_adaptive_conditioning) {
+      gui_vars.timer.Toc("ba_pre");
     }
 
     // Optimize the poses
+    if (!do_adaptive_conditioning) {
+      gui_vars.timer.Tic("ba_solve");
+    }
+
     ba.Solve(num_ba_iterations);
+
+    if (!do_adaptive_conditioning) {
+      gui_vars.timer.Toc("ba_solve");
+    }
+
+    if (!do_adaptive_conditioning) {
+      gui_vars.timer.Tic("ba_post");
+    }
 
     {
       std::lock_guard<std::mutex> lock(aac_mutex);
@@ -381,6 +407,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       }
     }
 
+    if (!do_adaptive_conditioning) {
+      gui_vars.timer.Toc("ba_post");
+    }
   }
   const ba::SolutionSummary<Scalar>& summary = ba.GetSolutionSummary();
   // std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
@@ -500,6 +529,10 @@ void UpdateCurrentPose()
                new_pose->longest_track << std::endl;
 }
 
+void DoGps()
+{
+
+}
 
 void DoAAC()
 {
@@ -543,10 +576,23 @@ void DoBA()
 
 void BaAndStartNewLandmarks()
 {
+  gui_vars.timer.Tic("ba");
   if (!is_keyframe) {
+    gui_vars.timer.Tic("snl");
+    gui_vars.timer.Toc("snl");
+
+    gui_vars.timer.Tic("ba_pre");
+    gui_vars.timer.Toc("ba_pre");
+
+    gui_vars.timer.Tic("ba_post");
+    gui_vars.timer.Toc("ba_post");
+
+    gui_vars.timer.Tic("ba_solve");
+    gui_vars.timer.Toc("ba_solve");
+
+    gui_vars.timer.Toc("ba");
     return;
   }
-
   uint32_t keyframe_id = poses.size();
 
   double ba_time = sdtrack::Tic();
@@ -554,10 +600,13 @@ void BaAndStartNewLandmarks()
     DoBA();
   }
   ba_time = sdtrack::Toc(ba_time);
+  gui_vars.timer.Toc("ba");
 
+  gui_vars.timer.Tic("snl");
   if (do_start_new_landmarks) {
-    tracker.StartNewLandmarks();
+    tracker.StartNewLandmarks(0);
   }
+  gui_vars.timer.Toc("snl");
 
   std::shared_ptr<sdtrack::TrackerPose> new_pose = poses.back();
   // Update the tracks on this new pose.
@@ -566,6 +615,8 @@ void BaAndStartNewLandmarks()
   if (!do_bundle_adjustment) {
     tracker.TransformTrackTabs(tracker.t_ba());
   }
+
+
 
   std::cerr << "Timings ba: " << ba_time << std::endl;
 }
@@ -692,12 +743,15 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
   }
 
+  gui_vars.timer.Tic("track");
   {
     std::lock_guard<std::mutex> lock(aac_mutex);
 
     tracker.AddImage(images, guess);
+    gui_vars.timer.Tic("evaluate");
     tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
                                    tracker.GetCurrentTracks());
+    gui_vars.timer.Toc("evaluate");
 
     if (!is_manual_mode) {
       tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
@@ -709,6 +763,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       FollowCamera(gui_vars, poses.back()->t_wp);
     }
   }
+  gui_vars.timer.Toc("track");
 
   if (do_keyframing) {
     const double track_ratio = (double)tracker.num_successful_tracks() /
@@ -834,6 +889,8 @@ void Run()
   camera_device.Capture(*images);
 
   while(!pangolin::ShouldQuit()) {
+    gui_vars.timer.Tic();
+
     capture_success = false;
     const bool go = is_stepping;
     if (!is_running) {
@@ -942,6 +999,9 @@ void Run()
       }
       // gui_vars.grid_view->RenderChildren();
     }
+    gui_vars.timer.Toc();
+    gui_vars.timer_view.Update(20, gui_vars.timer.GetNames(3),
+                               gui_vars.timer.GetTimes(3));
     pangolin::FinishFrame();
   }
 }
@@ -985,8 +1045,8 @@ bool LoadCameras()
   LoadCameraAndRig(*cl, camera_device, old_rig);
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
-  rig.cameras_.resize(1);
-  rig.t_wc_.resize(1);
+  // rig.cameras_.resize(1);
+  // rig.t_wc_.resize(1);
 
   // Load the imu
   std::string imu_str = cl->follow("","-imu");
@@ -1224,6 +1284,10 @@ int main(int argc, char** argv) {
     use_system_time = true;
   }
 
+  if (cl->search("-posys")) {
+    has_gps = true;
+  }
+
   if (cl->search("-startnow")) {
     is_running = true;
     is_stepping = true;
@@ -1239,13 +1303,19 @@ int main(int argc, char** argv) {
 
   //////////////////////////
   /// ZZZZZZZZZZZZZZZZZZ: Get rid of this. Only valid for ICRA test rig
-  imu_time_offset = -0.0697;
+  imu_time_offset = 0;//-0.0697;
+  if (cl->search("-ts")) {
+    imu_time_offset = cl->follow(0.0, "-ts");
+    LOG(INFO) << "Setting time offset to " << imu_time_offset << std::endl;
+  }
 
   InitTracker();
 
   InitGui();
 
   aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
+
+  gps_thread = std::shared_ptr<std::thread>(new std::thread(&DoGps));
 
   Run();
 

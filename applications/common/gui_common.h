@@ -12,6 +12,8 @@
 #include <sdtrack/track.h>
 #include <sdtrack/semi_dense_tracker.h>
 #include "etc_common.h"
+#include "timer.h"
+#include "timer_view.h"
 
 typedef std::shared_ptr<sdtrack::DenseTrack> TrackPtr;
 typedef std::vector<std::pair<Eigen::Vector2d, TrackPtr>> TrackCenterMap;
@@ -90,6 +92,8 @@ struct TrackerGuiVars {
   pangolin::OpenGlRenderState gl_render3d;
   std::unique_ptr<SceneGraph::HandlerSceneGraph> sg_handler_;
   std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
+  Timer     timer;
+  TimerView timer_view;
 };
 
 inline Eigen::Vector2d ImageToWindowCoords(int image_width, int image_height,
@@ -315,6 +319,10 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
   vars.patch_view.SetBounds(0.01, 0.31, 0.69, .99, 1.0f / 1.0f);
 
   CreatePatchGrid(3, 3, vars.patches, vars.patch_view);
+
+  vars.timer_view.SetBounds(0.7, 1, 0.7, 1.0);
+  pangolin::DisplayBase().AddDisplay(vars.timer_view);
+  vars.timer_view.InitReset();
 }
 
 bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
