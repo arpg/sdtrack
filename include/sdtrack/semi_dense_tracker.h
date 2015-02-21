@@ -25,6 +25,7 @@
 namespace sdtrack {
 class SemiDenseTracker {
   friend class OptimizeTrack;
+  friend class ParallelExtractKeypoints;
 public:
   static const int kUnusedCell = -1;
 

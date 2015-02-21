@@ -28,11 +28,31 @@ namespace sdtrack {
 
     OptimizeTrack(
         const OptimizeTrack& other,
-        tbb::split
-        );
+        tbb::split);
 
 
     void join(OptimizeTrack& other);
+
+    void operator() (const tbb::blocked_range<int>& r);
+  };
+
+  class ParallelExtractKeypoints {
+  public:
+    SemiDenseTracker& tracker;
+    const cv::Mat& image;
+    const std::vector<cv::Rect>& bounds;
+
+    // Reduced quantities.
+    std::vector<cv::KeyPoint> keypoints;
+
+    ParallelExtractKeypoints(SemiDenseTracker& tracker_ref,
+                             const cv::Mat& img_ref,
+                             const std::vector<cv::Rect>& bounds_ref);
+
+    ParallelExtractKeypoints(const ParallelExtractKeypoints& other,
+                             tbb::split);
+
+    void join(ParallelExtractKeypoints& other);
 
     void operator() (const tbb::blocked_range<int>& r);
   };

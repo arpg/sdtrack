@@ -117,7 +117,11 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
   uint32_t cell_width = image.cols / tracker_options_.feature_cells;
   uint32_t cell_height = image.rows / tracker_options_.feature_cells;
   uint32_t cells_hit = 0;
-  const double time = Tic();
+  double time = Tic();
+
+  std::vector<cv::Rect> bounds_vec;
+  bounds_vec.reserve(powi(tracker_options_.feature_cells,2));
+
   for (uint32_t ii = 0  ; ii < tracker_options_.feature_cells ; ++ii) {
     for (uint32_t jj = 0  ; jj < tracker_options_.feature_cells ; ++jj) {
       const auto feature_cell = feature_cells_[cam_id](jj, ii);
@@ -127,23 +131,17 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
 
       const cv::Rect bounds(ii * cell_width, jj * cell_height,
                             cell_width, cell_height);
-      cv::Mat roi(image, bounds);
-      detector_->detect(roi, cell_kp);
-
-      cells_hit++;
-
-      //      LOG(g_sdtrack_debug) << "Detected " << cell_kp.size() << " in " << bounds.x <<
-      //                   ", " << bounds.y << ", " << bounds.width << ", " <<
-      //                   bounds.height;
-
-      // Shift the keypoints.
-      for (cv::KeyPoint& kp : cell_kp) {
-        kp.pt.x += bounds.x;
-        kp.pt.y += bounds.y;
-        keypoints.push_back(kp);
-      }
+      bounds_vec.push_back(bounds);
     }
   }
+
+
+  ParallelExtractKeypoints extractor(*this, image, bounds_vec);
+
+  tbb::parallel_reduce(tbb::blocked_range<int>(0, bounds_vec.size()),
+                       extractor);
+
+  keypoints = extractor.keypoints;
 
   if (tracker_options_.do_corner_subpixel_refinement) {
     std::vector<cv::Point2f> subpixel_centers(keypoints.size());
@@ -163,8 +161,6 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
     }
   }
 
-  // LOG(g_sdtrack_debug) << "total " << keypoints.size() << " keypoints " << std::endl;
-  //  detector_->detect(image, keypoints);
   HarrisScore(image.data, image.cols, image.rows,
               tracker_options_.patch_dim, keypoints);
   LOG(g_sdtrack_debug) << "extract feature detection for " << keypoints.size() <<

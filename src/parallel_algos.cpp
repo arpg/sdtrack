@@ -324,3 +324,45 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
     //              std::endl;
   }
 }
+
+ParallelExtractKeypoints::ParallelExtractKeypoints(
+    SemiDenseTracker &tracker_ref,
+    const cv::Mat &img_ref,
+    const std::vector<cv::Rect> &bounds_ref):
+  tracker(tracker_ref),
+  image(img_ref),
+  bounds(bounds_ref)
+  {}
+
+ParallelExtractKeypoints::ParallelExtractKeypoints(
+    const ParallelExtractKeypoints &other,
+    tbb::split) :
+  tracker(other.tracker),
+  image(other.image),
+  bounds(other.bounds)
+  {}
+
+void ParallelExtractKeypoints::join(ParallelExtractKeypoints &other)
+{
+  keypoints.insert(keypoints.end(), other.keypoints.begin(),
+                   other.keypoints.end());
+}
+
+void ParallelExtractKeypoints::operator()(const tbb::blocked_range<int> &r)
+{
+  std::vector<cv::KeyPoint> cell_kp;
+  for ( int ii = r.begin(); ii != r.end(); ii++ ) {
+    cell_kp.clear();
+    const cv::Rect bound = bounds[ii];
+    cv::Mat roi(image, bound);
+    tracker.detector_->detect(roi, cell_kp);
+
+    for (cv::KeyPoint& kp : cell_kp) {
+      kp.pt.x += bound.x;
+      kp.pt.y += bound.y;
+      keypoints.push_back(kp);
+    }
+  }
+}
+
+
