@@ -366,3 +366,165 @@ void ParallelExtractKeypoints::operator()(const tbb::blocked_range<int> &r)
 }
 
 
+Parallel2dAlignment::Parallel2dAlignment(
+    SemiDenseTracker &tracker_ref,
+    const AlignmentOptions &options_ref,
+    const std::vector<std::vector<cv::Mat>> &pyr,
+    std::vector<std::shared_ptr<DenseTrack> > &tracks_v,
+    Sophus::SE3d tcv,
+    uint32_t lvl,
+    uint32_t cam) :
+  tracker(tracker_ref),
+  options(options_ref),
+  image_pyramid(pyr),
+  tracks(tracks_v),
+  t_cv(tcv),
+  level(lvl),
+  cam_id(cam) {}
+
+void Parallel2dAlignment::operator()(const tbb::blocked_range<int> &r) const
+{
+  Eigen::LDLT<Eigen::Matrix2d> solver;
+  Eigen::Matrix2d jtj;
+  Eigen::Vector2d jtr, delta_pix, delta_pix_0th_level;
+  double res_total;
+  Eigen::Matrix<double, 1, 2> di_dp;
+  double ncc_num = 0, ncc_den_a = 0, ncc_den_b = 0;
+
+  for (int ii = r.begin(); ii != r.end(); ii++) {
+    std::shared_ptr<DenseTrack>& track = tracks[ii];
+    const Sophus::SE3d& t_vc = tracker.camera_rig_->t_wc_[track->ref_cam_id];
+    // If we are only optimizing tracks from a single camera, skip track if
+    // it wasn't initialized in the specified camera.
+    if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=
+        options.only_optimize_camera_id) {
+      continue;
+    }
+
+    // Don't align newly created tracks.
+    if (track->keypoints.size() < 2) {
+      continue;
+    }
+
+    // 2D Alignment optimization loop.
+    while (true) {
+      jtj.setZero();
+      jtr.setZero();
+      res_total = 0;
+      ncc_num = 0;
+      ncc_den_a = 0;
+      ncc_den_b = 0;
+
+      // Set up the 2d alignment problem.
+      PatchTransfer& transfer = track->transfer[cam_id];
+
+      if (transfer.level != level) {
+        // We have to re-transfer this track.
+        const Sophus::SE3d track_t_ba =
+            t_cv * tracker.t_ba_ * track->t_ba * t_vc;
+
+        tracker.TransferPatch(track, level, cam_id,  track_t_ba,
+                              tracker.camera_rig_->cameras_[cam_id],
+                              transfer, false);
+      }
+      // uint32_t level = transfer.level;
+      DenseKeypoint& ref_kp = track->ref_keypoint;
+      Patch& ref_patch = ref_kp.patch_pyramid[level];
+      bool out_of_bounds = false;
+      for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
+        const size_t ii = transfer.valid_rays[kk];
+        const Eigen::Vector2t& pix = transfer.valid_projections[kk];
+        if (!tracker.IsReprojectionValid(pix, image_pyramid[cam_id][level])) {
+          out_of_bounds = true;
+          break;
+        }
+        // Get the residual at this point.
+        const double val_pix = transfer.projected_values[ii];
+        //GetSubPix(image_pyrmaid[level], pix[0], pix[1]);
+        const double mean_s_ref = ref_patch.values[ii] - ref_patch.mean;
+        const double mean_s_proj = val_pix - transfer.mean_value;
+        const double res = mean_s_proj - mean_s_ref;
+
+        // Also tet the jacobian.
+        tracker.GetImageDerivative(
+              image_pyramid[cam_id][level], pix, di_dp, val_pix);
+
+        jtj += di_dp.transpose() * di_dp;
+        jtr += di_dp.transpose() * res;
+        res_total += fabs(res);
+      }
+
+      if (out_of_bounds) {
+        break;
+      }
+
+      // Calculate the update to this patch.
+      solver.compute(jtj);
+      delta_pix = solver.solve(jtr);
+      delta_pix_0th_level[0] =
+          delta_pix[0] / tracker.pyramid_coord_ratio_[level][0];
+      delta_pix_0th_level[1] =
+          delta_pix[1] / tracker.pyramid_coord_ratio_[level][1];
+
+      out_of_bounds = false;
+      transfer.mean_value = 0;
+      for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
+        const size_t ii = transfer.valid_rays[kk];
+        transfer.valid_projections[kk] -= delta_pix;
+        transfer.projections[ii] -= delta_pix_0th_level;
+        const Eigen::Vector2t& pix = transfer.valid_projections[kk];
+        if (!tracker.IsReprojectionValid(
+              pix, image_pyramid[cam_id][level])) {
+          out_of_bounds = true;
+          break;
+        }
+        transfer.projected_values[ii] =
+            tracker.GetSubPix(image_pyramid[cam_id][level], pix[0], pix[1]);
+        transfer.mean_value += transfer.projected_values[ii];
+      }
+
+      if (out_of_bounds) {
+        break;
+      }
+      if (transfer.valid_rays.size() != 0) {
+        transfer.mean_value /= transfer.valid_rays.size();
+      }
+
+      double post_res_total = 0;
+      for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
+        const size_t ii = transfer.valid_rays[kk];
+        const double mean_s_ref = ref_patch.values[ii] - ref_patch.mean;
+        const double mean_s_proj = transfer.projected_values[ii] -
+            transfer.mean_value;
+        ncc_num += mean_s_ref * mean_s_proj;
+        ncc_den_a += mean_s_ref * mean_s_ref;
+        ncc_den_b += mean_s_proj * mean_s_proj;
+        const double res = mean_s_proj - mean_s_ref;
+        transfer.residuals[ii] = mean_s_proj - mean_s_ref;
+        post_res_total += fabs(res);
+      }
+
+      const double denom = sqrt(ncc_den_a * ncc_den_b);
+      const double prev_ncc = transfer.ncc;
+      transfer.ncc = denom == 0 ? 0 : ncc_num / denom;
+
+      // If the residual increases, quit and roll back the changes.
+      if (post_res_total >= res_total) {
+        // roll back the changes
+        transfer.ncc = prev_ncc;
+        break;
+      } else {
+        track->offset_2d[cam_id] -= delta_pix_0th_level;
+        if (options.apply_to_kp) {
+          track->keypoints.back()[cam_id].kp -= delta_pix_0th_level;
+        }
+      }
+
+      if (delta_pix.norm() < 0.01) {
+        break;
+      }
+
+    }
+  }
+}
+

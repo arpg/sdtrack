@@ -1,5 +1,6 @@
 #include "semi_dense_tracker.h"
 #include <tbb/parallel_reduce.h>
+#include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 
 namespace sdtrack {
@@ -55,5 +56,26 @@ namespace sdtrack {
     void join(ParallelExtractKeypoints& other);
 
     void operator() (const tbb::blocked_range<int>& r);
+  };
+
+  class Parallel2dAlignment {
+  public:
+    SemiDenseTracker& tracker;
+    const AlignmentOptions &options;
+    const std::vector<std::vector<cv::Mat>>& image_pyramid;
+    std::vector<std::shared_ptr<DenseTrack>>& tracks;
+    Sophus::SE3d t_cv;
+    uint32_t level;
+    uint32_t cam_id;
+
+    Parallel2dAlignment(SemiDenseTracker& tracker_ref,
+                        const AlignmentOptions &options_ref,
+                        const std::vector<std::vector<cv::Mat>>& pyr,
+                        std::vector<std::shared_ptr<DenseTrack>>& tracks_v,
+                        Sophus::SE3d tcv,
+                        uint32_t lvl,
+                        uint32_t cam);
+
+    void operator() (const tbb::blocked_range<int>& r) const;
   };
 }

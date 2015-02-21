@@ -26,6 +26,7 @@ namespace sdtrack {
 class SemiDenseTracker {
   friend class OptimizeTrack;
   friend class ParallelExtractKeypoints;
+  friend class Parallel2dAlignment;
 public:
   static const int kUnusedCell = -1;
 
@@ -115,7 +116,7 @@ private:
                      bool use_approximation = true);
 
 
-  inline double GetSubPix(const cv::Mat& image, double x, double y);
+  double GetSubPix(const cv::Mat& image, double x, double y);
 
   void ReprojectTrackCenters();
 
@@ -126,7 +127,7 @@ private:
   inline bool IsKeypointValid(const cv::KeyPoint& kp, uint32_t image_width,
                               uint32_t image_height, uint32_t cam_id);
 
-  inline bool IsReprojectionValid(
+  bool IsReprojectionValid(
     const Eigen::Vector2t& pix, const cv::Mat& image);
   void GetImageDerivative(
     const cv::Mat& image, const Eigen::Vector2d& pix,
