@@ -15,11 +15,16 @@
 #include <calibu/cam/camera_crtp_interop.h>
 #include <Eigen/Eigenvalues>
 #include <random>
+#include <tbb/task_scheduler_init.h>
+
+#define MIN_OBS_FOR_CAM_LOCALIZATION 3
+
 
 #define UNINITIALIZED_TRANSFER UINT_MAX
 
 namespace sdtrack {
 class SemiDenseTracker {
+  friend class OptimizeTrack;
 public:
   static const int kUnusedCell = -1;
 
@@ -122,7 +127,7 @@ private:
 
   inline bool IsReprojectionValid(
     const Eigen::Vector2t& pix, const cv::Mat& image);
-  inline void GetImageDerivative(
+  void GetImageDerivative(
     const cv::Mat& image, const Eigen::Vector2d& pix,
     Eigen::Matrix<double, 1, 2>& di_dpix, double val_pix);
 
@@ -154,5 +159,6 @@ private:
   Eigen::Matrix4d generators_[6];
   std::default_random_engine generator_;
 
+  tbb::task_scheduler_init tbb_scheduler_;
 };
 }
