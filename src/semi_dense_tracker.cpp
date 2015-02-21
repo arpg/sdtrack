@@ -625,7 +625,6 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
 
         // Exit if the change in the params was less than a threshold.
         if (change < 0.01) {
-          std::cerr << "Exiting due to change: " << change << std::endl;
           break;
         }
 
@@ -636,16 +635,11 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
         landmark_exit = false;
         if (stats.delta_pose_norm <= 1e-4 && options.optimize_pose) {
           pose_exit = true;
-          std::cerr << "Exiting due to delta_pose_norm: " <<
-                       stats.delta_pose_norm << std::endl;
         }
 
         if (stats.delta_lm_norm <= 1e-4 * current_tracks_.size() &&
             options.optimize_landmarks) {
           landmark_exit = true;
-          std::cerr << "Exiting due to delta_lm_norm: " <<
-                       stats.delta_lm_norm << " with " <<
-                       current_tracks_.size() << " tracks." << std::endl;
         }
 
       } while (!pose_exit && !landmark_exit);
