@@ -604,6 +604,9 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
       uint32_t iterations = 0;
       // Continuously iterate this pyramid level until we meet a stop
       // condition.
+      bool pose_exit;
+      bool landmark_exit;
+
       do {
         t_ba_old_ = t_ba_;
         OptimizePyramidLevel(last_level, image_pyramid_, current_tracks_,
@@ -622,14 +625,30 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
 
         // Exit if the change in the params was less than a threshold.
         if (change < 0.01) {
+          std::cerr << "Exiting due to change: " << change << std::endl;
           break;
         }
 
         post_error = stats.pre_solve_error;
         iterations++;
 
-      } while (stats.delta_pose_norm > 1e-4 || stats.delta_lm_norm >
-               1e-4 * current_tracks_.size());
+        pose_exit = false;
+        landmark_exit = false;
+        if (stats.delta_pose_norm <= 1e-4 && options.optimize_pose) {
+          pose_exit = true;
+          std::cerr << "Exiting due to delta_pose_norm: " <<
+                       stats.delta_pose_norm << std::endl;
+        }
+
+        if (stats.delta_lm_norm <= 1e-4 * current_tracks_.size() &&
+            options.optimize_landmarks) {
+          landmark_exit = true;
+          std::cerr << "Exiting due to delta_lm_norm: " <<
+                       stats.delta_lm_norm << " with " <<
+                       current_tracks_.size() << " tracks." << std::endl;
+        }
+
+      } while (!pose_exit && !landmark_exit);
     }
 
     std::cerr << "Pyramid optimization took " << Toc(time) << " seconds." << std::endl;
