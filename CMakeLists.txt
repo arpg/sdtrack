@@ -33,6 +33,7 @@ find_package(Sophus REQUIRED)
 find_package(OpenCV2 REQUIRED)
 find_package(MINIGLOG REQUIRED)
 find_package(CVARS REQUIRED)
+find_package(TBB REQUIRED)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/SDTRACKERConfig.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/SDTRACKERConfig.h)
@@ -44,6 +45,7 @@ set(PROJ_INCLUDE_DIRS
   ${Sophus_INCLUDE_DIR}
   ${MINIGLOG_INCLUDE_DIRS}
   ${CVARS_INCLUDE_DIR}
+  ${TBB_INCLUDE_DIRS}
   )
 
 set(PROJ_LIBRARIES
@@ -52,6 +54,7 @@ set(PROJ_LIBRARIES
   ${OpenCV2_LIBRARIES}
   ${CVARS_LIBRARY}
   ${MINIGLOG_LIBRARIES}
+  ${TBB_LIBRARIES}
   )
 
 include_directories(${PROJ_INCLUDE_DIRS})
@@ -64,7 +67,8 @@ set(SDTRACKER_HDRS
     ${INC_PREFIX}/keypoint.h)
 
 set(SDTRACKER_SRCS
-    ${CMAKE_SOURCE_DIR}/src/semi_dense_tracker.cpp)
+    ${CMAKE_SOURCE_DIR}/src/semi_dense_tracker.cpp
+    ${CMAKE_SOURCE_DIR}/src/parallel_algos.cpp)
 
 def_library(${LIBRARY_NAME}
   SOURCES ${SDTRACKER_HDRS} ${SDTRACKER_SRCS}

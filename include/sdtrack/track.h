@@ -112,6 +112,11 @@ namespace sdtrack
     bool needs_backprojection = false;
     Sophus::SE3d t_ba;
 
+    double v_inv_vec;
+    double r_l_vec;
+    Eigen::Matrix<double, 6, 1> w_vec;
+
+
     uint32_t external_data = UINT_MAX;
     uint32_t external_data2 = UINT_MAX;
   };
