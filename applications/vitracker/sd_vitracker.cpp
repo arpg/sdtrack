@@ -1000,8 +1000,10 @@ void Run()
       // gui_vars.grid_view->RenderChildren();
     }
     gui_vars.timer.Toc();
-    gui_vars.timer_view.Update(20, gui_vars.timer.GetNames(3),
-                               gui_vars.timer.GetTimes(3));
+    if (go) {
+      gui_vars.timer_view.Update(20, gui_vars.timer.GetNames(3),
+                                 gui_vars.timer.GetTimes(3));
+    }
     pangolin::FinishFrame();
   }
 }
