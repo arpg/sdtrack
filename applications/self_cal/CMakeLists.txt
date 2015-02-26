@@ -28,4 +28,5 @@ def_executable(sd_selfcal
   ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
+  ${CMAKE_DL_LIBS}
   )
