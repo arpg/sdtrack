@@ -1,7 +1,7 @@
 cmake_minimum_required( VERSION 2.8 )
 include_directories(common)
 find_package(sdtrack REQUIRED)
-find_package(ba REQUIRED)
+find_package(BA REQUIRED)
 find_package(HAL REQUIRED)
 find_package(PbMsgs REQUIRED)
 find_package(Protobuf REQUIRED)
@@ -31,6 +31,7 @@ def_executable(sd_ceres_tracker
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
   ${CERES_LIBRARIES}
+  ${CMAKE_DL_LIBS}
   )
 
 def_executable(sd_ceres_calib
