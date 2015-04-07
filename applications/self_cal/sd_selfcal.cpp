@@ -45,11 +45,11 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 uint32_t num_change_detected = 0;
 uint32_t num_change_needed = 3;
 bool unknown_cam_calibration = true;
-bool unknown_imu_calibration = false;
+bool unknown_imu_calibration = true;
 
 bool compare_self_cal_with_batch = false;
 bool do_self_cal = true;
-bool do_imu_self_cal = false;
+bool do_imu_self_cal = true;
 uint32_t num_self_cal_segments = 5;
 uint32_t self_cal_segment_length = 10;
 
@@ -102,8 +102,8 @@ std::shared_ptr<SceneGraph::GLPrimitives<>> line_strip;
 
 // Inertial stuff
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
-ba::BundleAdjuster<double, 1, 15, 0> vi_bundle_adjuster;
-ba::BundleAdjuster<double, 1, 15, 0> aac_bundle_adjuster;
+ba::BundleAdjuster<double, 1, 15, 0, true> vi_bundle_adjuster;//BA with DoTvs enabled
+ba::BundleAdjuster<double, 1, 15, 0, false> aac_bundle_adjuster;
 ba::InterpolationBufferT<ba::ImuMeasurementT<Scalar>, Scalar> imu_buffer;
 std::vector<uint32_t> ba_imu_residual_ids, aac_imu_residual_ids;
 int orig_num_aac_poses = num_aac_poses;
@@ -504,6 +504,7 @@ void DoAAC()
 void BaAndStartNewLandmarks()
 {
   bool imu_selfcal_active = has_imu && use_imu_measurements && do_imu_self_cal;
+
   if (!is_keyframe) {
     return;
   }
@@ -511,11 +512,14 @@ void BaAndStartNewLandmarks()
   sdtrack::CalibrationWindow current_window;
 
   uint32_t keyframe_id = poses.size();
-  // If we have no idea about the calibration, do batch mode.
   double batch_time = sdtrack::Tic();
   double ba_time = 0, analyze_time = 0, queue_time = 0, snl_time = 0;
   const uint32_t batch_start = unknown_cam_calibration_start_pose;
   const uint32_t batch_end = poses.size();
+
+  // If we have no idea about the camera or imu calibration, do batch mode.
+  // This is usually the initial state where not enough poses have been processed
+  // yet so the batch solution is feasible.
   if (do_self_cal && (unknown_cam_calibration || unknown_imu_calibration)
       && ((batch_end - batch_start) > self_cal_segment_length)) {
     bool window_analyzed = false;
@@ -1168,6 +1172,7 @@ void Run()
 }
 
 void InitGui() {
+
   InitTrackerGui(gui_vars, window_width, window_height , image_width,
                  image_height, rig.cameras_.size());
   line_strip.reset(new SceneGraph::GLPrimitives<>);
@@ -1330,7 +1335,10 @@ void InitGui() {
     plot_logs[1].SetLabels({"fy - p.q.", "fy - candidate seg."});
     plot_logs[2].SetLabels({"cx - p.q.", "cx - candidate seg."});
     plot_logs[3].SetLabels({"cy - p.q.", "cy - candidate seg."});
-    plot_logs[4].SetLabels({"w - p.q.", "w - candidate seg."});
+    if (num_plots > 4){
+        plot_logs[4].SetLabels({"w - p.q.", "w - candidate seg."});
+    }
+
 
     for (size_t ii = 0; ii < num_cam_params; ++ii) {
       plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
@@ -1397,12 +1405,13 @@ bool LoadCameras(GetPot& cl)
     imu_device.RegisterIMUDataCallback(&ImuCallback);
   }
 
-  // If we require self-calibration from an unknown initial calibration, then
-  // perturb the values.
   rig.Clear();
   calibu::CreateFromOldRig(&old_rig, &rig);
   calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
   calibu::CreateFromOldRig(&old_rig, &aac_rig);
+
+  // If we require self-calibration from an unknown initial calibration, then
+  // perturb the values (camera calibraiton parameters only)
   if (unknown_cam_calibration) {
     Eigen::VectorXd params = old_rig.cameras[0].camera.GenericParams();
     // fov in rads.
@@ -1433,6 +1442,7 @@ bool LoadCameras(GetPot& cl)
   }
 
   if (has_imu && unknown_imu_calibration) {
+    //[?] Is the rig.t_wc = Tvs in this context?
     rig.t_wc_[0].so3() = rig.t_wc_[0].so3() * Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
     selfcal_rig.t_wc_[0] = rig.t_wc_[0];
@@ -1509,8 +1519,8 @@ int main(int argc, char** argv) {
   }
 
   /// ZZZZZZZ : TEMPORARY FOR IMU
-  // weights = Eigen::VectorXd(6);
-  // weights << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
+  weights = Eigen::VectorXd(6);
+  weights << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
 
   online_calib.Init(&aac_mutex, &selfcal_rig, num_self_cal_segments,
                     self_cal_segment_length, weights,
@@ -1520,8 +1530,9 @@ int main(int argc, char** argv) {
 
   //////////////////////////
   /// ZZZZZZZZZZZZZZZZZZ: Get rid of this. Only valid for ICRA test rig
-  imu_time_offset = -0.0697;
+  //imu_time_offset = -0.0697;
 
+  //[?] What does DoAAC do?
   aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
 
   Run();

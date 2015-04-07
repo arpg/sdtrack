@@ -93,7 +93,7 @@ private:
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
-  ba::BundleAdjuster<double, 1, 15, 5, false> vi_selfcal_ba;
+  ba::BundleAdjuster<double, 1, 15, 5, true> vi_selfcal_ba; //BA with DoTvs enabled
   ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* imu_buffer;
   uint32_t ba_id_ = 2;
   double imu_time_offset;
