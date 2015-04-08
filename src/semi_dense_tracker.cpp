@@ -40,7 +40,7 @@ void SemiDenseTracker::Initialize(const KeypointOptions& keypoint_options,
       break;
 
     case TrackerOptions::Detector_SURF:
-      detector_ = new cv::SurfFeatureDetector(1000);
+      //detector_ = new cv::SurfFeatureDetector(1000);
       break;
   }
 
