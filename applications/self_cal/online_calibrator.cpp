@@ -116,7 +116,11 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
 
   // Obtain the mean from the BA.
-  overal_window.mean = ba.rig().cameras_[0]->GetParams();
+  if(DoTvs && UseImu){
+    overal_window.mean = ba.rig().t_wc_[0].log();
+  }else{
+    overal_window.mean = ba.rig().cameras_[0]->GetParams();
+  }
   overal_window.covariance =
       ba.GetSolutionSummary().calibration_marginals;
 
@@ -639,6 +643,15 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       AddCalibrationWindowToBa<UseImu, DoTvs>(poses, window);
     }
 
+    Sophus::SE3t M_vr;
+    M_vr.so3() = calibu::RdfRobotics.inverse();
+
+    if(DoTvs){
+      Sophus::SE3t t_vs = ba.rig().t_wc_[0];
+      t_vs = t_vs * M_vr;
+      std::cerr << "PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+    }
+
     // Optimize the poses
     ba.Solve(num_iterations);
 
@@ -647,14 +660,19 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     // Obtain the mean from the BA
 
     if(DoTvs){
-      Eigen::MatrixXd camera_parameters = ba.rig().cameras_[0]->GetParams();
-      Eigen::MatrixXd imu_parameters = ba.rig().t_wc_[0].log();
-      Eigen::MatrixXd all_parameters(camera_parameters.rows() + imu_parameters.rows(),
-                                     camera_parameters.cols());
-      all_parameters << camera_parameters, imu_parameters;
-      window.mean = all_parameters;
+//      Eigen::MatrixXd camera_parameters = ba.rig().cameras_[0]->GetParams();
+//      Eigen::MatrixXd imu_parameters = ba.rig().t_wc_[0].log();
+//      Eigen::MatrixXd all_parameters(camera_parameters.rows() + imu_parameters.rows(),
+//                                     camera_parameters.cols());
+//      all_parameters << camera_parameters, imu_parameters;
+//      window.mean = all_parameters;
 
-      std::cerr << "BA Tvs is:\n" << ba.rig().t_wc_[0].matrix() << std::endl;
+      Eigen::MatrixXd imu_parameters = ba.rig().t_wc_[0].log();
+      window.mean = imu_parameters;
+
+      Sophus::SE3t t_vs = ba.rig().t_wc_[0];
+      t_vs = t_vs * M_vr;
+      std::cerr << "POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
       window.score = GetWindowScore(window);
 
     }else{
@@ -762,9 +780,9 @@ template void OnlineCalibrator::AddCalibrationWindowToBa<true, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     CalibrationWindow& window);
 
-template void OnlineCalibrator::AddCalibrationWindowToBa<false, true>(
-    std::vector<std::shared_ptr<TrackerPose>>& poses,
-    CalibrationWindow& window);
+//template void OnlineCalibrator::AddCalibrationWindowToBa<false, true>(
+//    std::vector<std::shared_ptr<TrackerPose>>& poses,
+//    CalibrationWindow& window);
 
 template void OnlineCalibrator::AnalyzeCalibrationWindow<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,

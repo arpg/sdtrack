@@ -127,13 +127,13 @@ template <>
 struct OnlineCalibrator::Proxy<true, true> {
   Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
   OnlineCalibrator* owner;
-  decltype(vi_tvs_selfcal_ba) & GetBa() const { return owner->vi_tvs_selfcal_ba; }
-};
-
-template <>
-struct OnlineCalibrator::Proxy<false, true> {
-  Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
-  OnlineCalibrator* owner;
   decltype(vi_only_tvs_selfcal_ba) & GetBa() const { return owner->vi_only_tvs_selfcal_ba; }
 };
+
+//template <>
+//struct OnlineCalibrator::Proxy<false, true> {
+//  Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
+//  OnlineCalibrator* owner;
+//  decltype(vi_only_tvs_selfcal_ba) & GetBa() const { return owner->vi_only_tvs_selfcal_ba; }
+//};
 }
