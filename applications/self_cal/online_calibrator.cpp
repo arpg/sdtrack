@@ -41,6 +41,8 @@ void OnlineCalibrator::Init(std::mutex* ba_mutex,
 
   selfcal_ba.debug_level_threshold = -1;
   vi_selfcal_ba.debug_level_threshold = -1;
+  vi_tvs_selfcal_ba.debug_level_threshold = -1;
+  vi_only_tvs_selfcal_ba.debug_level_threshold = -1;
 }
 
 void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
@@ -74,7 +76,7 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                std::endl;
 }
 
-template<bool UseImu>
+template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AnalyzePriorityQueue(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
@@ -82,7 +84,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     uint32_t num_iterations, bool apply_results)
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
-  Proxy<UseImu> ba_proxy(this);
+  Proxy<UseImu, DoTvs> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
 
   ba::Options<double> options;
@@ -105,7 +107,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     for (CalibrationWindow& window : windows_) {
       if (window.start_index < poses.size() &&
           window.end_index < poses.size()) {
-        AddCalibrationWindowToBa<UseImu>(poses, window);
+        AddCalibrationWindowToBa<UseImu, DoTvs>(poses, window);
       }
     }
   }
@@ -133,13 +135,13 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   needs_update_ = false;
 }
 
-template<bool UseImu>
+template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AddCalibrationWindowToBa(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     CalibrationWindow &window)
 {
   window.num_measurements = 0;
-  Proxy<UseImu> ba_proxy(this);
+  Proxy<UseImu, DoTvs> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
   const uint32_t start_active_pose = window.start_index;
 
@@ -510,6 +512,8 @@ void OnlineCalibrator::SetBaDebugLevel(int level)
 {
    selfcal_ba.debug_level_threshold = level;
    vi_selfcal_ba.debug_level_threshold = level;
+   vi_tvs_selfcal_ba.debug_level_threshold = level;
+   vi_only_tvs_selfcal_ba.debug_level_threshold = level;
 }
 
 double OnlineCalibrator::ComputeHotellingScore(
@@ -577,6 +581,7 @@ void OnlineCalibrator::SetPriorityQueueDistribution(
 
 double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
 {
+
   if (window.covariance.fullPivLu().rank() == covariance_weights_.rows()) {
     // First transform the covariance given the weights.
     return
@@ -587,7 +592,7 @@ double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
   }
 }
 
-template<bool UseImu>
+template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AnalyzeCalibrationWindow(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
@@ -598,7 +603,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
   std::cerr << "Analyzing calibration window with imu = " << UseImu <<
                " from " << start_pose << " to " << end_pose << std::endl;
-  Proxy<UseImu> ba_proxy(this);
+  Proxy<UseImu, DoTvs> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
 
   window.start_index = start_pose;
@@ -631,7 +636,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     {
       ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
       std::lock_guard<std::mutex> lock(*ba_mutex_);
-      AddCalibrationWindowToBa<UseImu>(poses, window);
+      AddCalibrationWindowToBa<UseImu, DoTvs>(poses, window);
     }
 
     // Optimize the poses
@@ -639,13 +644,28 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
     const ba::SolutionSummary<double>& summary =
         ba.GetSolutionSummary();
-    // Obtain the mean from the BA.
-    window.mean = ba.rig().cameras_[0]->GetParams();
+    // Obtain the mean from the BA
+
+    if(DoTvs){
+      Eigen::MatrixXd camera_parameters = ba.rig().cameras_[0]->GetParams();
+      Eigen::MatrixXd imu_parameters = ba.rig().t_wc_[0].log();
+      Eigen::MatrixXd all_parameters(camera_parameters.rows() + imu_parameters.rows(),
+                                     camera_parameters.cols());
+      all_parameters << camera_parameters, imu_parameters;
+      window.mean = all_parameters;
+
+      std::cerr << "BA Tvs is:\n" << ba.rig().t_wc_[0].matrix() << std::endl;
+      window.score = GetWindowScore(window);
+
+    }else{
+      window.mean = ba.rig().cameras_[0]->GetParams();
+    }
+
+
     window.covariance = summary.calibration_marginals;
     std::cerr << "BA cov is:\n" << window.covariance << std::endl;
     std::cerr << "BA mean is:" << window.mean.transpose().format(kLongFmt) <<
                  std::endl;
-    window.score = GetWindowScore(window);
 
     if (apply_results) {
       std::lock_guard<std::mutex> lock(*ba_mutex_);
@@ -712,33 +732,53 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   }
 }
 
-template void OnlineCalibrator::AnalyzePriorityQueue<false>(
+template void OnlineCalibrator::AnalyzePriorityQueue<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     CalibrationWindow& overal_window, uint32_t num_iterations = 1,
     bool apply_results = false);
 
-template void OnlineCalibrator::AnalyzePriorityQueue<true>(
+template void OnlineCalibrator::AnalyzePriorityQueue<true, true>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     CalibrationWindow& overal_window, uint32_t num_iterations = 1,
     bool apply_results = false);
 
-template void OnlineCalibrator::AddCalibrationWindowToBa<false>(
+template void OnlineCalibrator::AnalyzePriorityQueue<true, false>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+    bool apply_results = false);
+
+template void OnlineCalibrator::AddCalibrationWindowToBa<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     CalibrationWindow& window);
 
-template void OnlineCalibrator::AddCalibrationWindowToBa<true>(
+template void OnlineCalibrator::AddCalibrationWindowToBa<true, true>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     CalibrationWindow& window);
 
-template void OnlineCalibrator::AnalyzeCalibrationWindow<false>(
+template void OnlineCalibrator::AddCalibrationWindowToBa<true, false>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    CalibrationWindow& window);
+
+template void OnlineCalibrator::AddCalibrationWindowToBa<false, true>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    CalibrationWindow& window);
+
+template void OnlineCalibrator::AnalyzeCalibrationWindow<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
     uint32_t num_iterations = 1, bool apply_results = false);
 
-template void OnlineCalibrator::AnalyzeCalibrationWindow<true>(
+template void OnlineCalibrator::AnalyzeCalibrationWindow<true, true>(
+    std::vector<std::shared_ptr<TrackerPose>>& poses,
+    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
+    uint32_t num_iterations = 1, bool apply_results = false);
+
+template void OnlineCalibrator::AnalyzeCalibrationWindow<true, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,

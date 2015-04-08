@@ -40,21 +40,21 @@ class OnlineCalibrator {
           nullptr);
   void TestJacobian(Eigen::Vector2t pix, Sophus::SE3t t_ba, Scalar rho);
 
-  template <bool UseImu>
+  template <bool UseImu, bool DoTvs>
   void AnalyzePriorityQueue(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       std::list<std::shared_ptr<DenseTrack>>* current_tracks,
       CalibrationWindow& overal_window, uint32_t num_iterations = 1,
       bool apply_results = false);
 
-  template <bool UseImu>
+  template <bool UseImu, bool DoTvs>
   void AddCalibrationWindowToBa(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       CalibrationWindow& window);
 
   bool AnalyzeCalibrationWindow(CalibrationWindow& new_window);
 
-  template <bool UseImu>
+  template <bool UseImu, bool DoTvs>
   void AnalyzeCalibrationWindow(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       std::list<std::shared_ptr<DenseTrack>>* current_tracks,
@@ -92,28 +92,48 @@ private:
   calibu::Rig<Scalar>* rig_;
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
+  // Visual BA with camera parameters
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
-  ba::BundleAdjuster<double, 1, 15, 5, true> vi_selfcal_ba; //BA with DoTvs enabled
+  // VI BA with camera parameters
+  ba::BundleAdjuster<double, 1, 15, 5, false> vi_selfcal_ba;
+  //VI BA with camera + IMU parameters
+  ba::BundleAdjuster<double, 1, 15, 5, true> vi_tvs_selfcal_ba;
+  //VI BA with IMU parameters
+  ba::BundleAdjuster<double, 1, 15, 0, true> vi_only_tvs_selfcal_ba;
   ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* imu_buffer;
   uint32_t ba_id_ = 2;
   double imu_time_offset;
   std::mutex* ba_mutex_;
 
-  template <bool>
+  template <bool, bool>
   struct Proxy {};
 };
 
 template <>
-struct OnlineCalibrator::Proxy<true> {
+struct OnlineCalibrator::Proxy<true, false> {
   Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
   OnlineCalibrator* owner;
   decltype(vi_selfcal_ba) & GetBa() const { return owner->vi_selfcal_ba; }
 };
 
 template <>
-struct OnlineCalibrator::Proxy<false> {
+struct OnlineCalibrator::Proxy<false, false> {
   Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
   OnlineCalibrator* owner;
   decltype(selfcal_ba) & GetBa() const { return owner->selfcal_ba; }
+};
+
+template <>
+struct OnlineCalibrator::Proxy<true, true> {
+  Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
+  OnlineCalibrator* owner;
+  decltype(vi_tvs_selfcal_ba) & GetBa() const { return owner->vi_tvs_selfcal_ba; }
+};
+
+template <>
+struct OnlineCalibrator::Proxy<false, true> {
+  Proxy(OnlineCalibrator* owner_ptr) : owner(owner_ptr) {}
+  OnlineCalibrator* owner;
+  decltype(vi_only_tvs_selfcal_ba) & GetBa() const { return owner->vi_only_tvs_selfcal_ba; }
 };
 }
