@@ -242,6 +242,14 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
 
       schur_time = Tic();
       for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
+        if (options.optimize_pose) {
+          final_di_dx = di_dx[kk] - mean_di_dx;
+          // Update u by adding j_p' * j_p
+          u += final_di_dx.transpose() * final_di_dx;
+          // Update rp by adding j_p' * r
+          r_p += final_di_dx.transpose() * res[kk];
+        }
+
         if (options.optimize_landmarks) {
           final_di_dray = di_dray[kk] - mean_di_dray;
           const double di_dray_id = final_di_dray;
@@ -254,15 +262,6 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
           // Add contribution for the subraction term on the rhs.
           r_l += di_dray_id * res[kk];
         }
-
-        if (options.optimize_pose) {
-          final_di_dx = di_dx[kk] - mean_di_dx;
-          // Update u by adding j_p' * j_p
-          u += final_di_dx.transpose() * final_di_dx;
-          // Update rp by adding j_p' * r
-          r_p += final_di_dx.transpose() * res[kk];
-        }
-
         residual_id++;
       }
 
