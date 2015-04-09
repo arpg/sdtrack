@@ -170,8 +170,8 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
                                    di_dp, val_pix);
 
         // need 2x4 transfer w.r.t. reference ray
-        di_dray[kk] = di_dp * dp_dray.col(3);
         dp_dray = dprojection_dray * track_t_ba_matrix;
+        di_dray[kk] = di_dp * dp_dray.col(3);
 
         //      for (unsigned int jj = 0; jj < 6; ++jj) {
         //        dp_dx.block<2,1>(0,jj) =
