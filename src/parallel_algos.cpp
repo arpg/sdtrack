@@ -359,7 +359,8 @@ void ParallelExtractKeypoints::operator()(const tbb::blocked_range<int> &r)
     for (cv::KeyPoint& kp : cell_kp) {
       kp.pt.x += bound.x;
       kp.pt.y += bound.y;
-      keypoints.push_back(kp);
+      if(kp.pt.y < 450)
+        keypoints.push_back(kp);
     }
   }
 }

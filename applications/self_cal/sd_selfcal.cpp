@@ -45,7 +45,7 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 uint32_t num_change_detected = 0;
 uint32_t num_change_needed = 3;
 bool unknown_cam_calibration = false;
-bool unknown_imu_calibration = true;
+bool unknown_imu_calibration = false;
 
 bool compare_self_cal_with_batch = false;
 bool do_cam_self_cal = false;
@@ -552,7 +552,7 @@ void  BaAndStartNewLandmarks()
         window_analyzed = true;
       }
     }
-    // If we have no idea about only the camera calibration, do cam batch mode.
+    // If we have no idea about *only* the camera calibration, do cam batch mode.
     else if (do_cam_self_cal && unknown_cam_calibration
                && ((batch_end - batch_start) > self_cal_cam_segment_length)) {
       if(has_imu && use_imu_measurements &&
@@ -581,10 +581,10 @@ void  BaAndStartNewLandmarks()
       }
     }
 
-    // Obs: the window score can be calculated using any of the queues
-    double score = window_analyzed ? camera_online_calib.GetWindowScore(pq_window) : 0;
+    double score = window_analyzed ? inertial_online_calib.GetWindowScore(pq_window) : 0;
     int num_params = do_cam_self_cal ? selfcal_rig.cameras_[0]->GetParams().rows() : 0;
     num_params += ImuSelfCalActive() ? 6 : 0;
+
     if (pq_window.covariance.fullPivLu().rank() ==
         num_params /*&& score < 1e7*/) {
       std::cerr << "Setting new batch params: " << std::endl;
@@ -633,14 +633,25 @@ void  BaAndStartNewLandmarks()
                  pq_window.covariance << std::endl;
     std::cerr << "Batch score: " << score << std::endl;
 
-    // If the determinant is smaller than a heuristic, switch to self_cal.
-    if ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
+    // If the determinant is smaller than a heuristic, switch to cam self_cal.
+    if (do_cam_self_cal &&
+        (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
         ((batch_end - batch_start) > self_cal_cam_segment_length * 2)) {
-      std::cerr << "Determinant small enough, switching to self-cal" <<
+      std::cerr << "Determinant small enough, switching to cam self-cal" <<
                    std::endl;
       unknown_cam_calibration = false;
+    }
+
+    // If the determinant is smaller than a heuristic, switch to imu self_cal.
+    //TODO: Check if this heuristic is applicable to imu calibraiton
+    if (ImuSelfCalActive() &&
+        (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
+        ((batch_end - batch_start) > self_cal_imu_segment_length * 2)) {
+      std::cerr << "Determinant small enough, switching to imu self-cal" <<
+                   std::endl;
       unknown_imu_calibration = false;
     }
+
   }
   batch_time = sdtrack::Toc(batch_time);
 
@@ -690,9 +701,11 @@ void  BaAndStartNewLandmarks()
         inertial_online_calib.AnalyzeCalibrationWindow(candidate_window);
       }
 
-      last_window_kl_divergence =
-          camera_online_calib.ComputeYao1965(
-            pq_window, candidate_window);
+      //TODO: Re-enable this when the mean for a 6DOF is being calculated
+      //
+      //last_window_kl_divergence =
+      //    camera_online_calib.ComputeYao1965(
+      //      pq_window, candidate_window);
 
       // Set this to zero since we dont't yet know how to calculate the mean
       // for Tvs optimization
@@ -736,6 +749,7 @@ void  BaAndStartNewLandmarks()
         const bool apply_results = !unknown_imu_calibration;
             //!(unknown_cam_calibration || unknown_imu_calibration);
         if (imu_selfcal_active) {
+          std::cerr << "PQ CHANGED - Calulating new parameters..." << std::endl;
           inertial_online_calib.AnalyzePriorityQueue<true, true>(
                 poses, current_tracks, pq_window, 50, apply_results);
         } else if (has_imu && use_imu_measurements){
@@ -1047,12 +1061,17 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     BaAndStartNewLandmarks();
   }
 
-  if (do_cam_self_cal || unknown_cam_calibration || unknown_imu_calibration) {
+  if (do_imu_self_cal || do_cam_self_cal ||
+      unknown_cam_calibration || unknown_imu_calibration) {
     const bool imu_plots_needed = ImuSelfCalActive();
     const uint32_t num_cam_params = do_cam_self_cal ?
           rig.cameras_[0]->NumParams(): 0;
     if (candidate_window.mean.rows() == 0) {
-      candidate_window.mean = rig.cameras_[0]->GetParams();
+      if(do_cam_self_cal){
+        candidate_window.mean = rig.cameras_[0]->GetParams();
+      }else if (ImuSelfCalActive()){
+        candidate_window.mean = rig.t_wc_[0].log();
+      }
     }
 
     for (size_t ii = 0; ii < num_cam_params; ++ii) {
@@ -1062,11 +1081,15 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
 
     if (imu_plots_needed) {
-      Eigen::Vector6d error =
-          (rig.t_wc_[0].inverse() * old_rig.cameras[0].T_wc).log();
-      for (size_t ii = num_cam_params; ii < num_cam_params + 6; ii++) {
-        plot_logs[ii].Log(error[ii - num_cam_params]);
+      for (size_t ii = num_cam_params; ii < num_cam_params + 6; ++ii) {
+        plot_logs[ii].Log(rig.t_wc_[0].log()[ii - num_cam_params],
+            candidate_window.mean[ii]);
       }
+//      Eigen::Vector6d error =
+//          (rig.t_wc_[0].inverse() * old_rig.cameras[0].T_wc).log();
+//      for (size_t ii = num_cam_params; ii < num_cam_params + 6; ii++) {
+//        plot_logs[ii].Log(error[ii - num_cam_params]);
+
     }
 
     analysis_logs[0].Log(last_window_kl_divergence,

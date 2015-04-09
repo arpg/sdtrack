@@ -130,6 +130,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     std::lock_guard<std::mutex> lock(*ba_mutex_);
     if (apply_results) {
       rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
+      //rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
       std::cerr << "new PQ t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
     } else {
       rig_->cameras_[0]->SetParams(cam_params_backup);
