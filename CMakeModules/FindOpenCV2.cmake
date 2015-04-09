@@ -3,13 +3,13 @@
 # The follwoing variables are optionally searched for defaults
 #  OpenCV2_ROOT_DIR:                   Base directory of OpenCV 2 tree to use.
 #
-# The following are set after configuration is done: 
+# The following are set after configuration is done:
 #  OpenCV2_FOUND
 #  OpenCV2_INCLUDE_DIRS
 #  OpenCV2_LIBRARIES
 #
 # $Id: $
-#  
+#
 # Balazs [2011-01-18]:
 # - Created from scratch for the reorganized OpenCV 2 structure introduced at version 2.2
 # Jbohren [2011-06-10]:
@@ -33,11 +33,11 @@ IF(WIN32)
 ELSE(WIN32)
     SET(OpenCV2_POSSIBLE_ROOT_DIRS
         "$ENV{ROS_ROOT}/../vision_opencv/opencv2/opencv"
-	"$ENV{OpenCV_ROOT_DIR}"                         # *NIX: custom install location (like ROS)
+  "$ENV{OpenCV_ROOT_DIR}"                         # *NIX: custom install location (like ROS)
         /usr/local                                      # Linux: default dir by CMake
         /usr                                            # Linux
         /opt/local                                      # OS X: default MacPorts location
-	)
+  )
 ENDIF(WIN32)
 
 # select exactly ONE OpenCV 2 base directory
@@ -61,7 +61,7 @@ FIND_PATH(OpenCV2_FEATURES2D_INCLUDE_DIR
           NAMES features2d.hpp
           PATHS "${OpenCV2_ROOT_DIR}/include/opencv2/features2d")
 FIND_PATH(OpenCV2_NONFREE_INCLUDE_DIR
-          NAMES features2d.hpp gpu.hpp nonfree.hpp ocl.hpp 
+          NAMES features2d.hpp gpu.hpp nonfree.hpp ocl.hpp
           PATHS "${OpenCV2_ROOT_DIR}/include/opencv2/nonfree")
 FIND_PATH(OpenCV2_FLANN_INCLUDE_DIR
           NAMES flann.hpp
@@ -92,7 +92,7 @@ FIND_PATH(OpenCV2_GPU_INCLUDE_DIR
           PATHS "${OpenCV2_ROOT_DIR}/include/opencv2/gpu")
 
 
-# absolute path to all libraries 
+# absolute path to all libraries
 SET(OPENCV2_LIBRARY_SEARCH_PATHS "${OpenCV2_ROOT_DIR}/lib")
 
 IF(WIN32)
@@ -172,7 +172,7 @@ SET(OpenCV2_INCLUDE_DIRS
     ${OpenCV2_CORE_INCLUDE_DIR}
     ${OpenCV2_IMGPROC_INCLUDE_DIR}
     ${OpenCV2_FEATURES2D_INCLUDE_DIR}
-    ${OpenCV2_NONFREE_INCLUDE_DIR}
+    #${OpenCV2_NONFREE_INCLUDE_DIR}
     ${OpenCV2_FLANN_INCLUDE_DIR}
     ${OpenCV2_CALIB3D_INCLUDE_DIR}
     ${OpenCV2_OBJDETECT_INCLUDE_DIR}
@@ -191,7 +191,7 @@ SET(OpenCV2_LIBRARIES
     ${OpenCV2_CORE_LIBRARY}
     ${OpenCV2_IMGPROC_LIBRARY}
     ${OpenCV2_FEATURES2D_LIBRARY}
-    ${OpenCV2_NONFREE_LIBRARY}
+    #${OpenCV2_NONFREE_LIBRARY}
     ${OpenCV2_FLANN_LIBRARY}
     ${OpenCV2_CALIB3D_LIBRARY}
     ${OpenCV2_OBJDETECT_LIBRARY}

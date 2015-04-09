@@ -7,6 +7,7 @@
 #include <sdtrack/semi_dense_tracker.h>
 #include "math_types.h"
 #include "etc_common.h"
+#include <mutex>
 
 #define LM_DIM 3
 
