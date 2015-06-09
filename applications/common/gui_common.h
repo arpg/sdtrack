@@ -4,8 +4,8 @@
 #include <SceneGraph/SceneGraph.h>
 #include <HAL/Camera/CameraDevice.h>
 #include <calibu/cam/camera_crtp.h>
-#include <calibu/cam/CameraRig.h>
-#include <miniglog/logging.h>
+#include <calibu/cam/camera_rig.h>
+
 #include <sdtrack/utils.h>
 #include "math_types.h"
 #include <sdtrack/keypoint.h>
@@ -145,7 +145,7 @@ void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
   glBegin(GL_POINTS);
   for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
     for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
-      if (selected_track_id == track->id) {
+      if (selected_track_id == (int) track->id) {
         handler->selected_track = track;
         selected_track_id = -1;
       }
@@ -156,7 +156,7 @@ void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
       Eigen::Vector4d ray;
       ray.head<3>() = track->ref_keypoint.ray;
       ray[3] = track->ref_keypoint.rho;
-      ray = sdtrack::MultHomogeneous(pose->t_wp * rig.t_wc_[0], ray);
+      ray = sdtrack::MultHomogeneous(pose->t_wp * rig.cameras_[0]->Pose(), ray);
       ray /= ray[3];
       if (handler->selected_track == track) {
         glColor3f(1.0, 1.0, 0.2);
@@ -326,7 +326,7 @@ void InitTrackerGui(TrackerGuiVars& vars, uint32_t window_width,
 }
 
 bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
-                      calibu::CameraRigT<Scalar>& rig,
+                      calibu::Rig<Scalar>& rig,
                       bool transform_to_robotics_coords = true) {
   std::string cam_string = cl.follow("", "-cam");
   try {
@@ -346,35 +346,37 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
   std::string filename = src_dir + "/" + cmod_file;
   LOG(INFO) << "Loading camera models from " << filename;
 
-  calibu::CameraRigT<Scalar> xmlrig = calibu::ReadXmlRig(filename);
-  if (xmlrig.cameras.empty()) {
+  std::shared_ptr<calibu::Rig<Scalar>> xmlrig = calibu::ReadXmlRig(filename);
+  if (xmlrig->cameras_.empty()) {
     LOG(FATAL) << "XML Camera rig is empty!";
   }
 
-  calibu::CameraRigT<Scalar> crig = xmlrig;
+  std::shared_ptr<calibu::Rig<Scalar>> crig = xmlrig;
   if (transform_to_robotics_coords) {
     crig = calibu::ToCoordinateConvention<Scalar>(
         xmlrig, calibu::RdfRobotics.cast<Scalar>());
 
     Sophus::SE3t M_rv;
     M_rv.so3() = calibu::RdfRobotics;
-    for (calibu::CameraModelAndTransformT<Scalar>& model : crig.cameras) {
-      model.T_wc = model.T_wc * M_rv;
-    }
+    for (std::shared_ptr<CameraInterface<Scalar>> model : crig->cameras_)
+      {
+	model->SetPose(model->Pose() * M_rv);
+      }
+
   }
 
-  LOG(INFO) << "Starting Tvs: " << crig.cameras[0].T_wc.matrix();
+  LOG(INFO) << "Starting Tvs: " << crig->cameras_[0]->Pose().matrix();
 
-  rig.cameras.clear();
-  for (uint32_t cam_id = 0; cam_id < crig.cameras.size(); ++cam_id) {
-    rig.Add(crig.cameras[cam_id]);
+  rig.cameras_.clear();
+  for (uint32_t cam_id = 0; cam_id < crig->cameras_.size(); ++cam_id) {
+    rig.AddCamera(crig->cameras_[cam_id]);
   }
 
-  for (size_t ii = 0; ii < rig.cameras.size(); ++ii) {
+  for (size_t ii = 0; ii < rig.cameras_.size(); ++ii) {
     LOG(INFO) << ">>>>>>>> Camera " << ii << ":" << std::endl
-              << "Model: " << std::endl << rig.cameras[ii].camera.K()
+              << "Model: " << std::endl << rig.cameras_[ii]->K()
               << std::endl << "Pose: " << std::endl
-              << rig.cameras[ii].T_wc.matrix();
+              << rig.cameras_[ii]->Pose().matrix();
   }
   return true;
 }

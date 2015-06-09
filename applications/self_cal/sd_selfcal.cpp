@@ -13,7 +13,7 @@
 #include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
-#include <PbMsgs/Matrix.h>
+#include <HAL/Messages/Matrix.h>
 #include <SceneGraph/SceneGraph.h>
 #include <pangolin/pangolin.h>
 #include <ba/BundleAdjuster.h>
