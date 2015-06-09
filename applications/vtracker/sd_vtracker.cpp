@@ -576,10 +576,15 @@ void InitGui()
         [&]() {
     // write all the poses to a file.
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
+    
     for (auto pose : poses) {
-      pose_file << pose->t_wp.translation().transpose().format(
-      sdtrack::kLongCsvFmt) << std::endl;
+      //Prepare the euler angle representation (rotation about x,y,z)
+      Eigen::Vector3d ea = pose->t_wp.rotationMatrix().eulerAngles(0, 1, 2);
+      pose_file << pose->t_wp.translation().transpose().format(sdtrack::kLongCsvFmt);
+      pose_file << "," << ea.transpose().format(sdtrack::kLongCsvFmt);
+      pose_file << std::endl;
     }
+    std::cerr << "Wrote poses" << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback(' ', [&]() {
