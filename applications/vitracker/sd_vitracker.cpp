@@ -12,7 +12,7 @@
 #include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
-#include <PbMsgs/Matrix.h>
+#include <HAL/Messages/Matrix.h>
 #include <SceneGraph/SceneGraph.h>
 #include <pangolin/pangolin.h>
 #include <ba/BundleAdjuster.h>
@@ -58,7 +58,7 @@ bool use_system_time = false;
 int image_width;
 int image_height;
 
-calibu::CameraRigT<Scalar> old_rig;
+calibu::Rig<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 hal::IMU imu_device;
@@ -69,7 +69,7 @@ std::shared_ptr<GetPot> cl;
 
 std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
-std::shared_ptr<pb::Image> camera_img;
+std::shared_ptr<hal::Image> camera_img;
 std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
@@ -101,12 +101,12 @@ std::vector<pangolin::Plotter*> plot_views;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 
-void ImuCallback(const pb::ImuMsg& ref) {
+void ImuCallback(const hal::ImuMsg& ref) {
   const double timestamp = use_system_time ? ref.system_time() :
                                              ref.device_time();
   Eigen::VectorXd a, w;
-  pb::ReadVector(ref.accel(), &a);
-  pb::ReadVector(ref.gyro(), &w);
+  hal::ReadVector(ref.accel(), &a);
+  hal::ReadVector(ref.gyro(), &w);
   // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
   //             w.transpose() << " at time " << timestamp << std::endl;
   imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
@@ -192,7 +192,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       ba.Init(options, end_pose_id + 1,
               current_tracks->size() * (end_pose_id + 1));
       for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-        ba.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
+        ba.AddCamera(rig.cameras_[cam_id]);
       }
 
       // First add all the poses and landmarks to ba.
@@ -256,7 +256,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             ray.head<3>() = track->ref_keypoint.ray;
             ray[3] = track->ref_keypoint.rho;
             ray = sdtrack::MultHomogeneous(
-                  pose->t_wp * rig.t_wc_[track->ref_cam_id], ray);
+                  pose->t_wp * rig.cameras_[track->ref_cam_id]->Pose(), ray);
             bool active = track->id != tracker.longest_track_id() ||
                 !all_poses_active || use_imu || initialize_lm;
             if (!active) {
@@ -386,7 +386,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
             // Make the ray relative to the pose.
             Eigen::Vector4d x_r =
                 sdtrack::MultHomogeneous(
-                  (pose->t_wp * rig.t_wc_[track->ref_cam_id]).inverse(), x_w);
+                  (pose->t_wp * rig.cameras_[track->ref_cam_id]->Pose()).inverse(), x_w);
             // Normalize the xyz component of the ray to compare to the original
             // ray.
             x_r /= x_r.head<3>().norm();
@@ -885,7 +885,7 @@ void Run()
 
   // pangolin::Timer timer;
   bool capture_success = false;
-  std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+  std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
   camera_device.Capture(*images);
 
   while(!pangolin::ShouldQuit()) {
@@ -920,7 +920,7 @@ void Run()
 
       gl_tex.resize(images->Size());
 
-      for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
+      for (uint32_t cam_id = 0 ; cam_id < (unsigned int) images->Size() ; ++cam_id) {
         if (!gl_tex[cam_id].tid) {
           camera_img = images->at(cam_id);
           GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
@@ -939,7 +939,7 @@ void Run()
       gui_vars.handler->image_width = image_width;
 
       std::vector<cv::Mat> cvmat_images;
-      for (int ii = 0; ii < images->Size() ; ++ii) {
+      for (int ii = 0; ii < (unsigned int) images->Size() ; ++ii) {
         cvmat_images.push_back(images->at(ii)->Mat());
       }
       ProcessImage(cvmat_images, timestamp);
@@ -947,7 +947,7 @@ void Run()
 
     if (camera_img && camera_img->data()) {
       for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
-           cam_id < images->Size(); ++cam_id) {
+           cam_id < (unsigned int) images->Size(); ++cam_id) {
         camera_img = images->at(cam_id);
         gui_vars.camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
@@ -1044,11 +1044,9 @@ void InitTracker()
 
 bool LoadCameras()
 {
-  LoadCameraAndRig(*cl, camera_device, old_rig);
-  rig.Clear();
-  calibu::CreateFromOldRig(&old_rig, &rig);
-  // rig.cameras_.resize(1);
-  // rig.t_wc_.resize(1);
+  //LoadCameraAndRig(*cl, camera_device, old_rig);
+  //rig.Clear();
+  LoadCameraAndRig(*cl, camera_device, rig);
 
   // Load the imu
   std::string imu_str = cl->follow("","-imu");
@@ -1062,7 +1060,7 @@ bool LoadCameras()
     imu_device.RegisterIMUDataCallback(&ImuCallback);
   }
   // Capture an image so we have some IMU data.
-  std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+  std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
   while (imu_buffer.elements.size() == 0) {
     camera_device.Capture(*images);
   }
@@ -1149,7 +1147,7 @@ void InitGui()
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
-        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.t_wc_[0], ray);
+        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.cameras_[0]->Pose(), ray);
         ray /= ray[3];
         lm_file << ray.transpose().format(sdtrack::kLongCsvFmt) << ", " <<
                    track->keypoints.size() << " , " <<
