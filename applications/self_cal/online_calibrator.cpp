@@ -47,7 +47,7 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                                     Sophus::SE3t t_ba,
                                     Scalar rho)
 {
-  calibu::CameraInterface<Scalar>* cam = rig_->cameras_[0];
+  std::shared_ptr<calibu::CameraInterface<Scalar>> cam = rig_->cameras_[0];
   Eigen::VectorXd params = cam->GetParams();
   const double eps = 1e-6;
   Eigen::Matrix<Scalar, 2, Eigen::Dynamic> jacobian_fd(2, cam->NumParams());
@@ -97,7 +97,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   ba.Init(options, poses.size(),
                   current_tracks->size() * poses.size());
-  ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
+  ba.AddCamera(rig_->cameras_[0]);
 
   // Add all the windows to ba.
   {
@@ -114,7 +114,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
 
   // Obtain the mean from the BA.
-  overal_window.mean = ba.rig().cameras_[0]->GetParams();
+  overal_window.mean = ba.rig()->cameras_[0]->GetParams();
   overal_window.covariance =
       ba.GetSolutionSummary().calibration_marginals;
 
@@ -123,8 +123,8 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   {
     std::lock_guard<std::mutex> lock(*ba_mutex_);
     if (apply_results) {
-      rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
-      std::cerr << "new PQ t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
+      rig_->cameras_[0]->Pose().so3() = ba.rig()->cameras_[0]->Pose().so3();
+      std::cerr << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix() << std::endl;
     } else {
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }
@@ -205,7 +205,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       Eigen::Vector4d ray;
       ray.head<3>() = track->ref_keypoint.ray;
       ray[3] = track->ref_keypoint.rho;
-      ray = MultHomogeneous(pose->t_wp  * rig_->t_wc_[0], ray);
+      ray = sdtrack::MultHomogeneous(pose->t_wp  * rig_->cameras_[0]->Pose(), ray);
       bool active = longest_track == nullptr ? true :
         (UseImu ? true : track->id != longest_track->id);
       track->external_id[ba_id_] =
@@ -629,7 +629,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
                     current_tracks->size() * poses.size());
 
     {
-      ba.AddCamera(rig_->cameras_[0], rig_->t_wc_[0]);
+      ba.AddCamera(rig_->cameras_[0]);
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       AddCalibrationWindowToBa<UseImu>(poses, window);
     }
@@ -640,7 +640,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     const ba::SolutionSummary<double>& summary =
         ba.GetSolutionSummary();
     // Obtain the mean from the BA.
-    window.mean = ba.rig().cameras_[0]->GetParams();
+    window.mean = ba.rig()->cameras_[0]->GetParams();
     window.covariance = summary.calibration_marginals;
     std::cerr << "BA cov is:\n" << window.covariance << std::endl;
     std::cerr << "BA mean is:" << window.mean.transpose().format(kLongFmt) <<
@@ -649,8 +649,8 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
     if (apply_results) {
       std::lock_guard<std::mutex> lock(*ba_mutex_);
-      rig_->t_wc_[0].so3() = ba.rig().t_wc_[0].so3();
-      std::cerr << "new t_wc\n:" << rig_->t_wc_[0].matrix() << std::endl;
+      rig_->cameras_[0]->Pose().so3() = ba.rig()->cameras_[0]->Pose().so3();
+      std::cerr << "new t_wc\n:" << rig_->cameras_[0]->Pose().matrix() << std::endl;
 
       Sophus::SE3d t_ba;
       std::shared_ptr<TrackerPose> last_pose = poses.back();
@@ -690,7 +690,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           prev_ray.head<3>() = track->ref_keypoint.ray;
           prev_ray[3] = track->ref_keypoint.rho;
           // Make the ray relative to the pose.
-          Eigen::Vector4d x_r = MultHomogeneous(
+          Eigen::Vector4d x_r = sdtrack::MultHomogeneous()
                 (pose->t_wp * rig_->t_wc_[0]).inverse(), x_w);
 
           track->ref_keypoint.ray = x_r.head<3>();
