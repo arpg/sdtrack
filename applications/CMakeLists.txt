@@ -3,6 +3,8 @@ include_directories(common)
 add_subdirectory(self_cal)
 add_subdirectory(vtracker) 
 add_subdirectory(vitracker) 
+add_subdirectory(votracker)
+
 
 find_package(Ceres QUIET)
 
