@@ -539,6 +539,45 @@ void InitTracker()
   tracker_options.gn_scaling = 1.0;
   tracker.Initialize(keypoint_options, tracker_options, &rig);
 }
+void writePoses()
+{
+    // write all the poses to a file.
+    std::ofstream pose_file("poses.txt", std::ios_base::trunc);
+    for(vector<shared_ptr<sdtrack::TrackerPose>>::iterator pose = poses.begin(); pose != poses.end(); ++pose)
+      {
+
+      //Prepare the euler angle representation (rotation about x,y,z)
+      //Order determines the output ordering
+      //Want R = Ryaw*Rpitch*Rroll
+	//or R = R(z) * R(y) * R(x)
+       
+	sdtrack::TrackerPose* thePose = (*pose).get();
+	Sophus::SE3t t_wp = thePose->t_wp;
+	auto rotMat = t_wp.rotationMatrix();
+
+	cout << "Rotation Matrix:" << endl << rotMat << endl;
+	
+	//Invert the basis vectors to correspond to ROS standard (x fwd, y left, z up)
+
+	Eigen::Vector3d ea = rotMat.eulerAngles(2, 1, 0);
+	cout << "Euler angle representation:" << endl << ea << endl;
+
+	//Compute it the manual way
+	//Roll:
+	ea[0] = atan2(rotMat(2,1), rotMat(2,2));
+	//Pitch
+	ea[1] = -asin(rotMat(2,0));
+	//Yaw
+	ea[2] = atan2(rotMat(1,0), rotMat(0,0));
+	cout << "Euler angle representation: (manual)" << endl << ea << endl;
+
+	pose_file << thePose->t_wp.translation().transpose().format(sdtrack::kLongCsvFmt);
+      pose_file << "," << ea.transpose().format(sdtrack::kLongCsvFmt);
+      pose_file << std::endl;
+  
+    }
+    std::cerr << "Wrote poses" << std::endl;
+}
 
 void InitGui()
 {
@@ -573,19 +612,7 @@ void InitGui()
 
   pangolin::RegisterKeyPressCallback(
         pangolin::PANGO_CTRL + 's',
-        [&]() {
-    // write all the poses to a file.
-    std::ofstream pose_file("poses.txt", std::ios_base::trunc);
-    
-    for (auto pose : poses) {
-      //Prepare the euler angle representation (rotation about x,y,z)
-      Eigen::Vector3d ea = pose->t_wp.rotationMatrix().eulerAngles(0, 1, 2);
-      pose_file << pose->t_wp.translation().transpose().format(sdtrack::kLongCsvFmt);
-      pose_file << "," << ea.transpose().format(sdtrack::kLongCsvFmt);
-      pose_file << std::endl;
-    }
-    std::cerr << "Wrote poses" << std::endl;
-  });
+        	  writePoses);
 
   pangolin::RegisterKeyPressCallback(' ', [&]() {
     is_running = !is_running;
