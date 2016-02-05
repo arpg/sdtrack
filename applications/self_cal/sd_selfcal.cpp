@@ -1336,7 +1336,7 @@ void InitGui() {
       plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
       params_plot_view->AddDisplay(*plot_views[ii]);
       double param = rig.cameras_[0]->GetParams()[ii];
-      pangolin::XYRange range(0, 500, param - param * 0.5,
+      pangolin::XYRange<float> range(0, 500, param - param * 0.5,
                               param + param * 0.5);
       plot_views[ii]->SetDefaultView(range);
       plot_views[ii]->SetViewSmooth(range);
@@ -1353,7 +1353,7 @@ void InitGui() {
       for (size_t ii = num_cam_params; ii < 6 + num_cam_params; ++ii) {
         plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
         imu_plot_view->AddDisplay(*plot_views[ii]);
-        pangolin::XYRange range(0, 500, -0.5, 0.5);
+        pangolin::XYRange<float> range(0, 500, -0.5, 0.5);
         plot_views[ii]->SetDefaultView(range);
         plot_views[ii]->SetViewSmooth(range);
         plot_views[ii]->ToggleTracking();
