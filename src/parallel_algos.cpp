@@ -91,8 +91,8 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
       continue;
     }
 
-    const Sophus::SE3d& t_vc =
-        tracker.camera_rig_->t_wc_[track->ref_cam_id];
+    const Sophus::SE3d& t_vc = tracker.camera_rig_->cameras_[track->ref_cam_id]->Pose();
+
     track->opt_id = UINT_MAX;
     track->residual_used = false;
     // If we are not solving for landmarks, there is no point including
@@ -119,8 +119,7 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
     residual_offset++;
 
     for (uint32_t cam_id = 0 ; cam_id < tracker.num_cameras_ ; ++cam_id) {
-      const Sophus::SE3d t_cv =
-          tracker.camera_rig_->t_wc_[cam_id].inverse();
+      const Sophus::SE3d t_cv = tracker.camera_rig_->cameras_[cam_id]->Pose().inverse();
       const Eigen::Matrix4d t_cv_mat = t_cv.matrix();
       const Sophus::SE3d track_t_va =
           tracker.t_ba_ * track->t_ba * t_vc;
@@ -170,8 +169,8 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
                                    di_dp, val_pix);
 
         // need 2x4 transfer w.r.t. reference ray
-        di_dray[kk] = di_dp * dp_dray.col(3);
         dp_dray = dprojection_dray * track_t_ba_matrix;
+        di_dray[kk] = di_dp * dp_dray.col(3);
 
         //      for (unsigned int jj = 0; jj < 6; ++jj) {
         //        dp_dx.block<2,1>(0,jj) =
@@ -242,6 +241,14 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
 
       schur_time = Tic();
       for (size_t kk = 0; kk < transfer.valid_rays.size() ; ++kk) {
+        if (options.optimize_pose) {
+          final_di_dx = di_dx[kk] - mean_di_dx;
+          // Update u by adding j_p' * j_p
+          u += final_di_dx.transpose() * final_di_dx;
+          // Update rp by adding j_p' * r
+          r_p += final_di_dx.transpose() * res[kk];
+        }
+
         if (options.optimize_landmarks) {
           final_di_dray = di_dray[kk] - mean_di_dray;
           const double di_dray_id = final_di_dray;
@@ -254,15 +261,6 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
           // Add contribution for the subraction term on the rhs.
           r_l += di_dray_id * res[kk];
         }
-
-        if (options.optimize_pose) {
-          final_di_dx = di_dx[kk] - mean_di_dx;
-          // Update u by adding j_p' * j_p
-          u += final_di_dx.transpose() * final_di_dx;
-          // Update rp by adding j_p' * r
-          r_p += final_di_dx.transpose() * res[kk];
-        }
-
         residual_id++;
       }
 
@@ -393,7 +391,7 @@ void Parallel2dAlignment::operator()(const tbb::blocked_range<int> &r) const
 
   for (int ii = r.begin(); ii != r.end(); ii++) {
     std::shared_ptr<DenseTrack>& track = tracks[ii];
-    const Sophus::SE3d& t_vc = tracker.camera_rig_->t_wc_[track->ref_cam_id];
+    const Sophus::SE3d& t_vc = tracker.camera_rig_->cameras_[track->ref_cam_id]->Pose();
     // If we are only optimizing tracks from a single camera, skip track if
     // it wasn't initialized in the specified camera.
     if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=

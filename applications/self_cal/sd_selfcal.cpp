@@ -13,7 +13,7 @@
 #include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
-#include <PbMsgs/Matrix.h>
+#include <HAL/Messages/Matrix.h>
 #include <SceneGraph/SceneGraph.h>
 #include <pangolin/pangolin.h>
 #include <ba/BundleAdjuster.h>
@@ -69,7 +69,7 @@ bool do_start_new_landmarks = true;
 bool use_system_time = false;
 int image_width;
 int image_height;
-calibu::CameraRigT<Scalar> old_rig;
+calibu::Rig<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 calibu::Rig<Scalar> selfcal_rig;
 calibu::Rig<Scalar> aac_rig;
@@ -94,7 +94,7 @@ std::shared_ptr<GetPot> cl;
 std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
 // std::shared_ptr<sdtrack::DenseTrack> selected_track = nullptr;
-std::shared_ptr<pb::Image> camera_img;
+std::shared_ptr<hal::Image> camera_img;
 std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis>> axes;
@@ -125,12 +125,12 @@ double total_last_frame_proj_norm = 0;
 std::vector<cv::KeyPoint> keypoints;
 Sophus::SE3d guess;
 
-void ImuCallback(const pb::ImuMsg& ref) {
+void ImuCallback(const hal::ImuMsg& ref) {
   const double timestamp = use_system_time ? ref.system_time() :
                                              ref.device_time();
   Eigen::VectorXd a, w;
-  pb::ReadVector(ref.accel(), &a);
-  pb::ReadVector(ref.gyro(), &w);
+  hal::ReadVector(ref.accel(), &a);
+  hal::ReadVector(ref.gyro(), &w);
   imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
   // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
   //              w.transpose() << " at time " << timestamp << std::endl;
@@ -206,7 +206,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
       ba.Init(options, end_pose_id + 1, current_tracks->size() *
               (end_pose_id + 1));
       for (uint32_t cam_id = 0; cam_id < ba_rig.cameras_.size(); ++cam_id) {
-        ba.AddCamera(ba_rig.cameras_[cam_id], ba_rig.t_wc_[cam_id]);
+        ba.AddCamera(ba_rig.cameras_[cam_id]);
       }
 
       // First add all the poses and landmarks to ba.
@@ -263,7 +263,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           Eigen::Vector4d ray;
           ray.head<3>() = track->ref_keypoint.ray;
           ray[3] = track->ref_keypoint.rho;
-          ray = sdtrack::MultHomogeneous(pose->t_wp  * ba_rig.t_wc_[0], ray);
+          ray = sdtrack::MultHomogeneous(pose->t_wp  * ba_rig.cameras_[0]->Pose(), ray);
           bool active = track->id != tracker.longest_track_id() ||
               !all_poses_active || use_imu;
           if (!active) {
@@ -383,7 +383,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           // Make the ray relative to the pose.
           Eigen::Vector4d x_r =
               sdtrack::MultHomogeneous(
-                (pose->t_wp * ba_rig.t_wc_[0]).inverse(), x_w);
+                (pose->t_wp * ba_rig.cameras_[0]->Pose()).inverse(), x_w);
           // Normalize the xyz component of the ray to compare to the original
           // ray.
           x_r /= x_r.head<3>().norm();
@@ -480,7 +480,7 @@ void DoAAC()
           {
             std::lock_guard<std::mutex> lock(aac_mutex);
             aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
-            aac_rig.t_wc_[0] = rig.t_wc_[0];
+            aac_rig.cameras_[0] = rig.cameras_[0];
           }
           DoBundleAdjustment(aac_bundle_adjuster, true, do_adaptive,
                              num_aac_poses, 1, aac_imu_residual_ids,
@@ -539,7 +539,7 @@ void BaAndStartNewLandmarks()
       std::cerr << "Setting new batch params: " << std::endl;
       const Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
       rig.cameras_[0]->SetParams(new_params);
-      rig.t_wc_[0] = selfcal_rig.t_wc_[0];
+      rig.cameras_[0] = selfcal_rig.cameras_[0];
       {
         std::unique_lock<std::mutex>(aac_mutex);
         for (uint32_t ii = unknown_cam_calibration_start_pose ;
@@ -972,7 +972,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     if (imu_plots_needed) {
       Eigen::Vector6d error =
-          (rig.t_wc_[0].inverse() * old_rig.cameras[0].T_wc).log();
+          (rig.cameras_[0]->Pose().inverse() * old_rig.cameras_[0]->Pose()).log();
       for (size_t ii = num_cam_params; ii < num_cam_params + 6; ++ii) {
         plot_logs[ii].Log(error[ii - num_cam_params]);
       }
@@ -1051,7 +1051,7 @@ void Run()
 
   // pangolin::Timer timer;
   bool capture_success = false;
-  std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+  std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
   camera_device.Capture(*images);
   while(!pangolin::ShouldQuit()) {
     capture_success = false;
@@ -1198,7 +1198,7 @@ void InitGui() {
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
-        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.t_wc_[0], ray);
+        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.cameras_[0]->Pose(), ray);
         ray /= ray[3];
         lm_file << ray.transpose().format(sdtrack::kLongCsvFmt) << std::endl;
       }
@@ -1400,21 +1400,22 @@ bool LoadCameras(GetPot& cl)
   // If we require self-calibration from an unknown initial calibration, then
   // perturb the values.
   rig.Clear();
-  calibu::CreateFromOldRig(&old_rig, &rig);
-  calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
-  calibu::CreateFromOldRig(&old_rig, &aac_rig);
+  //calibu::CreateFromOldRig(&old_rig, &rig);
+  //calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
+  //calibu::CreateFromOldRig(&old_rig, &aac_rig);
   if (unknown_cam_calibration) {
-    Eigen::VectorXd params = old_rig.cameras[0].camera.GenericParams();
+    //Eigen::VectorXd params = old_rig.cameras_[0]->GenericParams();
+    Eigen::VectorXd params;
     // fov in rads.
     const double fov_rads = 90 * M_PI / 180.0;
     const double f_x =
-        0.5 * old_rig.cameras[0].camera.Height() / tan(fov_rads / 2);
+        0.5 * old_rig.cameras_[0]->Height() / tan(fov_rads / 2);
     std::cerr << "Changing fx from " << params[0] << " to " << f_x << std::endl;
     std::cerr << "Changing fy from " << params[1] << " to " << f_x << std::endl;
     params[0] = f_x;
     params[1] = f_x;
-    params[2] = old_rig.cameras[0].camera.Width() / 2;
-    params[3] = old_rig.cameras[0].camera.Height() / 2;
+    params[2] = old_rig.cameras_[0]->Width() / 2;
+    params[3] = old_rig.cameras_[0]->Height() / 2;
     if (params.rows() > 4) {
       params[4] = 1.0;
     }
@@ -1433,15 +1434,15 @@ bool LoadCameras(GetPot& cl)
   }
 
   if (has_imu && unknown_imu_calibration) {
-    rig.t_wc_[0].so3() = rig.t_wc_[0].so3() * Sophus::SO3d::exp(
+    rig.cameras_[0]->Pose().so3() = rig.cameras_[0]->Pose().so3() * Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
-    selfcal_rig.t_wc_[0] = rig.t_wc_[0];
-    aac_rig.t_wc_[0] = rig.t_wc_[0];
+    selfcal_rig.cameras_[0] = rig.cameras_[0];
+    aac_rig.cameras_[0] = rig.cameras_[0];
   }
 
   if (has_imu && use_imu_measurements) {
     // Capture an image so we have some IMU data.
-    std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+    std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
     while (imu_buffer.elements.size() == 0) {
       camera_device.Capture(*images);
     }

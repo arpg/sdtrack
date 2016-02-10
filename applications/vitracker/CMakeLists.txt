@@ -3,7 +3,6 @@ include_directories(common)
 find_package(sdtrack REQUIRED)
 find_package(BA REQUIRED)
 find_package(HAL REQUIRED)
-find_package(PbMsgs REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(SceneGraph REQUIRED)
@@ -22,7 +21,6 @@ def_executable(sd_vitracker
   LINK_LIBS
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
-  ${PbMsgs_LIBRARIES}
   ${PROTOBUF_LIBRARIES}
   ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}

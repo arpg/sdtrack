@@ -404,9 +404,9 @@ double SemiDenseTracker::EvaluateTrackResiduals(
   double residual = 0;
   uint32_t residual_count = 0;
   for (uint32_t cam_id = 0 ; cam_id < num_cameras_ ; ++cam_id) {
-    const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
+    const Sophus::SE3d t_cv = camera_rig_->cameras_[cam_id]->Pose().inverse();
     for (std::shared_ptr<DenseTrack>& track : tracks) {
-      const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
+      const Sophus::SE3d& t_vc = camera_rig_->cameras_[track->ref_cam_id]->Pose();
       if (optimized_tracks_only && !track->residual_used) {
         continue;
       }
@@ -484,10 +484,10 @@ void SemiDenseTracker::ReprojectTrackCenters() {
   tracks_suitable_for_cam_localization = 0;
   for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
     const calibu::CameraInterface<Scalar>& cam = *camera_rig_->cameras_[cam_id];
-    const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
+    const Sophus::SE3d t_cv = camera_rig_->cameras_[cam_id]->Pose().inverse();
 
     for (std::shared_ptr<DenseTrack>& track : current_tracks_) {
-      const Sophus::SE3d& t_vc = camera_rig_->t_wc_[track->ref_cam_id];
+      const Sophus::SE3d& t_vc = camera_rig_->cameras_[track->ref_cam_id]->Pose();
       const Sophus::SE3d track_t_ba = t_cv * t_ba_ * track->t_ba * t_vc;
       const DenseKeypoint& ref_kp = track->ref_keypoint;
       // Transfer the center ray. This is used for 2d tracking.
@@ -779,7 +779,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
                                      uint32_t level,
                                      uint32_t cam_id,
                                      const Sophus::SE3d& t_ba,
-                                     calibu::CameraInterface<Scalar>* cam,
+                                     std::shared_ptr<calibu::CameraInterface<Scalar>> cam,
                                      PatchTransfer& result,
                                      bool transfer_jacobians,
                                      bool use_approximation) {
@@ -979,7 +979,7 @@ void SemiDenseTracker::Do2dAlignment(
     std::list<std::shared_ptr<DenseTrack>>& tracks,
     uint32_t level) {
   for (uint32_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
-    const Sophus::SE3d t_cv = camera_rig_->t_wc_[cam_id].inverse();
+    const Sophus::SE3d t_cv = camera_rig_->cameras_[cam_id]->Pose().inverse();
 
     std::vector<std::shared_ptr<DenseTrack>> track_vec{
       std::begin(tracks), std::end(tracks)};
