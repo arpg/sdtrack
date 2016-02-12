@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <Eigen/Eigen>
 #include <HAL/Camera/CameraDevice.h>
-#include <miniglog/logging.h>
+#include <glog/logging.h>
 #include <calibu/utils/Xml.h>
 #include "GetPot"
 #include <sdtrack/TicToc.h>

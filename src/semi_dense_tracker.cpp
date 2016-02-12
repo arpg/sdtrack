@@ -1,4 +1,4 @@
-#include <miniglog/logging.h>
+#include <glog/logging.h>
 #include <sdtrack/semi_dense_tracker.h>
 #include <sdtrack/parallel_algos.h>
 #include <CVars/CVar.h>
