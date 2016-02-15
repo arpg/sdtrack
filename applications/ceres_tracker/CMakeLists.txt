@@ -25,7 +25,6 @@ def_executable(sd_ceres_tracker
   ${SDRACK_LIBRARIES}
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
-  ${PbMsgs_LIBRARIES}
   ${PROTOBUF_LIBRARIES}
   ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}
@@ -42,7 +41,6 @@ def_executable(sd_ceres_calib
   ${SDRACK_LIBRARIES}
   ${BA_LIBRARIES}
   ${HAL_LIBRARIES}
-  ${PbMsgs_LIBRARIES}
   ${PROTOBUF_LIBRARIES}
   ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}

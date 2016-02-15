@@ -10,11 +10,12 @@
 #include <Eigen/Core>
 
 #include <SceneGraph/SceneGraph.h>
-#include <pangolin/gldraw.h>
+#include <pangolin/gl/gldraw.h>
 
 
 namespace Eigen {
 
+#ifndef USING_VECTOR_ARRAY  
 #define USING_VECTOR_ARRAY(size)                                \
   using Vector##size##tArray =                                  \
       std::vector< Matrix<double,size,1>,                       \
@@ -27,6 +28,7 @@ USING_VECTOR_ARRAY(5);
 USING_VECTOR_ARRAY(6);
 
 #undef USING_VECTOR_ARRAY
+#endif
 }
 
 

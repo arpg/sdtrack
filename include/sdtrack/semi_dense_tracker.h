@@ -8,7 +8,7 @@
 #include "utils.h"
 //#include <Utils/PatchUtils.h>
 #include "TicToc.h"
-#include <calibu/cam/CameraRig.h>
+#include <calibu/cam/camera_rig.h>
 #include "FeatureMask.h"
 //#include <Utils/Utils.h>
 #include <fstream>
@@ -111,7 +111,7 @@ private:
                      uint32_t level,
                      uint32_t cam_id,
                      const Sophus::SE3t& t_ba,
-                     calibu::CameraInterface<Scalar>* cam,
+                     std::shared_ptr<calibu::CameraInterface<Scalar>> cam,
                      PatchTransfer& result, bool transfer_jacobians,
                      bool use_approximation = true);
 

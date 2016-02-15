@@ -13,7 +13,7 @@
 #include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
-#include <PbMsgs/Matrix.h>
+#include <HAL/Messages/Matrix.h>
 #include <SceneGraph/SceneGraph.h>
 #include <pangolin/pangolin.h>
 #include <ba/BundleAdjuster.h>
@@ -81,7 +81,7 @@ bool do_start_new_landmarks = true;
 bool use_system_time = false;
 int image_width;
 int image_height;
-calibu::CameraRigT<Scalar> old_rig;
+calibu::Rig<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 calibu::Rig<Scalar> selfcal_rig;
 calibu::Rig<Scalar> aac_rig;
@@ -108,7 +108,7 @@ std::shared_ptr<GetPot> cl;
 std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
 // std::shared_ptr<sdtrack::DenseTrack> selected_track = nullptr;
-std::shared_ptr<pb::Image> camera_img;
+std::shared_ptr<hal::Image> camera_img;
 std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis>> axes;
@@ -143,12 +143,13 @@ bool ImuSelfCalActive(){
   return has_imu && use_imu_measurements && do_imu_self_cal;
 }
 
-void ImuCallback(const pb::ImuMsg& ref) {
+void ImuCallback(const hal::ImuMsg& ref) {
+
   const double timestamp = use_system_time ? ref.system_time() :
                                              ref.device_time();
   Eigen::VectorXd a, w;
-  pb::ReadVector(ref.accel(), &a);
-  pb::ReadVector(ref.gyro(), &w);
+  hal::ReadVector(ref.accel(), &a);
+  hal::ReadVector(ref.gyro(), &w);
   imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
   // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
   //              w.transpose() << " at time " << timestamp << std::endl;
@@ -224,7 +225,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
       ba.Init(options, end_pose_id + 1, current_tracks->size() *
               (end_pose_id + 1));
       for (uint32_t cam_id = 0; cam_id < ba_rig.cameras_.size(); ++cam_id) {
-        ba.AddCamera(ba_rig.cameras_[cam_id], ba_rig.t_wc_[cam_id]);
+        ba.AddCamera(ba_rig.cameras_[cam_id]);
       }
 
       // First add all the poses and landmarks to ba.
@@ -281,7 +282,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           Eigen::Vector4d ray;
           ray.head<3>() = track->ref_keypoint.ray;
           ray[3] = track->ref_keypoint.rho;
-          ray = sdtrack::MultHomogeneous(pose->t_wp  * ba_rig.t_wc_[0], ray);
+          ray = sdtrack::MultHomogeneous(pose->t_wp  * ba_rig.cameras_[0]->Pose(), ray);
           bool active = track->id != tracker.longest_track_id() ||
               !all_poses_active || use_imu;
           if (!active) {
@@ -401,7 +402,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           // Make the ray relative to the pose.
           Eigen::Vector4d x_r =
               sdtrack::MultHomogeneous(
-                (pose->t_wp * ba_rig.t_wc_[0]).inverse(), x_w);
+                (pose->t_wp * ba_rig.cameras_[0]->Pose()).inverse(), x_w);
           // Normalize the xyz component of the ray to compare to the original
           // ray.
           x_r /= x_r.head<3>().norm();
@@ -498,7 +499,7 @@ void DoAAC()
           {
             std::lock_guard<std::mutex> lock(aac_mutex);
             aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
-            aac_rig.t_wc_[0] = rig.t_wc_[0];
+            aac_rig.cameras_[0] = rig.cameras_[0];
           }
           DoBundleAdjustment(aac_bundle_adjuster, true, do_adaptive,
                              num_aac_poses, 1, aac_imu_residual_ids,
@@ -593,10 +594,9 @@ void  BaAndStartNewLandmarks()
         rig.cameras_[0]->SetParams(new_params);
       }
       if(ImuSelfCalActive()){
-        rig.t_wc_[0] = selfcal_rig.t_wc_[0];
+        rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
       }
 
-      if(do_cam_self_cal)
       {
         std::unique_lock<std::mutex>(aac_mutex);
         for (uint32_t ii = unknown_cam_calibration_start_pose ;
@@ -780,8 +780,8 @@ void  BaAndStartNewLandmarks()
           }
           if(ImuSelfCalActive()){
             std::unique_lock<std::mutex>(aac_mutex);
-            rig.t_wc_[0].so3() =
-                selfcal_rig.t_wc_[0].so3();
+            rig.cameras_[0]->Pose().so3() =
+                selfcal_rig.cameras_[0]->Pose().so3();
           }
         }
         std::cerr << "Analyzed priority queue with mean " <<
@@ -893,9 +893,9 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 //  }
 
 
-  // If this is a keyframe, set it as one on the tracker.
   prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
 
+  // If this is a keyframe, set it as one on the tracker.
   if (is_prev_keyframe) {
     prev_t_ba = Sophus::SE3d();
   } else {
@@ -1041,9 +1041,9 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         }
       }
 
-      // If this is a keyframe, set it as one on the tracker.
       prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
 
+      // If this is a keyframe, set it as one on the tracker.
       if (is_keyframe) {
         tracker.AddKeyframe();
       }
@@ -1070,7 +1070,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       if(do_cam_self_cal){
         candidate_window.mean = rig.cameras_[0]->GetParams();
       }else if (ImuSelfCalActive()){
-        candidate_window.mean = rig.t_wc_[0].log();
+        candidate_window.mean = rig.cameras_[0]->Pose().log();
       }
     }
 
@@ -1081,8 +1081,12 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
 
     if (imu_plots_needed) {
+
+      Eigen::Vector6d error =
+          (rig.cameras_[0]->Pose().inverse() * old_rig.cameras_[0]->Pose()).log();
+
       for (size_t ii = num_cam_params; ii < num_cam_params + 6; ++ii) {
-        plot_logs[ii].Log(rig.t_wc_[0].log()[ii - num_cam_params],
+        plot_logs[ii].Log(rig.cameras_[0]->Pose().log()[ii - num_cam_params],
             candidate_window.mean[ii]);
       }
 //      Eigen::Vector6d error =
@@ -1165,7 +1169,7 @@ void Run()
 
   // pangolin::Timer timer;
   bool capture_success = false;
-  std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+  std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
   camera_device.Capture(*images);
   while(!pangolin::ShouldQuit()) {
     capture_success = false;
@@ -1173,7 +1177,6 @@ void Run()
     if (!is_running) {
       is_stepping = false;
     }
-    // usleep(20000);
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glColor4f(1.0f,1.0f,1.0f,1.0f);
@@ -1313,7 +1316,7 @@ void InitGui() {
         Eigen::Vector4d ray;
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
-        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.t_wc_[0], ray);
+        ray = sdtrack::MultHomogeneous(pose->t_wp * rig.cameras_[0]->Pose(), ray);
         ray /= ray[3];
         lm_file << ray.transpose().format(sdtrack::kLongCsvFmt) << std::endl;
       }
@@ -1452,17 +1455,18 @@ void InitGui() {
       if (num_plots > 4){
           plot_logs[4].SetLabels({"w - p.q.", "w - candidate seg."});
       }
+    }
 
-      for (size_t ii = 0; ii < num_cam_params; ++ii) {
-        plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
-        params_plot_view->AddDisplay(*plot_views[ii]);
-        double param = rig.cameras_[0]->GetParams()[ii];
-        pangolin::XYRange range(0, 500, param - param * 0.5,
-                                param + param * 0.5);
-        plot_views[ii]->SetDefaultView(range);
-        plot_views[ii]->SetViewSmooth(range);
-        plot_views[ii]->ToggleTracking();
-      }
+
+    for (size_t ii = 0; ii < num_cam_params; ++ii) {
+      plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
+      params_plot_view->AddDisplay(*plot_views[ii]);
+      double param = rig.cameras_[0]->GetParams()[ii];
+      pangolin::XYRange<float> range(0, 500, param - param * 0.5,
+                              param + param * 0.5);
+      plot_views[ii]->SetDefaultView(range);
+      plot_views[ii]->SetViewSmooth(range);
+      plot_views[ii]->ToggleTracking();
     }
 
 
@@ -1483,7 +1487,7 @@ void InitGui() {
       for (size_t ii = num_cam_params; ii < 6 + num_cam_params; ii++) {
         plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
         imu_plot_view->AddDisplay(*plot_views[ii]);
-        pangolin::XYRange range(0, 500, -0.5, 0.5);
+        pangolin::XYRange<float> range(0, 500, -0.5, 0.5);
         plot_views[ii]->SetDefaultView(range);
         plot_views[ii]->SetViewSmooth(range);
         plot_views[ii]->ToggleTracking();
@@ -1528,24 +1532,23 @@ bool LoadCameras(GetPot& cl)
   }
 
   rig.Clear();
-  calibu::CreateFromOldRig(&old_rig, &rig);
-  calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
-  calibu::CreateFromOldRig(&old_rig, &aac_rig);
+
 
   // If we require self-calibration from an unknown initial calibration, then
   // perturb the values (camera calibraiton parameters only)
   if (unknown_cam_calibration) {
-    Eigen::VectorXd params = old_rig.cameras[0].camera.GenericParams();
+    //Eigen::VectorXd params = old_rig.cameras_[0]->GenericParams();
+    Eigen::VectorXd params;
     // fov in rads.
     const double fov_rads = 90 * M_PI / 180.0;
     const double f_x =
-        0.5 * old_rig.cameras[0].camera.Height() / tan(fov_rads / 2);
+        0.5 * old_rig.cameras_[0]->Height() / tan(fov_rads / 2);
     std::cerr << "Changing fx from " << params[0] << " to " << f_x << std::endl;
     std::cerr << "Changing fy from " << params[1] << " to " << f_x << std::endl;
     params[0] = f_x;
     params[1] = f_x;
-    params[2] = old_rig.cameras[0].camera.Width() / 2;
-    params[3] = old_rig.cameras[0].camera.Height() / 2;
+    params[2] = old_rig.cameras_[0]->Width() / 2;
+    params[3] = old_rig.cameras_[0]->Height() / 2;
     if (params.rows() > 4) {
       params[4] = 1.0;
     }
@@ -1564,15 +1567,16 @@ bool LoadCameras(GetPot& cl)
   }
 
   if (has_imu && unknown_imu_calibration) {
-    rig.t_wc_[0].so3() = rig.t_wc_[0].so3(); //Sophus::SO3d(); //rig.t_wc_[0].so3() * Sophus::SO3d::exp(
-          //(Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
-    selfcal_rig.t_wc_[0] = rig.t_wc_[0];
-    aac_rig.t_wc_[0] = rig.t_wc_[0];
+
+    rig.cameras_[0]->Pose().so3() = rig.cameras_[0]->Pose().so3() * Sophus::SO3d::exp(
+          (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
+    selfcal_rig.cameras_[0] = rig.cameras_[0];
+    aac_rig.cameras_[0] = rig.cameras_[0];
   }
 
   if (has_imu && use_imu_measurements) {
     // Capture an image so we have some IMU data.
-    std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+    std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
     while (imu_buffer.elements.size() == 0) {
       camera_device.Capture(*images);
     }
@@ -1666,7 +1670,6 @@ int main(int argc, char** argv) {
   /// ZZZZZZZZZZZZZZZZZZ: Get rid of this. Only valid for ICRA test rig
   //imu_time_offset = -0.0697;
 
-  //[?] What does DoAAC do?
   aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
 
   Run();

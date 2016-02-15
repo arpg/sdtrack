@@ -6,8 +6,11 @@
 // #define CHECK_NANS
 
 #include <HAL/Camera/CameraDevice.h>
-#include <miniglog/logging.h>
+#include <HAL/Messages/Image.h>
+
 #include <calibu/utils/Xml.h>
+#include <calibu/cam/camera_crtp_interop.h>
+
 #include "GetPot"
 #include <sdtrack/TicToc.h>
 #include <unistd.h>
@@ -43,7 +46,7 @@ bool is_manual_mode = false;
 bool do_start_new_landmarks = true;
 int image_width;
 int image_height;
-calibu::CameraRigT<Scalar> old_rig;
+calibu::Rig<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 hal::Camera camera_device;
 sdtrack::SemiDenseTracker tracker;
@@ -55,7 +58,7 @@ std::shared_ptr<GetPot> cl;
 std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
 int last_optimization_level = 0;
 // std::shared_ptr<sdtrack::DenseTrack> selected_track = nullptr;
-std::shared_ptr<pb::Image> camera_img;
+std::shared_ptr<hal::Image> camera_img;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::unique_ptr<SceneGraph::GLAxis> > axes;
 std::shared_ptr<SceneGraph::GLPrimitives<>> line_strip;
@@ -104,8 +107,8 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
     std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
     bundle_adjuster.Init(options, poses.size(),
                          current_tracks->size() * poses.size());
-    for (int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-      bundle_adjuster.AddCamera(rig.cameras_[cam_id], rig.t_wc_[cam_id]);
+    for (unsigned int cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+      bundle_adjuster.AddCamera(rig.cameras_[cam_id]);
     }
 
     // First add all the poses and landmarks to ba.
@@ -125,7 +128,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         ray.head<3>() = track->ref_keypoint.ray;
         ray[3] = track->ref_keypoint.rho;
         ray = sdtrack::MultHomogeneous(
-              pose->t_wp  * rig.t_wc_[track->ref_cam_id], ray);
+				       pose->t_wp  * rig.cameras_[track->ref_cam_id]->Pose(), ray);
         bool active = track->id != tracker.longest_track_id() ||
             !all_poses_active;
         if (!active) {
@@ -207,7 +210,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
         // Make the ray relative to the pose.
         Eigen::Vector4d x_r =
             sdtrack::MultHomogeneous(
-              (pose->t_wp * rig.t_wc_[track->ref_cam_id]).inverse(), x_w);
+				     (pose->t_wp * rig.cameras_[track->ref_cam_id]->Pose()).inverse(), x_w);
         // Normalize the xyz component of the ray to compare to the original
         // ray.
         x_r /= x_r.head<3>().norm();
@@ -429,8 +432,8 @@ void DrawImageData(uint32_t cam_id)
 
 bool LoadCameras()
 {
-  LoadCameraAndRig(*cl, camera_device, old_rig);
-  calibu::CreateFromOldRig(&old_rig, &rig);
+  LoadCameraAndRig(*cl, camera_device, rig);
+  //calibu::CreateFromOldRig(&old_rig, &rig);
   // rig.cameras_.resize(1);
   // rig.t_wc_.resize(1);
   return true;
@@ -442,7 +445,7 @@ void Run()
 
   // pangolin::Timer timer;
   bool capture_success = false;
-  std::shared_ptr<pb::ImageArray> images = pb::ImageArray::Create();
+  std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
   for (int ii = 0 ; ii < 10 ; ++ii) {
     camera_device.Capture(*images);
   }
@@ -465,7 +468,7 @@ void Run()
     if (capture_success) {
       gl_tex.resize(images->Size());
 
-      for (uint32_t cam_id = 0 ; cam_id < images->Size() ; ++cam_id) {
+      for (uint32_t cam_id = 0 ; cam_id < (unsigned int) images->Size() ; ++cam_id) {
         if (!gl_tex[cam_id].tid) {
           camera_img = images->at(cam_id);
           GLint internal_format = (camera_img->Format() == GL_LUMINANCE ?
@@ -492,7 +495,7 @@ void Run()
 
     if (camera_img && camera_img->data()) {
       for (uint32_t cam_id = 0 ; cam_id < rig.cameras_.size() &&
-           cam_id < images->Size(); ++cam_id) {
+	     cam_id < (unsigned int) images->Size(); ++cam_id) {
         camera_img = images->at(cam_id);
         gui_vars.camera_view[cam_id]->ActivateAndScissor();
         gl_tex[cam_id].Upload(camera_img->data(), camera_img->Format(),
@@ -573,10 +576,15 @@ void InitGui()
         [&]() {
     // write all the poses to a file.
     std::ofstream pose_file("poses.txt", std::ios_base::trunc);
+    
     for (auto pose : poses) {
-      pose_file << pose->t_wp.translation().transpose().format(
-      sdtrack::kLongCsvFmt) << std::endl;
+      //Prepare the euler angle representation (rotation about x,y,z)
+      Eigen::Vector3d ea = pose->t_wp.rotationMatrix().eulerAngles(0, 1, 2);
+      pose_file << pose->t_wp.translation().transpose().format(sdtrack::kLongCsvFmt);
+      pose_file << "," << ea.transpose().format(sdtrack::kLongCsvFmt);
+      pose_file << std::endl;
     }
+    std::cerr << "Wrote poses" << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback(' ', [&]() {

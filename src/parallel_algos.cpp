@@ -91,8 +91,8 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
       continue;
     }
 
-    const Sophus::SE3d& t_vc =
-        tracker.camera_rig_->t_wc_[track->ref_cam_id];
+    const Sophus::SE3d& t_vc = tracker.camera_rig_->cameras_[track->ref_cam_id]->Pose();
+
     track->opt_id = UINT_MAX;
     track->residual_used = false;
     // If we are not solving for landmarks, there is no point including
@@ -119,8 +119,7 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
     residual_offset++;
 
     for (uint32_t cam_id = 0 ; cam_id < tracker.num_cameras_ ; ++cam_id) {
-      const Sophus::SE3d t_cv =
-          tracker.camera_rig_->t_wc_[cam_id].inverse();
+      const Sophus::SE3d t_cv = tracker.camera_rig_->cameras_[cam_id]->Pose().inverse();
       const Eigen::Matrix4d t_cv_mat = t_cv.matrix();
       const Sophus::SE3d track_t_va =
           tracker.t_ba_ * track->t_ba * t_vc;
@@ -393,7 +392,7 @@ void Parallel2dAlignment::operator()(const tbb::blocked_range<int> &r) const
 
   for (int ii = r.begin(); ii != r.end(); ii++) {
     std::shared_ptr<DenseTrack>& track = tracks[ii];
-    const Sophus::SE3d& t_vc = tracker.camera_rig_->t_wc_[track->ref_cam_id];
+    const Sophus::SE3d& t_vc = tracker.camera_rig_->cameras_[track->ref_cam_id]->Pose();
     // If we are only optimizing tracks from a single camera, skip track if
     // it wasn't initialized in the specified camera.
     if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=
