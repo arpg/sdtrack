@@ -10,7 +10,7 @@
 
 #include "etc_common.h"
 #include <HAL/Camera/CameraDevice.h>
-#include <calibu/utils/Xml.h>
+//#include <calibu/utils/>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
 #include <HAL/Messages/Matrix.h>
@@ -45,7 +45,7 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 uint32_t num_change_detected = 0;
 uint32_t num_change_needed = 3;
 bool unknown_cam_calibration = false;
-bool unknown_imu_calibration = false;
+bool unknown_imu_calibration = true;
 
 bool compare_self_cal_with_batch = false;
 bool do_cam_self_cal = false;

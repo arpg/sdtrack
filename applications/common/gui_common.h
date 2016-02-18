@@ -365,7 +365,8 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
 
   }
 
-  LOG(INFO) << "Starting Tvs: " << crig->cameras_[0]->Pose().matrix();
+  LOG(INFO) << "Starting Tvs: " << std::endl
+            << crig->cameras_[0]->Pose().matrix();
 
   rig.cameras_.clear();
   for (uint32_t cam_id = 0; cam_id < crig->cameras_.size(); ++cam_id) {
