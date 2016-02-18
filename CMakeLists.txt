@@ -31,7 +31,7 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -Wextra -Wno-unused-par
 find_package(Calibu 0.1 REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(OpenCV2 REQUIRED)
-find_package(MINIGLOG REQUIRED)
+find_package(GLog REQUIRED)
 find_package(CVars REQUIRED)
 find_package(TBB REQUIRED)
 
@@ -42,7 +42,7 @@ set(PROJ_INCLUDE_DIRS
   ${OpenCV2_INCLUDE_DIRS}
   ${Calibu_INCLUDE_DIRS}
   ${Sophus_INCLUDE_DIR}
-  ${MINIGLOG_INCLUDE_DIRS}
+  ${GLog_INCLUDE_DIRS}
   ${CVars_INCLUDE_DIRS}
   ${TBB_INCLUDE_DIRS}
   )
@@ -52,7 +52,7 @@ set(PROJ_LIBRARIES
   ${Calibu_LIBRARY}
   ${OpenCV2_LIBRARIES}
   ${CVars_LIBRARIES}
-  ${MINIGLOG_LIBRARIES}
+  ${GLog_LIBRARIES}
   ${TBB_LIBRARIES}
   )
 

@@ -3,7 +3,7 @@
 #undef NDEBUG
 #include <assert.h>
 #include <Eigen/Eigen>
-#include <miniglog/logging.h>
+#include <glog/logging.h>
 #include "GetPot"
 #include <unistd.h>
 #include <iomanip>

@@ -1,4 +1,4 @@
-#include <miniglog/logging.h>
+#include <glog/logging.h>
 #include <sdtrack/parallel_algos.h>
 
 using namespace sdtrack;
