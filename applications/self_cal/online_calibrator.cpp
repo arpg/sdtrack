@@ -1,4 +1,4 @@
-#include <miniglog/logging.h>
+#include <glog/logging.h>
 #include "online_calibrator.h"
 #include "ftest.h"
 
@@ -130,8 +130,9 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   {
     std::lock_guard<std::mutex> lock(*ba_mutex_);
     if (apply_results) {
-      rig_->cameras_[0]->Pose().so3() = ba.rig()->cameras_[0]->Pose().so3();
-      std::cerr << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix() << std::endl;
+      rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
+      std::cerr << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix()
+                << std::endl;
     } else {
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }
@@ -177,9 +178,6 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
     if (pose->tracks.size() == 0 && !UseImu) {
       ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
     }
-
-    // std::cerr << "Adding pose with opt_id " << pose->opt_id << " and t_wp " <<
-    //              pose->t_wp.matrix() << std::endl
 
     if (UseImu && ii > start_active_pose && ii > 0) {
       std::vector<ba::ImuMeasurementT<Scalar>> meas =
@@ -606,6 +604,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     uint32_t num_iterations, bool apply_results)
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
+
   std::cerr << "Analyzing calibration window with imu = " << UseImu <<
                " from " << start_pose << " to " << end_pose << std::endl;
   Proxy<UseImu, DoTvs> ba_proxy(this);
@@ -653,45 +652,36 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       std::cerr << "PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }
 
-    // Optimize the poses
+    // Optimize the poses and calibration parameters
     ba.Solve(num_iterations);
 
     const ba::SolutionSummary<double>& summary =
         ba.GetSolutionSummary();
+
     // Obtain the mean from the BA
-
     if(DoTvs){
-//      Eigen::MatrixXd camera_parameters = ba.rig().cameras_[0]->GetParams();
-//      Eigen::MatrixXd imu_parameters = ba.rig().t_wc_[0].log();
-//      Eigen::MatrixXd all_parameters(camera_parameters.rows() + imu_parameters.rows(),
-//                                     camera_parameters.cols());
-//      all_parameters << camera_parameters, imu_parameters;
-//      window.mean = all_parameters;
-
       Eigen::MatrixXd imu_parameters = ba.rig()->cameras_[0]->Pose().log();
       window.mean = imu_parameters;
 
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
       t_vs = t_vs * M_vr;
       std::cerr << "POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
-      window.score = GetWindowScore(window);
-
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
     }
 
-
     window.covariance = summary.calibration_marginals;
-    std::cerr << "BA cov is:\n" << window.covariance << std::endl;
-    std::cerr << "BA mean is:" << window.mean.transpose().format(kLongFmt) <<
-                 std::endl;
+    window.score = GetWindowScore(window);
 
     if (apply_results) {
       std::lock_guard<std::mutex> lock(*ba_mutex_);
-      rig_->cameras_[0]->Pose().so3() = ba.rig()->cameras_[0]->Pose().so3();
-      std::cerr << "new t_wc\n:" << rig_->cameras_[0]->Pose().matrix() << std::endl;
+      if(DoTvs){
+        rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
+        std::cerr << "new selfcal_rig t_wc\n:"
+                  << rig_->cameras_[0]->Pose().matrix() << std::endl;
+      }
 
-      Sophus::SE3d t_ba;
+      //Sophus::SE3d t_ba;
       std::shared_ptr<TrackerPose> last_pose = poses.back();
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
@@ -710,41 +700,18 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
         pose->t_wp = ba_pose.t_wp;
 
-        t_ba = last_pose->t_wp.inverse() * pose->t_wp;
+        //t_ba = last_pose->t_wp.inverse() * pose->t_wp;
         for (std::shared_ptr<DenseTrack> track: pose->tracks) {
           if (track->external_id[ba_id_] == UINT_MAX) {
             continue;
           }
-          /*
-          // Set the t_ab on this track.
-          //std::cerr << "Changing track t_ba from " << std::endl <<
-          //             track->t_ba.matrix() << std::endl << " to " <<
-          //             t_ba.matrix() << std::endl;
-          track->t_ba = t_ba;
 
-          // Get the landmark location in the world frame.
-          const Eigen::Vector4d& x_w =
-              ba.GetLandmark(track->external_id[ba_id_]);
-          Eigen::Vector4d prev_ray;
-          prev_ray.head<3>() = track->ref_keypoint.ray;
-          prev_ray[3] = track->ref_keypoint.rho;
-          // Make the ray relative to the pose.
-          Eigen::Vector4d x_r = sdtrack::MultHomogeneous()
-                (pose->t_wp * rig_->t_wc_[0]).inverse(), x_w);
-
-          track->ref_keypoint.ray = x_r.head<3>();
-          // Normalize the xyz component of the ray to compare to the original
-          // ray.
-          x_r /= x_r.head<3>().norm();
-          // std::cerr << "lm " << track->external_id << " x_r " <<
-          //              prev_ray.transpose() << " after opt: " <<
-          //              x_r.transpose() << std::endl;
-          // Update the inverse depth on the track
-          track->ref_keypoint.rho = x_r[3];*/
           track->needs_backprojection = true;
         }
       }
     } else {
+      // TODO: check why this needs to be set back to the original camera
+      // parameters. Should not have changed.
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }

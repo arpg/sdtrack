@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 3.3.0, 2016-02-17T17:53:08. -->
+<!-- Written by QtCreator 3.3.0, 2016-02-22T19:35:42. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -208,8 +208,7 @@
      <value type="int">14</value>
     </valuelist>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguation.Title">sd_selfcal</value>
-    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments">-cam trailmix://files:///Users/fernando/Projects/Robotics/DATA/Peanut/2014Dec11_134009/superframes/*.pgm -imu join://trailmix://files://
-</value>
+    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments">-cam log:///Users/fernando/Projects/Robotics/DATA/Jaguar/run1.log</value>
     <value type="bool" key="CMakeProjectManager.CMakeRunConfiguration.UseTerminal">false</value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory"></value>
     <value type="int" key="PE.EnvironmentAspect.Base">2</value>
@@ -260,7 +259,7 @@
      <value type="int">14</value>
     </valuelist>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguation.Title">sd_vtracker</value>
-    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments"></value>
+    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments">-cam ximea:// -cmod /Users/fernando/Projects/Robotics/cameras.xml</value>
     <value type="bool" key="CMakeProjectManager.CMakeRunConfiguration.UseTerminal">false</value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory"></value>
     <value type="int" key="PE.EnvironmentAspect.Base">2</value>

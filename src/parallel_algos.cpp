@@ -276,7 +276,7 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
         track->keypoints.size() <= 2 &&
         options.optimize_landmarks && options.optimize_pose &&
         tracker.num_cameras_ == 1) {
-      LOG(g_sdtrack_debug) << "omitting longest track id " <<
+      LOG(WARNING) << "omitting longest track id " <<
                               tracker.longest_track_id_ << std::endl;
       omit_track = true;
     }
@@ -293,7 +293,7 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
       }
 
       if (std::isnan(v) || std::isinf(v)) {
-        LOG(g_sdtrack_debug) << "v is bad: " << v << std::endl;
+        LOG(WARNING) << "v is bad: " << v << std::endl;
       }
 
       // LOG(g_sdtrack_debug) << "v: " << v << std::endl;
