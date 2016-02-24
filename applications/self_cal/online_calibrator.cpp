@@ -130,9 +130,11 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   {
     std::lock_guard<std::mutex> lock(*ba_mutex_);
     if (apply_results) {
-      rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
-      std::cerr << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix()
-                << std::endl;
+      if(DoTvs){
+        rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
+        std::cerr << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix()
+                  << std::endl;
+      }
     } else {
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }

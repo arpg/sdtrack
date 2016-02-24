@@ -500,8 +500,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
     if (num_active_poses > end_pose_id) {
       num_active_poses = orig_num_aac_poses;
-      // std::cerr << "Reached batch solution. resetting number of poses to " <<
-      //              num_ba_poses << std::endl;
+       std::cerr << "Reached batch solution. resetting number of poses to " <<
+                    num_ba_poses << std::endl;
     }
 
     if (cond_error == 0 || cond_dims == 0) {
@@ -592,8 +592,11 @@ void  BaAndStartNewLandmarks()
   const uint32_t batch_end = poses.size();
 
   bool have_unknown_calib = false;
-  for(auto calib : calibrations){
-    have_unknown_calib = (calib->unknown_calibration && SelfCalActive(calib));
+  for (auto calib : calibrations){
+    if(calib->unknown_calibration && SelfCalActive(calib)){
+      have_unknown_calib = true;
+      break;
+    }
   }
 
   if(have_unknown_calib){
@@ -673,9 +676,13 @@ void  BaAndStartNewLandmarks()
     }
 
     if (global_pq_window.covariance.fullPivLu().rank() ==
-        num_params /*&& score < 1e7*/) {
+        num_params && num_params != 0 /*&& score < 1e7*/) {
       // Priority Queue window is good enough for us to use the calibraiton
       // parameters in the actual rig:
+
+      std::cerr << "Global pq window covariance rank: " <<
+                   global_pq_window.covariance.fullPivLu().rank() <<
+                   " num params: " << num_params << std::endl;
 
       std::cerr << "Setting new batch params from selfcal_rig to rig: "
                 << std::endl;
@@ -734,9 +741,9 @@ void  BaAndStartNewLandmarks()
 
     // If the determinant is smaller than a heuristic, switch to cam self_cal.
     if ((SelfCalActive(cam_calib)) &&
-        (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
+        ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
         ((batch_end - cam_calib->unknown_calibration_start_pose)
-         > cam_calib->self_cal_segment_length * 2)) {
+         > cam_calib->self_cal_segment_length * 2))) {
       std::cerr << "Determinant small enough, switching to cam self-cal" <<
                    std::endl;
       cam_calib->unknown_calibration = false;
@@ -745,9 +752,9 @@ void  BaAndStartNewLandmarks()
     // If the determinant is smaller than a heuristic, switch to imu self_cal.
     //TODO: Check if this heuristic is applicable to imu calibraiton
     if ((SelfCalActive(imu_calib)) &&
-        (score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
+        ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
         ((batch_end - imu_calib->unknown_calibration_start_pose)
-         > imu_calib->self_cal_segment_length * 2)) {
+         > imu_calib->self_cal_segment_length * 2))) {
       std::cerr << "Determinant small enough, switching to imu self-cal" <<
                    std::endl;
       imu_calib->unknown_calibration = false;
@@ -759,23 +766,31 @@ void  BaAndStartNewLandmarks()
 
   if (do_bundle_adjustment) {
     ba_time = sdtrack::Tic();
-    uint32_t num_poses_batch = 0;
 
     // If we still haven't converged on all of the calibration parameters
     // continue doing the full batch optimization for the pose graph SLAM.
-    bool has_unknown_calibration = false;
-    for(auto calib : calibrations){
-      if( has_unknown_calibration = calib->unknown_calibration) break;
-    }
+//    bool has_unknown_calibration = false;
+//    for(auto calib : calibrations){
+//      if(calib->unknown_calibration && SelfCalActive(calib)){
+//        has_unknown_calibration = true;
+//        break;
+//    }
 
-    if(has_unknown_calibration){
+//    if(has_unknown_calibration){
 
-      num_poses_batch = std::max(
-          batch_end - imu_calib->unknown_calibration_start_pose,
-          batch_end - cam_calib->unknown_calibration_start_pose);
-    }
+//      num_poses_batch = std::max(
+//          (SelfCalActive(imu_calib) && imu_calib->unknown_calibration) ?
+//              batch_end - imu_calib->unknown_calibration_start_pose : 0,
+//          (SelfCalActive(cam_calib) && cam_calib->unknown_calibration) ?
+//              batch_end - cam_calib->unknown_calibration_start_pose : 0);
+//    }
 
-    uint32_t ba_size = std::max(num_ba_poses, num_poses_batch);
+    uint32_t ba_size = std::max(num_ba_poses, cam_calib->unknown_calibration ?
+                                      batch_end - cam_calib->unknown_calibration_start_pose
+                                : num_ba_poses);
+
+    std::cerr << "ba_size: " << ba_size << std::endl;
+
     if (has_imu && use_imu_measurements &&
         poses.size() > min_poses_for_imu) {
       std::cerr << "doing VI BA." << std::endl;
@@ -1165,6 +1180,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                  std::endl;
   } else {
     std::cerr << "Do not have good number of tracks, using Identity for guess."
+               " Ratio: " << ((double)tracker.num_successful_tracks() / (double)num_features)
               << std::endl;
     guess = Sophus::SE3d();
   }
