@@ -266,9 +266,9 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   uint32_t num_overlaps = 0;
   for (size_t ii = 0; ii < windows_.size() ; ++ii){
     CalibrationWindow& window = windows_[ii];
-    // std::cerr << "\t comparing with window " << ii << " with score : " <<
-    //              windows_[ii].score << " start " <<  windows_[ii].start_index <<
-    //              " end " << windows_[ii].end_index << std::endl;
+     std::cerr << "\t comparing with window " << ii << " with score : " <<
+                  windows_[ii].score << " start " <<  windows_[ii].start_index <<
+                  " end " << windows_[ii].end_index << std::endl;
     if (!((new_window.start_index < window.start_index && new_window.end_index <
            window.start_index) || (new_window.start_index > window.end_index &&
                                    new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
@@ -304,6 +304,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       needs_update_ = true;
       return true;
     } else {
+      // If the queue is not full yet, there is no reason to add overlapping
+      // windows.
       std::cerr << "Rejecting window as queue is incomplete and window "
                    "overlaps" << std::endl;
       return false;
@@ -311,6 +313,9 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   } else {
     // If we overlap, consider this segment if overlaps are allowed.
     if (num_overlaps == 1) {
+      // Use the id and score of the window in the pq that the candidate
+      // window overlaps with. If a window is to be replaced, it has to be
+      // the overlapping window otherwise information will be double counted.
       max_id = overlap_id;
       max_score = windows_[max_id].score;
       std::cerr << "Overlapping with 1 segment. Using overlapping score " <<
@@ -318,9 +323,10 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     }
 
     // Calculate the margin by which this candidate window beats what's in the
-    // priority queue.
+    // priority queue (or the window it overlaps with)
     const double margin = (max_score - new_window.score) / max_score;
-    std::cerr << "Max score: " << max_score<< " margin: " << margin << std::endl;
+    std::cerr << "Max score: " << max_score<< " margin: " << margin*100
+              << "%" << std::endl;
 
     // Replace it if it beats a non-overlapping window.
     if (max_id != UINT_MAX && margin > 0.05) {
@@ -337,72 +343,6 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     return false;
   }
 }
-
-//bool OnlineCalibrator::AnalyzeCalibrationWindow(CalibrationWindow &new_window)
-//{
-//  std::cerr << "Analyzing window with score " << new_window.score <<
-//               " start: " << new_window.start_index << " end: " <<
-//               new_window.end_index << std::endl;
-//  std::cerr << "\tComputing kl divergence for candidate window" << std::endl;
-//  new_window.kl_divergence = ComputeKlDivergence(total_window_,
-//                                                 new_window);
-//  std::cerr << "\t KL divergence for new window: " <<
-//               new_window.kl_divergence << std::endl;
-
-//  if (windows_.size() < num_windows_) {
-//    windows_.push_back(new_window);
-//    return true;
-//  }
-
-//  // Go through all the windows and see if this one beats the one with the
-//  // highest score. We only consider windows with at most 1 overlap.
-
-//  uint32_t min_id = UINT_MAX;
-//  double max_score = 0;
-//  uint32_t num_overlaps = 0;
-//  for (size_t ii = 0; ii < windows_.size() ; ++ii){
-//    CalibrationWindow& window = windows_[ii];
-//    if (!((new_window.start_index < window.start_index && new_window.end_index <
-//        window.start_index) || (new_window.start_index > window.end_index &&
-//        new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
-//      num_overlaps++;
-//    }
-
-//    if (num_overlaps > 1) {
-//      std::cerr << "Num overlaps: " << num_overlaps << " rejecting window. " <<
-//                   std::endl;
-//      // Then this window intersects with more than one other window.
-//      // We cannot continue.
-//      min_id = UINT_MAX;
-//      break;
-//    }
-
-//    if (window.kl_divergence >= max_score) {
-//      max_score = window.kl_divergence;
-//      min_id = ii;
-//    }
-//  }
-
-//  // Calculate the margin by which this candidate window beats what's in the
-//  // priority queue.
-//  const double margin = (new_window.kl_divergence - max_score) / max_score;
-
-//  // Replace it if it beats a non-overlapping window.
-//  if (min_id != UINT_MAX && margin > 0.05) {
-//    const CalibrationWindow& old_window = windows_[min_id];
-//    std::cerr << "Replaced window at idx " << min_id << " with kl " <<
-//                 old_window.kl_divergence << " start: " <<
-//                 old_window.start_index << " end: " << old_window.end_index <<
-//                 " with kl " << new_window.kl_divergence << " start: " <<
-//                 new_window.start_index << " end: " << new_window.end_index <<
-//                 std::endl;
-//    std::cerr << "\t KL divergence for old window: " <<
-//                 windows_[min_id].kl_divergence << std::endl;
-//    windows_[min_id] = new_window;
-//    return true;
-//  }
-//  return false;
-//}
 
 double OnlineCalibrator::ComputeBhattacharyyaDistance(
     const CalibrationWindow& window0,
@@ -608,6 +548,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
 
   std::cerr << "Analyzing calibration window with imu = " << UseImu <<
+               " and DoTvs = " << DoTvs <<
                " from " << start_pose << " to " << end_pose << std::endl;
   Proxy<UseImu, DoTvs> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
@@ -661,6 +602,8 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
         ba.GetSolutionSummary();
 
     // Obtain the mean from the BA
+    //TODO: Currently this only supports Tvs OR Camera params. Change
+    // so that it supports joint mode also
     if(DoTvs){
       Eigen::MatrixXd imu_parameters = ba.rig()->cameras_[0]->Pose().log();
       window.mean = imu_parameters;
