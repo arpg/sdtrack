@@ -48,20 +48,6 @@ bool compare_self_cal_with_batch = false;
 bool do_cam_self_cal = true;
 bool do_imu_self_cal = false;
 
-//// Camera queue segment and window sizes
-//uint32_t num_self_cal_cam_segments = 5;
-//uint32_t self_cal_cam_segment_length = 10;
-
-//// IMU queue segment and window sizes
-//// TODO: validate these segment/window sizes for IMU
-//uint32_t num_self_cal_imu_segments = 10;
-//uint32_t self_cal_imu_segment_length = min_poses_for_imu;
-
-// Joint(batch) queue segment and window sizes
-// TODO: validate these segment/window sizes
-//uint32_t num_self_cal_batch_segments = 10;
-//uint32_t self_cal_batch_segment_length = min_poses_for_imu;
-
 const int window_width = 640 * 1.5;
 const int window_height = 480 * 1.5;
 std::string g_usage = "SD SELFCAL. Example usage:\n"
@@ -114,9 +100,6 @@ struct Calibration {
 
 std::vector<std::shared_ptr<Calibration>> calibrations;
 
-//sdtrack::OnlineCalibrator camera_online_calib;
-//sdtrack::OnlineCalibrator inertial_online_calib;
-//sdtrack::OnlineCalibrator batch_online_calib;
 std::vector<pangolin::DataLog> plot_logs;
 std::vector<pangolin::Plotter*> plot_views;
 std::vector<pangolin::Plotter*> analysis_views;
@@ -307,6 +290,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
               ii >= start_active_pose , pose->time);
 
         if (ii == start_active_pose && use_imu && all_poses_active) {
+          // Regularize the IMU nullspace: translation and the rotation about
+          // the gravity vector.
           ba.RegularizePose(pose->opt_id[id], true, true, false, false);
         }
 
@@ -562,12 +547,12 @@ void DoAAC()
   while (true) {
     if (has_imu && use_imu_measurements &&
         poses.size() > 10 && do_async_ba) {
-      uint32_t num_poses = poses.size();
       orig_num_aac_poses = num_aac_poses;
       while (true) {
         if (poses.size() > min_poses_for_imu &&
             use_imu_measurements && has_imu) {
           {
+            // Get the lastest parameters from the rig
             std::lock_guard<std::mutex> lock(aac_mutex);
             aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
             aac_rig.cameras_[0] = rig.cameras_[0];
@@ -577,7 +562,7 @@ void DoAAC()
                              aac_rig);
         }
 
-        if (num_aac_poses == orig_num_aac_poses || !do_adaptive) {
+        if ((int)num_aac_poses == orig_num_aac_poses || !do_adaptive) {
           break;
         }
 
@@ -600,9 +585,6 @@ void  BaAndStartNewLandmarks()
   std::shared_ptr<Calibration> cam_calib = GetCalibration(Camera);
   std::shared_ptr<Calibration> imu_calib = GetCalibration(IMU);
   std::shared_ptr<Calibration> batch_calib = GetCalibration(Batch);
-
-//  sdtrack::CalibrationWindow current_cam_window;
-//  sdtrack::CalibrationWindow current_imu_window;
 
   uint32_t keyframe_id = poses.size();
   double batch_time = sdtrack::Tic();
