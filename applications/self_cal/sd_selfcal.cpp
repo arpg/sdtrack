@@ -40,13 +40,13 @@ uint32_t keyframe_tracks = UINT_MAX;
 double start_time = 0;
 uint32_t frame_count = 0;
 Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
-// Self calibration params
-bool unknown_cam_calibration = true;
-bool unknown_imu_calibration = false;
+
+int debug_level_threshold = 0;
 
 bool compare_self_cal_with_batch = false;
-bool do_cam_self_cal = true;
-bool do_imu_self_cal = false;
+bool unknown_cam_calibration = false;
+bool unknown_imu_calibration = false;
+
 
 const int window_width = 640 * 1.5;
 const int window_height = 480 * 1.5;
@@ -78,6 +78,13 @@ enum CalibrationType
   IMU,
   Batch
 };
+
+struct Metrics{
+  double batch_time = 0, ba_time = 0, analyze_time = 0, queue_time = 0, snl_time = 0;
+  double batch_calls = 0, ba_calls = 0, analyze_calls = 0, queue_calls = 0, snl_calls = 0;
+};
+
+Metrics global_metrics;
 
 struct Calibration {
   sdtrack::OnlineCalibrator online_calibrator;
@@ -151,6 +158,10 @@ double total_last_frame_proj_norm = 0;
 std::vector<cv::KeyPoint> keypoints;
 Sophus::SE3d guess;
 
+double GetTotalTime(Metrics m){
+  return m.ba_time + m.analyze_time + m.batch_time + m.snl_time + m.queue_time;
+}
+
 std::shared_ptr<Calibration> GetCalibration(CalibrationType type){
   std::shared_ptr<Calibration> calib;
 
@@ -203,13 +214,13 @@ void CheckParameterChange(std::shared_ptr<Calibration> calib){
 
     if (calib->num_change_detected >
         calib->num_change_needed) {
-      std::cerr << "PARAM CHANGE DETECTED" << std::endl;
+      StreamMessage(selfcal_debug_level) << "PARAM CHANGE DETECTED" << std::endl;
       calib->unknown_calibration = true;
       //TODO: Check this, seems like it should be num_change_needed *
       // self_cal_segment_length
       calib->unknown_calibration_start_pose
           = poses.size() - calib->num_change_needed;
-      std::cerr << "Unknown cam calibration = true with start pose " <<
+      StreamMessage(selfcal_debug_level) << "Unknown cam calibration = true with start pose " <<
                     calib->unknown_calibration_start_pose
                 << std::endl;
        calib->online_calibrator.ClearQueue();
@@ -271,11 +282,19 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
       return;
     }
 
+    if(do_adaptive_conditioning){
+      StreamMessage(selfcal_debug_level) << "Doing AAC with " << end_pose_id - start_pose_id + 1 << " poses"
+                << " and " << end_pose_id - start_active_pose + 1 << " active poses" << std::endl;
+    }
+
     // Add an extra pose to conditon the IMU
+    // This will happen when the optimization windows is the same as the active window
+    // so no landmarks were visible in the current window and also in past poses
+    // expanding the window by 1 pose will include the IMU conditioning residual
     if (use_imu && use_imu_measurements && start_active_pose == start_pose_id &&
         start_pose_id != 0) {
       start_pose_id--;
-      std::cerr << "expanding sp from " << start_pose_id - 1 << " to " << start_pose_id << std::endl;
+      StreamMessage(selfcal_debug_level) << "expanding start pose from " << start_pose_id - 1 << " to " << start_pose_id << std::endl;
     }
   }
 
@@ -312,7 +331,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           std::vector<ba::ImuMeasurementT<Scalar>> meas =
               imu_buffer.GetRange(poses[ii - 1]->time, pose->time);
 
-          /*std::cerr << "Adding imu residual between poses " << ii - 1 << std::setprecision(15) <<
+          /*StreamMessage(selfcal_debug_level) << "Adding imu residual between poses " << ii - 1 << std::setprecision(15) <<
                        " with time " << poses[ii - 1]->time << " active: " <<
                        ba.GetPose(poses[ii - 1]->opt_id[id]).is_active <<
                        " and " << ii << " with time " << pose->time <<
@@ -327,15 +346,15 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
             if (imu_cond_start_pose_id == -1 &&
                 !ba.GetPose(poses[ii - 1]->opt_id[id]).is_active &&
                 ba.GetPose(pose->opt_id[id]).is_active) {
-              // std::cerr << "Setting cond pose id to " << ii - 1 << std::endl;
+               StreamMessage(selfcal_debug_level) << "Setting cond pose id to " << ii - 1 << std::endl;
               imu_cond_start_pose_id = ii - 1;
               imu_cond_residual_id = imu_residual_ids.back();
-              // std::cerr << "Setting cond residual id to " <<
-              //              imu_cond_residual_id << std::endl;
+               StreamMessage(selfcal_debug_level) << "Setting cond residual id to " <<
+                            imu_cond_residual_id << std::endl;
             } else if (imu_cond_start_pose_id == (int)(ii - 1)) {
               imu_cond_residual_id = imu_residual_ids.back();
-              // std::cerr << "Setting cond residual id to " <<
-              //              imu_cond_residual_id << std::endl;
+               StreamMessage(selfcal_debug_level) << "Setting cond residual id to " <<
+                            imu_cond_residual_id << std::endl;
             }
           }
         }
@@ -355,7 +374,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           bool active = track->id != tracker.longest_track_id() ||
               !all_poses_active || use_imu;
           if (!active) {
-            std::cerr << "Landmark " << track->id << " inactive. " << std::endl;
+            StreamMessage(selfcal_debug_level) << "Landmark " << track->id << " inactive. " << std::endl;
           }
           track->external_id[id] =
               ba.AddLandmark(ray, pose->opt_id[id], 0, active);
@@ -392,7 +411,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
         }
 
         if (!do_adaptive_conditioning) {
-          // std::cerr << "Total proj res for pose: " << ii << ": " <<
+          // StreamMessage(selfcal_debug_level) << "Total proj res for pose: " << ii << ": " <<
           //             total_proj_res << std::endl;
         }
       }
@@ -451,7 +470,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
               ba.LandmarkOutlierRatio(track->external_id[id]);
 
 
-          if (do_outlier_rejection && !unknown_cam_calibration &&
+          if (do_outlier_rejection && !GetCalibration(Camera)->unknown_calibration &&
               poses.size() > POSES_TO_INIT) {
             if (ratio > 0.3 && track->tracked == false &&
                 (end_pose_id >= min_poses_for_imu - 1 || !use_imu)) {
@@ -485,11 +504,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
     }
   }
   if (!do_adaptive_conditioning) {
-    std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
+    StreamMessage(selfcal_debug_level) << "Rejected " << num_outliers << " outliers." << std::endl;
   }
 
   const ba::SolutionSummary<Scalar>& summary = ba.GetSolutionSummary();
-  // std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
+  // StreamMessage(selfcal_debug_level) << "Rejected " << num_outliers << " outliers." << std::endl;
 
   if (use_imu && imu_cond_start_pose_id != -1 && do_adaptive_conditioning) {
     const uint32_t cond_dims =
@@ -513,7 +532,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
     if (num_active_poses > end_pose_id) {
       num_active_poses = orig_num_aac_poses;
-       std::cerr << "Reached batch solution. resetting number of poses to " <<
+       StreamMessage(selfcal_debug_level) << "Reached batch solution. resetting number of poses to " <<
                     num_ba_poses << std::endl;
     }
 
@@ -527,7 +546,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
       if ((inertial_ratio > 1.0 || visual_ratio > 1.0) &&
           (cond_total_error <= prev_cond_error) &&
           (((prev_cond_error - cond_total_error) / prev_cond_error) > 0.00001)) {
-        num_active_poses += 30;
+        num_active_poses += 0;
       } else {
         num_active_poses = orig_num_aac_poses;
 
@@ -551,7 +570,7 @@ void UpdateCurrentPose()
     max_track_length = std::max(track->keypoints.size(), max_track_length);
   }
   current_pose->longest_track = max_track_length;
-  std::cerr << "Setting longest track for pose " << poses.size() << " to " <<
+  StreamMessage(selfcal_debug_level) << "Setting longest track for pose " << poses.size() << " to " <<
                current_pose->longest_track << std::endl;
 }
 
@@ -596,23 +615,34 @@ void  BaAndStartNewLandmarks()
   }
 
   std::shared_ptr<Calibration> cam_calib = GetCalibration(Camera);
+  cam_calib->do_self_cal = do_cam_self_cal;
+  cam_calib->self_cal_segment_length = min_poses_for_camera;
+
+
   std::shared_ptr<Calibration> imu_calib = GetCalibration(IMU);
+  imu_calib->do_self_cal = do_imu_self_cal;
+  imu_calib->self_cal_segment_length = min_poses_for_imu;
+
   std::shared_ptr<Calibration> batch_calib = GetCalibration(Batch);
 
   uint32_t keyframe_id = poses.size();
-  double batch_time = sdtrack::Tic();
-  double ba_time = 0, analyze_time = 0, queue_time = 0, snl_time = 0;
+  double batch_time = 0, ba_time = 0, analyze_time = 0, queue_time = 0, snl_time = 0;
   const uint32_t batch_end = poses.size();
 
   bool have_unknown_calib = false;
   for (auto calib : calibrations){
-    if(calib->unknown_calibration && SelfCalActive(calib)){
+    calib->online_calibrator.SetDebugLevel(selfcal_debug_level);
+    if(SelfCalActive(calib) && calib->unknown_calibration){
       have_unknown_calib = true;
       break;
     }
   }
 
+  batch_time = sdtrack::Tic();
+
   if(have_unknown_calib){
+    global_metrics.batch_calls++;
+
     // If we have an unknown calibration, do batch optimization until we
     // converge on the calibration parameters
     double score = 0;
@@ -626,7 +656,7 @@ void  BaAndStartNewLandmarks()
         ((batch_end - batch_calib->unknown_calibration_start_pose)
          > batch_calib->self_cal_segment_length)){
       if(poses.size() > min_poses_for_imu) {
-        std::cerr << "Performing batch joint optimization for the camera "
+        StreamMessage(selfcal_debug_level) << "Performing batch joint optimization for the camera "
                   << "and IMU calibration (visual + inertial)" <<
                      std::endl;
         batch_calib->online_calibrator.
@@ -648,7 +678,7 @@ void  BaAndStartNewLandmarks()
       if(has_imu && use_imu_measurements &&
          poses.size() > min_poses_for_imu) {
         // Use IMU data to estimate camera parameters
-        std::cerr << "Performing batch joint optimization for the camera " <<
+        StreamMessage(selfcal_debug_level) << "Performing batch joint optimization for the camera " <<
                      "calibration (visual + inertial)" <<
                      std::endl;
         cam_calib->online_calibrator
@@ -658,7 +688,7 @@ void  BaAndStartNewLandmarks()
         window_analyzed = true;
       } else{
         // Only visual (no IMU)
-        std::cerr << "Performing batch joint optimization for the camera "
+        StreamMessage(selfcal_debug_level) << "Performing batch joint optimization for the camera "
                   << "calibration (visual only)" <<
                      std::endl;
         cam_calib->online_calibrator
@@ -677,7 +707,7 @@ void  BaAndStartNewLandmarks()
                && ((batch_end - imu_calib->unknown_calibration_start_pose
                     ) > imu_calib->self_cal_segment_length)) {
       if (poses.size() > min_poses_for_imu) {
-        std::cerr << "Performing batch joint optimization for the IMU "
+        StreamMessage(selfcal_debug_level) << "Performing batch joint optimization for the IMU "
                   << "calibration" <<
                      std::endl;
         imu_calib->online_calibrator
@@ -699,7 +729,7 @@ void  BaAndStartNewLandmarks()
       // Priority Queue window is good enough for us to use the calibraiton
       // parameters in the actual rig:
 
-      std::cerr << "Setting new batch params from selfcal_rig to rig: "
+      StreamMessage(selfcal_debug_level) << "Setting new batch params from selfcal_rig to rig: "
                 << std::endl;
       const Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
       if(SelfCalActive(cam_calib)){
@@ -749,18 +779,18 @@ void  BaAndStartNewLandmarks()
         sdtrack::kLongCsvFmt) << ", " << score << ", " <<
         global_pq_window.mean.transpose().format(sdtrack::kLongCsvFmt) << std::endl;
 
-      std::cerr << "Batch means are: " << global_pq_window.mean.transpose() <<
+      StreamMessage(selfcal_debug_level) << "Batch means are: " << global_pq_window.mean.transpose() <<
                    std::endl;
-      std::cerr << "Batch sigmas are:\n" <<
+      StreamMessage(selfcal_debug_level) << "Batch sigmas are:\n" <<
                    global_pq_window.covariance << std::endl;
-      std::cerr << "Batch score: " << score << std::endl;
+      StreamMessage(selfcal_debug_level) << "Batch score: " << score << std::endl;
 
       // If the determinant is smaller than a heuristic, switch to cam self_cal.
       if ((SelfCalActive(cam_calib)) &&
           ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
           ((batch_end - cam_calib->unknown_calibration_start_pose)
            > cam_calib->self_cal_segment_length * 2))) {
-        std::cerr << "Determinant small enough, switching to cam self-cal" <<
+        StreamMessage(selfcal_debug_level) << "Determinant small enough, switching to cam self-cal" <<
                      std::endl;
         cam_calib->unknown_calibration = false;
       }
@@ -771,14 +801,14 @@ void  BaAndStartNewLandmarks()
           ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
           ((batch_end - imu_calib->unknown_calibration_start_pose)
            > imu_calib->self_cal_segment_length * 2))) {
-        std::cerr << "Determinant small enough, switching to imu self-cal" <<
+        StreamMessage(selfcal_debug_level) << "Determinant small enough, switching to imu self-cal" <<
                      std::endl;
         imu_calib->unknown_calibration = false;
       }
     }else{
     // The number of poses in the optimization has not yet reached the
     // minimum
-    std::cerr << "Not enough poses to estimate parameters. "
+    StreamMessage(selfcal_debug_level) << "Not enough poses to estimate parameters. "
               << "Num poses since unknown cam calib: "
               << batch_end - cam_calib->unknown_calibration_start_pose
               << " min poses for camera: "
@@ -790,8 +820,8 @@ void  BaAndStartNewLandmarks()
     }
 
   }// END Batch Mode
-
   batch_time = sdtrack::Toc(batch_time);
+
 
   if (do_bundle_adjustment) {
     ba_time = sdtrack::Tic();
@@ -817,15 +847,19 @@ void  BaAndStartNewLandmarks()
               batch_end - cam_calib->unknown_calibration_start_pose : num_ba_poses);
     }
 
-    std::cerr << "ba_size: " << ba_size << std::endl;
+    StreamMessage(selfcal_debug_level) << "ba_size: " << ba_size << std::endl;
 
+    // Do bundle adjustment on just poses and landmarks, using the lastest
+    // calibration parameters. This optimizes the pose graph and landmarks.
     if (has_imu && use_imu_measurements &&
         poses.size() > min_poses_for_imu) {
-      std::cerr << "doing VI BA." << std::endl;
+      StreamMessage(selfcal_debug_level) << "doing VI BA." << std::endl;
+      global_metrics.ba_calls++;
       DoBundleAdjustment(vi_bundle_adjuster, true, false, ba_size, 0,
                          ba_imu_residual_ids, rig);
     } else {
-      std::cerr << "doing visual BA." << std::endl;
+      StreamMessage(selfcal_debug_level) << "doing visual BA." << std::endl;
+      global_metrics.ba_calls++;
       DoBundleAdjustment(bundle_adjuster, false, false, ba_size, 0,
                          ba_imu_residual_ids, rig);
     }
@@ -845,6 +879,7 @@ void  BaAndStartNewLandmarks()
     }
     if (should_do_self_cal) {
       analyze_time = sdtrack::Tic();
+      global_metrics.analyze_calls++;
 
       // Check if camera parameters self-cal is active and if we have
       // enough poses to run the optimizaiton
@@ -856,30 +891,34 @@ void  BaAndStartNewLandmarks()
         uint32_t end_pose = poses.size();
         if(has_imu && use_imu_measurements &&
            poses.size() > min_poses_for_imu) {
-          std::cerr << "Analysing calibration window for camera parameters (visual + imu) " <<
+          StreamMessage(selfcal_debug_level) << "Analysing calibration window for camera parameters (visual + imu) " <<
                        std::endl;
           cam_calib->online_calibrator.AnalyzeCalibrationWindow<true, false>(
                 poses, current_tracks, start_pose, end_pose,
                 cam_calib->candidate_window, 50);
         } else {
-          std::cerr << "Analysing calibration window for camera parameters (visual) " <<
+          StreamMessage(selfcal_debug_level) << "Analysing calibration window for camera parameters (visual) " <<
                        std::endl;
           cam_calib->online_calibrator.AnalyzeCalibrationWindow<false, false>(
                 poses, current_tracks, start_pose, end_pose,
                 cam_calib->candidate_window, 50);
         }
         // Analyse the candidate window and add to the priority queue if it's good enough
+        // ZZZZZZZZZZZZZZZZZZZ: TEMP: Uncomment this!!!!
         cam_calib->online_calibrator.AnalyzeCalibrationWindow(
               cam_calib->candidate_window);
       }
 
+
+      // Check if IMU parameters self-cal is active and if we have
+      // enough poses to run the optimizaiton
       if(SelfCalActive(imu_calib) &&
          (batch_end - imu_calib->unknown_calibration_start_pose) >
          imu_calib->self_cal_segment_length){
         uint32_t start_pose =
             std::max(0, (int)poses.size() - (int)imu_calib->self_cal_segment_length);
         uint32_t end_pose = poses.size();
-        std::cerr << "Analysing calibration window for IMU parameters from pose " <<
+        StreamMessage(selfcal_debug_level) << "Analysing calibration window for IMU parameters from pose " <<
                      start_pose << " to pose " << end_pose << " (visual + imu)" <<
                      std::endl;
         imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
@@ -908,14 +947,7 @@ void  BaAndStartNewLandmarks()
         imu_calib->last_window_kl_divergence = 0;
       }
 
-      for(auto calib : calibrations){
-        if(SelfCalActive(calib) &&
-           calib->candidate_window.mean.rows() != 0){
-            cam_calib->current_window = calib->candidate_window;
-        }
-      }
-
-      std::cerr << "KL divergence for last cam window: " <<
+      StreamMessage(selfcal_debug_level) << "KL divergence for last cam window: " <<
                    cam_calib->last_window_kl_divergence
                 << " num window changes: " <<
                    (int)cam_calib->num_change_detected << std::endl;
@@ -923,17 +955,23 @@ void  BaAndStartNewLandmarks()
       for(std::shared_ptr<Calibration> calib : calibrations){
         if(SelfCalActive(calib)){
 
+          if(calib->candidate_window.mean.rows() != 0){
+           cam_calib->current_window = calib->candidate_window;
+          }
+
           // Treat cases where the KL divergence was not computable
           if (isnan(calib->last_window_kl_divergence) ||
               isinf(calib->last_window_kl_divergence)) {
             calib->last_window_kl_divergence = 0;
           }
 
-          // CHANGE DETECTION:
+          // TODO: Re-enable change detection
+
+          /*-----CHANGE DETECTION-----*/
           // Check if there has been a change in calibration parameters.
           // If so, clear the priority queue.
           //CheckParameterChange(calib);
-          // TODO: Re-enable change detection
+
         }
       }
 
@@ -955,8 +993,8 @@ void  BaAndStartNewLandmarks()
         bool analysed_imu_calib = false;
         bool analysed_cam_calib = false;
 
-        queue_time = sdtrack::Toc(ba_time);
-
+        queue_time = sdtrack::Tic();
+        global_metrics.queue_calls++;
         bool apply_results = false;
         for(auto calib : calibrations){
           if(calib->online_calibrator.needs_update() &&
@@ -975,16 +1013,19 @@ void  BaAndStartNewLandmarks()
         if (SelfCalActive(imu_calib)
             && imu_calib->online_calibrator.needs_update()) {
           analysed_imu_calib = true;
+          StreamMessage(selfcal_debug_level) << "Analysing IMU params PQ..." << std::endl;
           imu_calib->online_calibrator.AnalyzePriorityQueue<true, true>(
                 poses, current_tracks, imu_calib->pq_window, 50,
                 !imu_calib->unknown_calibration);
         } if (cam_calib->online_calibrator.needs_update()){
           analysed_cam_calib = true;
           if(has_imu && use_imu_measurements){
+            StreamMessage(selfcal_debug_level) << "Analysing Cam params PQ (visual + imu)..." << std::endl;
             cam_calib->online_calibrator.AnalyzePriorityQueue<true, false>(
                   poses, current_tracks, cam_calib->pq_window, 50,
                   !cam_calib->unknown_calibration);
           }else {
+            StreamMessage(selfcal_debug_level) << "Analysing Cam params PQ (visual)..." << std::endl;
             cam_calib->online_calibrator.AnalyzePriorityQueue<false, false>(
                   poses, current_tracks, cam_calib->pq_window, 50,
                   !cam_calib->unknown_calibration);
@@ -1023,7 +1064,7 @@ void  BaAndStartNewLandmarks()
         }
 
         if(analysed_cam_calib){
-        std::cerr << "Analyzed camera priority queue with mean " <<
+        StreamMessage(selfcal_debug_level) << "Analyzed camera priority queue with mean " <<
                      cam_calib->pq_window.mean.transpose() << " and cov\n " <<
                      cam_calib->pq_window.covariance << std::endl;
         cam_calib->online_calibrator.SetPriorityQueueDistribution(
@@ -1032,7 +1073,7 @@ void  BaAndStartNewLandmarks()
         }
 
         if(analysed_imu_calib){
-        std::cerr << "Analyzed IMU priority queue with mean " <<
+        StreamMessage(selfcal_debug_level) << "Analyzed IMU priority queue with mean " <<
                      imu_calib->pq_window.mean.transpose() << " and cov\n " <<
                      imu_calib->pq_window.covariance << std::endl;
         imu_calib->online_calibrator.SetPriorityQueueDistribution(
@@ -1046,18 +1087,18 @@ void  BaAndStartNewLandmarks()
         const double imu_score =
             imu_calib->online_calibrator.GetWindowScore(imu_calib->pq_window);
 
-        // Write this to the pq file.
-        std::ofstream("cam_pq.txt", std::ios_base::app) << keyframe_id << ", " <<
-          cam_calib->pq_window.covariance.diagonal().transpose().format(
-            sdtrack::kLongCsvFmt) << ", " << cam_score << ", " <<
-          cam_calib->pq_window.mean.transpose().format(sdtrack::kLongCsvFmt) << ", " <<
-          cam_calib->last_window_kl_divergence << std::endl;
+//        // Write this to the pq file.
+//        std::ofstream("cam_pq.txt", std::ios_base::app) << keyframe_id << ", " <<
+//          cam_calib->pq_window.covariance.diagonal().transpose().format(
+//            sdtrack::kLongCsvFmt) << ", " << cam_score << ", " <<
+//          cam_calib->pq_window.mean.transpose().format(sdtrack::kLongCsvFmt) << ", " <<
+//          cam_calib->last_window_kl_divergence << std::endl;
 
-        std::ofstream("imu_pq.txt", std::ios_base::app) << keyframe_id << ", " <<
-          imu_calib->pq_window.covariance.diagonal().transpose().format(
-            sdtrack::kLongCsvFmt) << ", " << imu_score << ", " <<
-          imu_calib->pq_window.mean.transpose().format(sdtrack::kLongCsvFmt) << ", " <<
-          imu_calib->last_window_kl_divergence << std::endl;
+//        std::ofstream("imu_pq.txt", std::ios_base::app) << keyframe_id << ", " <<
+//          imu_calib->pq_window.covariance.diagonal().transpose().format(
+//            sdtrack::kLongCsvFmt) << ", " << imu_score << ", " <<
+//          imu_calib->pq_window.mean.transpose().format(sdtrack::kLongCsvFmt) << ", " <<
+//          imu_calib->last_window_kl_divergence << std::endl;
 
         if (compare_self_cal_with_batch && !cam_calib->unknown_calibration
             && SelfCalActive(cam_calib)) {
@@ -1081,15 +1122,15 @@ void  BaAndStartNewLandmarks()
             batch_window.mean.transpose().format(sdtrack::kLongCsvFmt) <<
             std::endl;
 
-          std::cerr << "Batch means are: " << batch_window.mean.transpose() <<
+          StreamMessage(selfcal_debug_level) << "Batch means are: " << batch_window.mean.transpose() <<
                        std::endl;
-          std::cerr << "Batch sigmas are:\n" <<
+          StreamMessage(selfcal_debug_level) << "Batch sigmas are:\n" <<
                        batch_window.covariance << std::endl;
-          std::cerr << "Batch score: " << batch_score << std::endl;*/
+          StreamMessage(selfcal_debug_level) << "Batch score: " << batch_score << std::endl;*/
         }
 
         queue_time = sdtrack::Toc(queue_time);
-      }
+      }// END PQ UPDATE
     }
 
    /* if ((do_cam_self_cal || ImuSelfCalActive()) && current_window.mean.rows() != 0) {
@@ -1100,17 +1141,38 @@ void  BaAndStartNewLandmarks()
         ", " << last_window_kl_divergence << ", " << current_window.score <<
         std::endl;
     }*/
-  }
+  }// END BUNDLE ADJUSTMENT
 
   if (do_start_new_landmarks) {
     snl_time = sdtrack::Tic();
     tracker.StartNewLandmarks();
+    global_metrics.snl_calls++;
     snl_time = sdtrack::Toc(snl_time);
   }
 
-  std::cerr << "Timings batch: " << batch_time << " ba: " << ba_time <<
+  StreamMessage(selfcal_debug_level) << "Timings batch: " << batch_time << " ba: " << ba_time <<
                " analyze: " << analyze_time << " queue: " << queue_time <<
                " snl: " << snl_time << std::endl;
+
+  global_metrics.batch_time += batch_time;
+  global_metrics.ba_time += ba_time;
+  global_metrics.analyze_time += analyze_time;
+  global_metrics.queue_time += queue_time;
+  global_metrics.snl_time += snl_time;
+  double total_time = GetTotalTime(global_metrics);
+
+  StreamMessage(selfcal_debug_level-1) << "Global timings ("<< total_time << ") -> batch: "
+            << global_metrics.batch_time << "(" << global_metrics.batch_time/total_time*100
+            << "%)"
+            << " ba: " << global_metrics.ba_time << " (" << global_metrics.ba_time/total_time*100 << "%)"
+               " analyze: " << global_metrics.analyze_time << " (" << global_metrics.analyze_time/total_time*100 << "%)"
+            << " queue: " <<  global_metrics.queue_time << " (" << global_metrics.queue_time/total_time*100 << "%)" <<
+               " snl: " << global_metrics.snl_time << " (" << global_metrics.snl_time/total_time*100 << "%)" << std::endl;
+  StreamMessage(selfcal_debug_level-1) << "Global time/call -> batch: " << (global_metrics.batch_calls > 0 ? global_metrics.batch_time/global_metrics.batch_calls:0)
+            << " ba: " << global_metrics.ba_time/global_metrics.ba_calls <<
+               " analyze: " << (global_metrics.analyze_calls > 0 ? global_metrics.analyze_time/global_metrics.analyze_calls : 0)
+            << " queue: " << (global_metrics.queue_calls > 0 ? global_metrics.queue_time/global_metrics.queue_calls : 0) <<
+               " snl: " <<  global_metrics.snl_time/global_metrics.snl_calls << std::endl;
 
   std::ofstream("timings.txt", std::ios_base::app) << keyframe_id << ", " <<
     batch_time << ", " << ba_time << ", " << analyze_time << ", " <<
@@ -1171,7 +1233,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       // First pose, align roll and pich to IMU, velocity and bias to zero
       if (has_imu && use_imu_measurements && imu_buffer.elements.size() > 0) {
         Eigen::Vector3t down = -imu_buffer.elements.front().a.normalized();
-        std::cerr << "Down vector based on first imu meas: " <<
+        StreamMessage(selfcal_debug_level) << "Down vector based on first imu meas: " <<
                      down.transpose() << std::endl;
 
         // compute path transformation
@@ -1213,7 +1275,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   if (((double)tracker.num_successful_tracks() / (double)num_features) > 0.3) {
     guess = prev_delta_t_ba * prev_t_ba;
   } else {
-    std::cerr << "Do not have good number of tracks, using Identity for guess."
+    StreamMessage(selfcal_debug_level) << "Do not have good number of tracks, using Identity for guess."
                " Ratio: " << ((double)tracker.num_successful_tracks() / (double)num_features)
               << std::endl;
     guess = Sophus::SE3d();
@@ -1245,7 +1307,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
           vi_bundle_adjuster.GetImuCalibration().g_vec, imu_poses);
 
     if (imu_poses.size() > 1) {
-      std::cerr << "Using IMU integration for guess." << std::endl;
+      StreamMessage(selfcal_debug_level) << "Using IMU integration for guess." << std::endl;
       ba::ImuPoseT<Scalar>& last_pose = imu_poses.back();
       guess = last_pose.t_wp.inverse() *
           imu_poses.front().t_wp;
@@ -1257,7 +1319,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
   }
 
-  std::cerr << "Guess:\n " << guess.matrix() << std::endl;
+  StreamMessage(selfcal_debug_level) << "Guess:\n " << guess.matrix() << std::endl;
 
   bool tracking_failed = false;
   {
@@ -1274,7 +1336,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     if ((tracker.num_successful_tracks() < 10) &&
         has_imu && use_imu_measurements) {
-      std::cerr << "Tracking failed. " <<
+      StreamMessage(selfcal_debug_level) << "Tracking failed. " <<
                    tracker.num_successful_tracks() <<
                    " successful tracks. Using guess." << std::endl;
       tracking_failed = true;
@@ -1297,7 +1359,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     bool keyframe_condition = track_ratio < 0.8 || total_trans > 0.2 ||
         total_rot > 0.1 /*|| tracker.num_successful_tracks() < 64*/;
 
-    std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
+    StreamMessage(selfcal_debug_level) << "\tRatio: " << track_ratio << " trans: " << total_trans <<
                  " rot: " << total_rot << std::endl;
 
     {
@@ -1310,7 +1372,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         }
       }
 
-      std::cerr << "is keyframe: " << is_keyframe << std::endl;
+      StreamMessage(selfcal_debug_level) << "is keyframe: " << is_keyframe << std::endl;
 
       prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
 
@@ -1325,7 +1387,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     tracker.AddKeyframe();
   }
 
-  std::cerr << "Num successful tracks: " << tracker.num_successful_tracks() <<
+  StreamMessage(selfcal_debug_level) << "Num successful tracks: " << tracker.num_successful_tracks() <<
                " keyframe tracks: " << keyframe_tracks << std::endl;
 
   if (!is_manual_mode) {
@@ -1415,11 +1477,11 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 //  }
 
   if (is_keyframe) {
-    std::cerr << "KEYFRAME." << std::endl;
+    StreamMessage(selfcal_debug_level) << "KEYFRAME." << std::endl;
     keyframe_tracks = tracker.GetCurrentTracks().size();
-    std::cerr << "New keyframe tracks: " << keyframe_tracks << std::endl;
+    StreamMessage(selfcal_debug_level) << "New keyframe tracks: " << keyframe_tracks << std::endl;
   } else {
-    std::cerr << "NOT KEYFRAME." << std::endl;
+    StreamMessage(selfcal_debug_level) << "NOT KEYFRAME." << std::endl;
   }
 
   current_tracks = &tracker.GetCurrentTracks();
@@ -1430,7 +1492,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                           _MM_MASK_DIV_ZERO));
 #endif
 
-  std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
+  StreamMessage(selfcal_debug_level) << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
                " FPS: " << frame_count / sdtrack::Toc(start_time) << std::endl;
 }
 
@@ -1567,7 +1629,7 @@ void Run()
                                 imu_extra_integration_time);
         res.IntegrateResidual(pose, meas, pose.b.head<3>(), pose.b.tail<3>(),
                               imu.g_vec, imu_poses);
-        // std::cerr << "integrating residual with " << res.measurements.size() <<
+        // StreamMessage(selfcal_debug_level) << "integrating residual with " << res.measurements.size() <<
         //              " measurements " << std::endl;
         if (pose.is_active) {
           glColor3f(1.0, 0.0, 1.0);
@@ -1660,7 +1722,7 @@ void InitGui() {
   pangolin::RegisterKeyPressCallback('u', [&]() {
     GetCalibration(Camera)->unknown_calibration = true;
     GetCalibration(Camera)->unknown_calibration_start_pose = -2;
-    std::cerr << "Unknown camera calibration = true with start pose " <<
+    StreamMessage(selfcal_debug_level) << "Unknown camera calibration = true with start pose " <<
                  GetCalibration(Camera)->unknown_calibration_start_pose
               << std::endl;
     GetCalibration(Camera)->online_calibrator.ClearQueue();
@@ -1673,17 +1735,17 @@ void InitGui() {
 
   pangolin::RegisterKeyPressCallback('B', [&]() {
     do_bundle_adjustment = !do_bundle_adjustment;
-    std::cerr << "Do BA:" << do_bundle_adjustment << std::endl;
+    StreamMessage(selfcal_debug_level) << "Do BA:" << do_bundle_adjustment << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('k', [&]() {
     is_keyframe = !is_keyframe;
-    std::cerr << "is_keyframe:" << is_keyframe << std::endl;
+    StreamMessage(selfcal_debug_level) << "is_keyframe:" << is_keyframe << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('S', [&]() {
     do_start_new_landmarks = !do_start_new_landmarks;
-    std::cerr << "Do SNL:" << do_start_new_landmarks << std::endl;
+    StreamMessage(selfcal_debug_level) << "Do SNL:" << do_start_new_landmarks << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('2', [&]() {
@@ -1730,17 +1792,17 @@ void InitGui() {
 
   pangolin::RegisterKeyPressCallback('l', [&]() {
     optimize_landmarks = !optimize_landmarks;
-    std::cerr << "optimize landmarks: " << optimize_landmarks << std::endl;
+    StreamMessage(selfcal_debug_level) << "optimize landmarks: " << optimize_landmarks << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('c', [&]() {
     optimize_pose = !optimize_pose;
-    std::cerr << "optimize pose: " << optimize_pose << std::endl;
+    StreamMessage(selfcal_debug_level) << "optimize pose: " << optimize_pose << std::endl;
   });
 
   pangolin::RegisterKeyPressCallback('m', [&]() {
     is_manual_mode = !is_manual_mode;
-    std::cerr << "Manual mode:" << is_manual_mode << std::endl;
+    StreamMessage(selfcal_debug_level) << "Manual mode:" << is_manual_mode << std::endl;
   });
 
   // set up the plotters.
@@ -1775,7 +1837,7 @@ void InitGui() {
       plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
       params_plot_view->AddDisplay(*plot_views[ii]);
       double param = rig.cameras_[0]->GetParams()[ii];
-      pangolin::XYRange<float> range(0, 500, param - param * 0.5,
+      pangolin::XYRange range(0, 500, param - param * 0.5,
                               param + param * 0.5);
       plot_views[ii]->SetDefaultView(range);
       plot_views[ii]->SetViewSmooth(range);
@@ -1800,7 +1862,7 @@ void InitGui() {
       for (size_t ii = num_cam_params; ii < 6 + num_cam_params; ii++) {
         plot_views[ii] = new pangolin::Plotter(&plot_logs[ii]);
         imu_plot_view->AddDisplay(*plot_views[ii]);
-        pangolin::XYRange<float> range(0, 500, -0.5, 0.5);
+        pangolin::XYRange range(0, 500, -0.5, 0.5);
         plot_views[ii]->SetDefaultView(range);
         plot_views[ii]->SetViewSmooth(range);
         plot_views[ii]->ToggleTracking();
@@ -1849,7 +1911,6 @@ bool LoadCameras(GetPot& cl)
     imu_device.RegisterIMUDataCallback(&ImuCallback);
   }
 
-
   // If we require self-calibration from an unknown initial calibration, then
   // perturb the values (camera calibraiton parameters only)
   if (unknown_cam_calibration) {
@@ -1858,8 +1919,8 @@ bool LoadCameras(GetPot& cl)
     const double fov_rads = 90 * M_PI / 180.0;
     const double f_x =
         0.5 * rig.cameras_[0]->Height() / tan(fov_rads / 2);
-    std::cerr << "Changing fx from " << params[0] << " to " << f_x << std::endl;
-    std::cerr << "Changing fy from " << params[1] << " to " << f_x << std::endl;
+    StreamMessage(selfcal_debug_level) << "Changing fx from " << params[0] << " to " << f_x << std::endl;
+    StreamMessage(selfcal_debug_level) << "Changing fy from " << params[1] << " to " << f_x << std::endl;
     params[0] = f_x;
     params[1] = f_x;
     params[2] = rig.cameras_[0]->Width() / 2;
@@ -1918,10 +1979,10 @@ int main(int argc, char** argv) {
 
 //  if((R_1.matrix()*R_2.matrix()).isApprox(
 //    Sophus::SO3d::exp(R_1.Adj()*lie_R2).matrix() * R_1.matrix())){
-//    std::cerr << "the adjoint works as expected..." << std::endl;
+//    StreamMessage(selfcal_debug_level) << "the adjoint works as expected..." << std::endl;
 
 //  }else{
-//    std::cerr << "it did not work..." << std::endl;
+//    StreamMessage(selfcal_debug_level) << "it did not work..." << std::endl;
 //  }
 
 //  Sophus::SE3t T(Sophus::SO3t(M_PI, M_PI_4, M_PI_2),
@@ -1934,16 +1995,18 @@ int main(int argc, char** argv) {
 //  Sophus::SE3d pose(initial_rotation,
 //                    Eigen::Vector3d::Zero());
 
-//  std::cerr << "pose: " << std::endl << pose.matrix()
+//  StreamMessage(selfcal_debug_level) << "pose: " << std::endl << pose.matrix()
 //            << std::endl;
-//  std::cerr << "pose euler angles: \n" << pose.rotationMatrix().eulerAngles(0,1,2) << std::endl;
+//  StreamMessage(selfcal_debug_level) << "pose euler angles: \n" << pose.rotationMatrix().eulerAngles(0,1,2) << std::endl;
 
 
-//  std::cerr << "T: " << std::endl << T.matrix() << std::endl;
-//  std::cerr << "T euler angles: \n" << T.rotationMatrix().eulerAngles(0,1,2) << std::endl;
+//  StreamMessage(selfcal_debug_level) << "T: " << std::endl << T.matrix() << std::endl;
+//  StreamMessage(selfcal_debug_level) << "T euler angles: \n" << T.rotationMatrix().eulerAngles(0,1,2) << std::endl;
 
 
 //  exit(1);
+
+  google::InitGoogleLogging(argv[0]);
 
   // Clear the log files.
   {
@@ -1967,8 +2030,10 @@ int main(int argc, char** argv) {
     is_running = true;
   }
 
-  LOG(INFO) << "Initializing camera...";
+
+  StreamMessage(selfcal_debug_level) << "Initializing camera..." << std::endl;
   LoadCameras(cl);
+
 
   pyramid_levels = 3;
   patch_size = 7;
@@ -1993,6 +2058,7 @@ int main(int argc, char** argv) {
   tracker.Initialize(keypoint_options, tracker_options, &rig);
 
 
+
   // Initialize the online calibration component.
   Eigen::VectorXd camera_weights(rig.cameras_[0]->NumParams());
   if (camera_weights.rows() > 4) {
@@ -2010,35 +2076,41 @@ int main(int argc, char** argv) {
   batch_weights << camera_weights, imu_weights;
 
 
+  InitGui();
+
   // Initialize camera calibration (camera intrisnsics)
   std::shared_ptr<Calibration> cam_calib(new Calibration);
   cam_calib->type = CalibrationType::Camera;
-  cam_calib->do_self_cal = do_cam_self_cal;
-  cam_calib->unknown_calibration = unknown_cam_calibration;
   cam_calib->num_self_cam_segments = 5;
-  cam_calib->self_cal_segment_length = 10;
+  cam_calib->do_self_cal = do_cam_self_cal;
+  cam_calib->self_cal_segment_length = min_poses_for_camera;
+  cam_calib->unknown_calibration = unknown_cam_calibration;
   cam_calib->plot_graphs = true;
   cam_calib->online_calibrator.Init
       (&aac_mutex, &selfcal_rig, cam_calib->num_self_cam_segments,
                     cam_calib->self_cal_segment_length, camera_weights,
                     imu_time_offset, &imu_buffer);
 
+
   calibrations.push_back(cam_calib);
+
 
   // Initialize inertial calibration (camera to imu: Tvs)
   std::shared_ptr<Calibration> imu_calib(new Calibration);
   imu_calib->type = CalibrationType::IMU;
-  imu_calib->do_self_cal = do_imu_self_cal;
-  imu_calib->unknown_calibration = unknown_imu_calibration;
   imu_calib->num_self_cam_segments = 10;
+  imu_calib->do_self_cal = do_imu_self_cal;
   imu_calib->self_cal_segment_length = min_poses_for_imu;
+  imu_calib->unknown_calibration = unknown_imu_calibration;
   imu_calib->plot_graphs = false;
   imu_calib->online_calibrator.Init
       (&aac_mutex, &selfcal_rig, imu_calib->num_self_cam_segments,
                              imu_calib->self_cal_segment_length, imu_weights,
                              imu_time_offset, &imu_buffer);
 
+
   calibrations.push_back(imu_calib);
+
 
   // Initialize batch calibration queue (camera intrinsics + Tvs)
   std::shared_ptr<Calibration> batch_calib(new Calibration);
@@ -2054,10 +2126,6 @@ int main(int argc, char** argv) {
                              imu_time_offset, &imu_buffer);
   calibrations.push_back(batch_calib);
 
-  InitGui();
-
-  //////////////////////////
-  /// ZZZZZZZZZZZZZZZZZZ: Get rid of this. Only valid for ICRA test rig
   //imu_time_offset = -0.0697;
 
   aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));

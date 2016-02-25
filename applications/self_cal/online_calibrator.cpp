@@ -71,7 +71,7 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
 
   // Now compare the two jacobians.
   auto jacobian = cam->dTransfer_dparams(t_ba, pix, rho);
-  std::cerr << "jacobian:\n" << jacobian << "\n jacobian_fd:\n" <<
+  StreamMessage(debug_level) << "jacobian:\n" << jacobian << "\n jacobian_fd:\n" <<
                jacobian_fd << "\n error: " << (jacobian - jacobian_fd).norm() <<
                std::endl;
 }
@@ -132,7 +132,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     if (apply_results) {
       if(DoTvs){
         rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
-        std::cerr << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix()
+        StreamMessage(debug_level) << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix()
                   << std::endl;
       }
     } else {
@@ -185,7 +185,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       std::vector<ba::ImuMeasurementT<Scalar>> meas =
           imu_buffer->GetRange(poses[ii - 1]->time, pose->time);
 
-      /*std::cerr << "Adding OC imu residual between poses " << ii - 1 << " with "
+      /*StreamMessage(debug_level) << "Adding OC imu residual between poses " << ii - 1 << " with "
                  " time " << poses[ii - 1]->time <<  " and " << ii <<
                  " with time " << pose->time << " with " << meas.size() <<
                  " measurements" << std::endl;*/
@@ -197,7 +197,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       // If using an IMU and this is the first pose in the window, regularize
       // the translation and gravity rotation so there are no nullspaces
       if (ii == start_active_pose) {
-        /*std::cerr << "OC regularizing gravity and trans and bias of pose " <<
+        /*StreamMessage(debug_level) << "OC regularizing gravity and trans and bias of pose " <<
                      pose->opt_id[ba_id_] << std::endl;*/
         ba.RegularizePose(pose->opt_id[ba_id_], true, true, false, false);
       }
@@ -217,7 +217,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
         (UseImu ? true : track->id != longest_track->id);
       track->external_id[ba_id_] =
           ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
-      // std::cerr << "Adding lm with opt_id " << track->external_id << " and "
+      // StreamMessage(debug_level) << "Adding lm with opt_id " << track->external_id << " and "
       //              " x_r " << ray.transpose() << " and x_orig: " <<
       //              x_r_orig_->transpose() << std::endl;
     }
@@ -248,7 +248,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
 bool OnlineCalibrator::AnalyzeCalibrationWindow(
     CalibrationWindow &new_window)
 {
-  std::cerr << "Analyzing window with score " << new_window.score <<
+  StreamMessage(debug_level) << "Analyzing window with score " << new_window.score <<
                " start: " << new_window.start_index << " end: " <<
                new_window.end_index << std::endl;
 
@@ -266,14 +266,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   uint32_t num_overlaps = 0;
   for (size_t ii = 0; ii < windows_.size() ; ++ii){
     CalibrationWindow& window = windows_[ii];
-     std::cerr << "\t comparing with window " << ii << " with score : " <<
+     StreamMessage(debug_level) << "\t comparing with window " << ii << " with score : " <<
                   windows_[ii].score << " start " <<  windows_[ii].start_index <<
                   " end " << windows_[ii].end_index << std::endl;
     if (!((new_window.start_index < window.start_index && new_window.end_index <
            window.start_index) || (new_window.start_index > window.end_index &&
                                    new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
       num_overlaps++;
-      std::cerr << "Overlap detected between " << window.start_index << ", " <<
+      StreamMessage(debug_level) << "Overlap detected between " << window.start_index << ", " <<
                    window.end_index << " and " << new_window.start_index <<
                    ", " << new_window.end_index << std::endl;
 
@@ -281,7 +281,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     }
 
     if (num_overlaps > 1) {
-      std::cerr << "Num overlaps: " << num_overlaps << " rejecting window. " <<
+      StreamMessage(debug_level) << "Num overlaps: " << num_overlaps << " rejecting window. " <<
                    std::endl;
       // Then this window intersects with more than one other window.
       // We cannot continue.
@@ -299,14 +299,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   if (windows_.size() < queue_length_) {
     if (num_overlaps == 0) {
       windows_.push_back(new_window);
-      std::cerr << "Pushing back non overlapping window into position " <<
+      StreamMessage(debug_level) << "Pushing back non overlapping window into position " <<
                    windows_.size() << std::endl;
       needs_update_ = true;
       return true;
     } else {
       // If the queue is not full yet, there is no reason to add overlapping
       // windows.
-      std::cerr << "Rejecting window as queue is incomplete and window "
+      StreamMessage(debug_level) << "Rejecting window as queue is incomplete and window "
                    "overlaps" << std::endl;
       return false;
     }
@@ -318,20 +318,20 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       // the overlapping window otherwise information will be double counted.
       max_id = overlap_id;
       max_score = windows_[max_id].score;
-      std::cerr << "Overlapping with 1 segment. Using overlapping score " <<
+      StreamMessage(debug_level) << "Overlapping with 1 segment. Using overlapping score " <<
                    max_score << " and id " << max_id << std::endl;
     }
 
     // Calculate the margin by which this candidate window beats what's in the
     // priority queue (or the window it overlaps with)
     const double margin = (max_score - new_window.score) / max_score;
-    std::cerr << "Max score: " << max_score<< " margin: " << margin*100
+    StreamMessage(debug_level) << "Max score: " << max_score<< " margin: " << margin*100
               << "%" << std::endl;
 
     // Replace it if it beats a non-overlapping window.
     if (max_id != UINT_MAX && margin > 0.05) {
       const CalibrationWindow& old_window = windows_[max_id];
-      std::cerr << "Replaced window at idx " << max_id << " with score " <<
+      StreamMessage(debug_level) << "Replaced window at idx " << max_id << " with score " <<
                    old_window.score << " start: " << old_window.start_index <<
                    " end: " << old_window.end_index << " with score " <<
                    new_window.score << " start: " << new_window.start_index <<
@@ -399,13 +399,13 @@ double OnlineCalibrator::ComputeYao1965(
 
   }
   if (p_score < 0.5 || isnan(p_score) || isinf(p_score) || p_score == 1.0) {
-    std::cerr << "computing p score for f " << f << " p: " << p << " n0 " <<
+    StreamMessage(debug_level) << "computing p score for f " << f << " p: " << p << " n0 " <<
                  n0 << " n1 " << n1 << " with t^2 " << t2 <<
                  " p_score: " << p_score << std::endl;
-    std::cerr << "with cov0:\n" << window0.covariance << std::endl;
-    std::cerr << "with mean0:\n" << window0.mean.transpose() << std::endl;
-    std::cerr << "with cov1:\n" << window1.covariance << std::endl;
-    std::cerr << "with mean1:\n" << window1.mean.transpose() << std::endl;
+    StreamMessage(debug_level) << "with cov0:\n" << window0.covariance << std::endl;
+    StreamMessage(debug_level) << "with mean0:\n" << window0.mean.transpose() << std::endl;
+    StreamMessage(debug_level) << "with cov1:\n" << window1.covariance << std::endl;
+    StreamMessage(debug_level) << "with mean1:\n" << window1.mean.transpose() << std::endl;
   }
   return p_score;
 }
@@ -442,13 +442,13 @@ double OnlineCalibrator::ComputeNelVanDerMerwe1986(
   const double p_score = compute_p_score(f, p, v - p + 1);
 
   if (p_score < 0.1 || isnan(p_score) || isinf(p_score)) {
-    std::cerr << "computing p score for f " << f << " p: " << p << " n0 " <<
+    StreamMessage(debug_level) << "computing p score for f " << f << " p: " << p << " n0 " <<
                  n0 << " n1 " << n1 << " with t^2 " << t2 <<
                  " p_score: " << p_score << std::endl;
-    std::cerr << "with cov0:\n" << window0.covariance << std::endl;
-    std::cerr << "with mean0:\n" << window0.mean.transpose() << std::endl;
-    std::cerr << "with cov1:\n" << window1.covariance << std::endl;
-    std::cerr << "with mean1:\n" << window1.mean.transpose() << std::endl;
+    StreamMessage(debug_level) << "with cov0:\n" << window0.covariance << std::endl;
+    StreamMessage(debug_level) << "with mean0:\n" << window0.mean.transpose() << std::endl;
+    StreamMessage(debug_level) << "with cov1:\n" << window1.covariance << std::endl;
+    StreamMessage(debug_level) << "with mean1:\n" << window1.mean.transpose() << std::endl;
   }
   return p_score;
 }
@@ -495,11 +495,11 @@ double OnlineCalibrator::ComputeKlDivergence(
       covariance_weights_.array() * window0.mean.array();
   const Eigen::VectorXd mean1 =
       covariance_weights_.array() * window1.mean.array();
-  // std::cerr << "\tComputing KL divergence between\n " << cov0 <<
+  // StreamMessage(debug_level) << "\tComputing KL divergence between\n " << cov0 <<
   //              "\t \n and \n\t" << cov1 << std::endl;
   const Eigen::VectorXd mean1_sub_mean0 = mean1 - mean0;
-  // std::cerr << "\tMean diff. is " << mean1_sub_mean0.transpose() << std::endl;
-  // std::cerr << "\tCov inverse is\n" << cov1.inverse() << std::endl;
+  // StreamMessage(debug_level) << "\tMean diff. is " << mean1_sub_mean0.transpose() << std::endl;
+  // StreamMessage(debug_level) << "\tCov inverse is\n" << cov1.inverse() << std::endl;
   const Eigen::MatrixXd cov1_inv = cov1.inverse();
   return (cov1_inv * cov0).trace() + mean1_sub_mean0.transpose() *
       cov1_inv * mean1_sub_mean0 - mean1_sub_mean0.rows() -
@@ -518,7 +518,7 @@ void OnlineCalibrator::SetPriorityQueueDistribution(
   for (int ii = 0; ii < windows_.size() ; ++ii) {
     windows_[ii].kl_divergence = ComputeKlDivergence(total_window_,
                                                      windows_[ii]);
-    std::cerr << "\t KL divergence for window " << ii << " is " <<
+    StreamMessage(debug_level) << "\t KL divergence for window " << ii << " is " <<
                  windows_[ii].kl_divergence << std::endl;
 
   }*/
@@ -547,7 +547,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
 
-  std::cerr << "Analyzing calibration window with imu = " << UseImu <<
+  StreamMessage(debug_level) << "Analyzing calibration window with imu = " << UseImu <<
                " and DoTvs = " << DoTvs <<
                " from " << start_pose << " to " << end_pose << std::endl;
   Proxy<UseImu, DoTvs> ba_proxy(this);
@@ -592,7 +592,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
       t_vs = t_vs * M_vr;
-      std::cerr << "PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      StreamMessage(debug_level) << "PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }
 
     // Optimize the poses and calibration parameters
@@ -610,7 +610,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
       t_vs = t_vs * M_vr;
-      std::cerr << "POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      StreamMessage(debug_level) << "POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
     }
@@ -622,7 +622,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       if(DoTvs){
         rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
-        std::cerr << "new selfcal_rig t_wc\n:"
+        StreamMessage(debug_level) << "new selfcal_rig t_wc\n:"
                   << rig_->cameras_[0]->Pose().matrix() << std::endl;
       }
 
@@ -631,7 +631,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
       last_pose->t_wp = ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
-      // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
+      // StreamMessage(debug_level) << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
       //              std::endl;
 
       // Read out the pose and landmark values.
@@ -639,7 +639,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
         std::shared_ptr<TrackerPose> pose = poses[ii];
         const ba::PoseT<double>& ba_pose =
             ba.GetPose(pose->opt_id[ba_id_]);
-        // std::cerr << "Pose " << pose->opt_id << " t_wp " << std::endl <<
+        // StreamMessage(debug_level) << "Pose " << pose->opt_id << " t_wp " << std::endl <<
         //              pose->t_wp.matrix() << std::endl << " after opt: " <<
         //              std::endl << ba_pose.t_wp.matrix() << std::endl;
 

@@ -10,7 +10,7 @@
 #include <Eigen/Core>
 
 #include <SceneGraph/SceneGraph.h>
-#include <pangolin/gl/gldraw.h>
+#include <pangolin/gldraw.h>
 
 
 namespace Eigen {

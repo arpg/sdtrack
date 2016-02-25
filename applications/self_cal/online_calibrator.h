@@ -85,11 +85,17 @@ class OnlineCalibrator {
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
   bool needs_update() { return needs_update_; }
+  void SetDebugLevel(const int level){
+    debug_level = level;
+  }
+
 private:
   bool needs_update_ = false;
   std::vector<CalibrationWindow> windows_;
   uint32_t queue_length_ = 5;
   uint32_t window_length_ = 10;
+  int debug_level = 0;
+  int debug_level_threshold = 0;
   calibu::Rig<Scalar>* rig_;
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
