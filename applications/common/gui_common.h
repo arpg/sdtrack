@@ -358,7 +358,7 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
 
     Sophus::SE3t M_rv;
     M_rv.so3() = calibu::RdfRobotics;
-    for (std::shared_ptr<CameraInterface<Scalar>> model : crig->cameras_)
+    for (std::shared_ptr<calibu::CameraInterface<Scalar>> model : crig->cameras_)
       {
 	model->SetPose(model->Pose() * M_rv);
       }

@@ -8,8 +8,7 @@
 #include <HAL/Camera/CameraDevice.h>
 #include <HAL/Messages/Image.h>
 
-#include <calibu/utils/Xml.h>
-#include <calibu/cam/camera_crtp_interop.h>
+#include <calibu/cam/camera_crtp.h>
 
 #include "GetPot"
 #include <sdtrack/TicToc.h>
@@ -28,6 +27,8 @@
 #endif
 
 #include <sdtrack/semi_dense_tracker.h>
+
+using namespace std;
 
 uint32_t keyframe_tracks = UINT_MAX;
 uint32_t frame_count = 0;

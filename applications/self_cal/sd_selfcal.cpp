@@ -10,7 +10,6 @@
 
 #include "etc_common.h"
 #include <HAL/Camera/CameraDevice.h>
-#include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
 #include <HAL/Messages/Matrix.h>
@@ -44,7 +43,7 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 // Self calibration params
 uint32_t num_change_detected = 0;
 uint32_t num_change_needed = 3;
-bool unknown_cam_calibration = true;
+bool unknown_cam_calibration = false;
 bool unknown_imu_calibration = false;
 
 bool compare_self_cal_with_batch = false;
@@ -69,7 +68,6 @@ bool do_start_new_landmarks = true;
 bool use_system_time = false;
 int image_width;
 int image_height;
-calibu::Rig<Scalar> old_rig;
 calibu::Rig<Scalar> rig;
 calibu::Rig<Scalar> selfcal_rig;
 calibu::Rig<Scalar> aac_rig;
@@ -972,7 +970,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     if (imu_plots_needed) {
       Eigen::Vector6d error =
-          (rig.cameras_[0]->Pose().inverse() * old_rig.cameras_[0]->Pose()).log();
+          (rig.cameras_[0]->Pose().inverse() * rig.cameras_[0]->Pose()).log();
       for (size_t ii = num_cam_params; ii < num_cam_params + 6; ++ii) {
         plot_logs[ii].Log(error[ii - num_cam_params]);
       }
@@ -1382,7 +1380,12 @@ void InitGui() {
 
 bool LoadCameras(GetPot& cl)
 {
-  LoadCameraAndRig(cl, camera_device, old_rig);
+  LoadCameraAndRig(cl, camera_device, rig);
+
+  for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+    selfcal_rig.AddCamera(rig.cameras_[cam_id]);
+    aac_rig.AddCamera(rig.cameras_[cam_id]);
+  }
 
   // Load the imu
   std::string imu_str = cl.follow("","-imu");
@@ -1397,33 +1400,29 @@ bool LoadCameras(GetPot& cl)
     imu_device.RegisterIMUDataCallback(&ImuCallback);
   }
 
+
   // If we require self-calibration from an unknown initial calibration, then
-  // perturb the values.
-  rig.Clear();
-  //calibu::CreateFromOldRig(&old_rig, &rig);
-  //calibu::CreateFromOldRig(&old_rig, &selfcal_rig);
-  //calibu::CreateFromOldRig(&old_rig, &aac_rig);
+  // perturb the values (camera calibraiton parameters only)
   if (unknown_cam_calibration) {
-    //Eigen::VectorXd params = old_rig.cameras_[0]->GenericParams();
-    Eigen::VectorXd params;
+    Eigen::VectorXd params = rig.cameras_[0]->GetParams();
     // fov in rads.
     const double fov_rads = 90 * M_PI / 180.0;
     const double f_x =
-        0.5 * old_rig.cameras_[0]->Height() / tan(fov_rads / 2);
+        0.5 * rig.cameras_[0]->Height() / tan(fov_rads / 2);
     std::cerr << "Changing fx from " << params[0] << " to " << f_x << std::endl;
     std::cerr << "Changing fy from " << params[1] << " to " << f_x << std::endl;
     params[0] = f_x;
     params[1] = f_x;
-    params[2] = old_rig.cameras_[0]->Width() / 2;
-    params[3] = old_rig.cameras_[0]->Height() / 2;
+    params[2] = rig.cameras_[0]->Width() / 2;
+    params[3] = rig.cameras_[0]->Height() / 2;
     if (params.rows() > 4) {
       params[4] = 1.0;
     }
 
+
     rig.cameras_[0]->SetParams(params);
     selfcal_rig.cameras_[0]->SetParams(params);
     aac_rig.cameras_[0]->SetParams(params);
-
     // Add a marker in the batch file for this initial, unknown calibration.
     Eigen::VectorXd initial_covariance(params.rows());
     initial_covariance.setOnes();
@@ -1434,11 +1433,18 @@ bool LoadCameras(GetPot& cl)
   }
 
   if (has_imu && unknown_imu_calibration) {
-    rig.cameras_[0]->Pose().so3() = rig.cameras_[0]->Pose().so3() * Sophus::SO3d::exp(
+
+    rig.cameras_[0]->Pose().so3() = rig.cameras_[0]->Pose().so3() *
+        Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
-    selfcal_rig.cameras_[0] = rig.cameras_[0];
-    aac_rig.cameras_[0] = rig.cameras_[0];
+
+    for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+      selfcal_rig.cameras_[cam_id]->Pose() = rig.cameras_[cam_id]->Pose();
+      aac_rig.cameras_[cam_id]->Pose() = aac_rig.cameras_[cam_id]->Pose();
+    }
+
   }
+
 
   if (has_imu && use_imu_measurements) {
     // Capture an image so we have some IMU data.
@@ -1460,6 +1466,8 @@ int main(int argc, char** argv) {
     std::ofstream pose_file("timings.txt", std::ios_base::trunc);
   }
   srand(0);
+  google::InitGoogleLogging(argv[0]);
+
   GetPot cl(argc, argv);
   if (cl.search("--help")) {
     LOG(INFO) << g_usage;

@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include <calibu/cam/camera_crtp_interop.h>
+#include <calibu/cam/camera_crtp.h>
 #include <Eigen/Eigenvalues>
 #include <ba/BundleAdjuster.h>
 #include <ba/InterpolationBuffer.h>
