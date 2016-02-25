@@ -62,6 +62,8 @@ bool is_manual_mode = false;
 bool do_bundle_adjustment = true;
 bool do_start_new_landmarks = true;
 bool use_system_time = false;
+double aac_time;
+double aac_calls;
 int image_width;
 int image_height;
 calibu::Rig<Scalar> rig;
@@ -80,8 +82,10 @@ enum CalibrationType
 };
 
 struct Metrics{
-  double batch_time = 0, ba_time = 0, analyze_time = 0, queue_time = 0, snl_time = 0;
-  double batch_calls = 0, ba_calls = 0, analyze_calls = 0, queue_calls = 0, snl_calls = 0;
+  double batch_time = 0, ba_time = 0, analyze_time = 0, queue_time = 0, snl_time = 0, aac_time = 0;
+  double batch_calls = 0, ba_calls = 0, analyze_calls = 0, queue_calls = 0, snl_calls = 0, aac_calls =0;
+  double num_change_detections = 0;
+  double num_windows_analysed = 0;
 };
 
 Metrics global_metrics;
@@ -114,7 +118,8 @@ struct Calibration {
   CalibrationType type;
 };
 
-std::vector<std::shared_ptr<Calibration>> calibrations;
+//std::vector<std::shared_ptr<Calibration>> calibrations;
+std::map<CalibrationType, std::shared_ptr<Calibration>> calibrations;
 
 std::vector<pangolin::DataLog> plot_logs;
 std::vector<pangolin::Plotter*> plot_views;
@@ -158,20 +163,13 @@ double total_last_frame_proj_norm = 0;
 std::vector<cv::KeyPoint> keypoints;
 Sophus::SE3d guess;
 
-double GetTotalTime(Metrics m){
-  return m.ba_time + m.analyze_time + m.batch_time + m.snl_time + m.queue_time;
+double GetTotalMeasured(Metrics m){
+  return m.ba_time + m.analyze_time + m.batch_time + m.snl_time + m.queue_time
+      + m.aac_time;
 }
 
 std::shared_ptr<Calibration> GetCalibration(CalibrationType type){
-  std::shared_ptr<Calibration> calib;
-
-  for (auto c : calibrations){
-    if (c->type == type){
-      calib = c;
-      break;
-    }
-  }
-  return calib;
+  return calibrations[type];
 }
 
 
@@ -576,6 +574,7 @@ void UpdateCurrentPose()
 
 void DoAAC()
 {
+  aac_time = 0;
   while (true) {
     if (has_imu && use_imu_measurements &&
         poses.size() > 10 && do_async_ba) {
@@ -589,9 +588,15 @@ void DoAAC()
             aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
             aac_rig.cameras_[0] = rig.cameras_[0];
           }
+          aac_time = sdtrack::Tic();
+          aac_calls++;
           DoBundleAdjustment(aac_bundle_adjuster, true, do_adaptive,
                              num_aac_poses, 1, aac_imu_residual_ids,
                              aac_rig);
+          aac_time = sdtrack::Toc(aac_time);
+          global_metrics.aac_calls += aac_calls;
+          global_metrics.aac_time += aac_time;
+
         }
 
         if ((int)num_aac_poses == orig_num_aac_poses || !do_adaptive) {
@@ -630,9 +635,9 @@ void  BaAndStartNewLandmarks()
   const uint32_t batch_end = poses.size();
 
   bool have_unknown_calib = false;
-  for (auto calib : calibrations){
-    calib->online_calibrator.SetDebugLevel(selfcal_debug_level);
-    if(SelfCalActive(calib) && calib->unknown_calibration){
+  for (auto const &calib : calibrations){
+    calib.second->online_calibrator.SetDebugLevel(selfcal_debug_level);
+    if(SelfCalActive(calib.second) && calib.second->unknown_calibration){
       have_unknown_calib = true;
       break;
     }
@@ -829,8 +834,8 @@ void  BaAndStartNewLandmarks()
     // If we still haven't converged on all of the calibration parameters
     // include all the poses with unknown calibration in the pose graph ba
     bool has_unknown_calibration = false;
-    for(auto calib : calibrations){
-      if(calib->unknown_calibration && SelfCalActive(calib)){
+    for(auto const &calib : calibrations){
+      if(calib.second->unknown_calibration && SelfCalActive(calib.second)){
         has_unknown_calibration = true;
         break;
       }
@@ -870,10 +875,10 @@ void  BaAndStartNewLandmarks()
     // analyse candidate windows to see if they are eligible to be put in the
     // priority queue.
     bool should_do_self_cal = false;
-    for(auto calib : calibrations){
-      should_do_self_cal = (SelfCalActive(calib)) &&
-         (batch_end - calib->unknown_calibration_start_pose >
-         calib->self_cal_segment_length);
+    for(auto const &calib : calibrations){
+      should_do_self_cal = (SelfCalActive(calib.second)) &&
+         (batch_end - calib.second->unknown_calibration_start_pose >
+         calib.second->self_cal_segment_length);
       if(should_do_self_cal)
         break;
     }
@@ -886,6 +891,7 @@ void  BaAndStartNewLandmarks()
       if(SelfCalActive(cam_calib) &&
          (batch_end - cam_calib->unknown_calibration_start_pose) >
          cam_calib->self_cal_segment_length){
+        global_metrics.num_windows_analysed++;
         uint32_t start_pose =
             std::max(0, (int)poses.size() - (int)cam_calib->self_cal_segment_length);
         uint32_t end_pose = poses.size();
@@ -904,7 +910,6 @@ void  BaAndStartNewLandmarks()
                 cam_calib->candidate_window, 50);
         }
         // Analyse the candidate window and add to the priority queue if it's good enough
-        // ZZZZZZZZZZZZZZZZZZZ: TEMP: Uncomment this!!!!
         cam_calib->online_calibrator.AnalyzeCalibrationWindow(
               cam_calib->candidate_window);
       }
@@ -918,7 +923,7 @@ void  BaAndStartNewLandmarks()
         uint32_t start_pose =
             std::max(0, (int)poses.size() - (int)imu_calib->self_cal_segment_length);
         uint32_t end_pose = poses.size();
-        StreamMessage(selfcal_debug_level) << "Analysing calibration window for IMU parameters from pose " <<
+        StreamMessage(selfcal_debug_level-1) << "Analysing calibration window for IMU parameters from pose " <<
                      start_pose << " to pose " << end_pose << " (visual + imu)" <<
                      std::endl;
         imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
@@ -952,17 +957,17 @@ void  BaAndStartNewLandmarks()
                 << " num window changes: " <<
                    (int)cam_calib->num_change_detected << std::endl;
 
-      for(std::shared_ptr<Calibration> calib : calibrations){
-        if(SelfCalActive(calib)){
+      for(auto const &calib : calibrations){
+        if(SelfCalActive(calib.second)){
 
-          if(calib->candidate_window.mean.rows() != 0){
-           cam_calib->current_window = calib->candidate_window;
+          if(calib.second->candidate_window.mean.rows() != 0){
+           cam_calib->current_window = calib.second->candidate_window;
           }
 
           // Treat cases where the KL divergence was not computable
-          if (isnan(calib->last_window_kl_divergence) ||
-              isinf(calib->last_window_kl_divergence)) {
-            calib->last_window_kl_divergence = 0;
+          if (isnan(calib.second->last_window_kl_divergence) ||
+              isinf(calib.second->last_window_kl_divergence)) {
+            calib.second->last_window_kl_divergence = 0;
           }
 
           // TODO: Re-enable change detection
@@ -970,6 +975,7 @@ void  BaAndStartNewLandmarks()
           /*-----CHANGE DETECTION-----*/
           // Check if there has been a change in calibration parameters.
           // If so, clear the priority queue.
+          //ZZZZZZZZZZZZZZZZZZZ Re enable this
           //CheckParameterChange(calib);
 
         }
@@ -980,9 +986,9 @@ void  BaAndStartNewLandmarks()
       // If the priority queue was modified, calculate the new results for it.
       // This is when a window is swapped out or added to the priority queue
       bool queue_needs_update = false;
-      for(auto calib : calibrations){
-        queue_needs_update = calib->online_calibrator.needs_update() &&
-           !calib->unknown_calibration;
+      for(auto const &calib : calibrations){
+        queue_needs_update = calib.second->online_calibrator.needs_update() &&
+           !calib.second->unknown_calibration;
 
         if(queue_needs_update)
           break;
@@ -996,16 +1002,17 @@ void  BaAndStartNewLandmarks()
         queue_time = sdtrack::Tic();
         global_metrics.queue_calls++;
         bool apply_results = false;
-        for(auto calib : calibrations){
-          if(calib->online_calibrator.needs_update() &&
-             !calib->unknown_calibration){
+        for(auto const &calib : calibrations){
+          if(calib.second->online_calibrator.needs_update() &&
+             !calib.second->unknown_calibration){
             // This is just for plotting the KL divergence
-            calib->last_added_window_kl_divergence =
-                calib->last_window_kl_divergence;
+            calib.second->last_added_window_kl_divergence =
+                calib.second->last_window_kl_divergence;
           }
 
           if(!apply_results){
-            apply_results = !calib->unknown_calibration;
+            apply_results = !calib.second->unknown_calibration &&
+                SelfCalActive(calib.second);
           }
 
         }
@@ -1013,7 +1020,7 @@ void  BaAndStartNewLandmarks()
         if (SelfCalActive(imu_calib)
             && imu_calib->online_calibrator.needs_update()) {
           analysed_imu_calib = true;
-          StreamMessage(selfcal_debug_level) << "Analysing IMU params PQ..." << std::endl;
+          StreamMessage(selfcal_debug_level-1) << "Analysing IMU params PQ..." << std::endl;
           imu_calib->online_calibrator.AnalyzePriorityQueue<true, true>(
                 poses, current_tracks, imu_calib->pq_window, 50,
                 !imu_calib->unknown_calibration);
@@ -1034,15 +1041,16 @@ void  BaAndStartNewLandmarks()
 
 
         // Apply the results from selfcal_rig over to the actual rig
-        if (apply_results && (SelfCalActive(cam_calib) || SelfCalActive(imu_calib))) {
+        if (apply_results) {
           if(SelfCalActive(cam_calib) && !cam_calib->unknown_calibration){
+
             std::unique_lock<std::mutex>(aac_mutex);
             const Eigen::VectorXd new_params =
                 selfcal_rig.cameras_[0]->GetParams();
             rig.cameras_[0]->SetParams(new_params);
 
             // Set the correct camera params for all the poses that were
-            // created with unknown camera params
+            // created with the previous parameters
             for (size_t ii = cam_calib->unknown_calibration_start_pose;
                  ii < poses.size(); ++ii) {
               for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
@@ -1159,7 +1167,7 @@ void  BaAndStartNewLandmarks()
   global_metrics.analyze_time += analyze_time;
   global_metrics.queue_time += queue_time;
   global_metrics.snl_time += snl_time;
-  double total_time = GetTotalTime(global_metrics);
+  double total_time = GetTotalMeasured(global_metrics);
 
   StreamMessage(selfcal_debug_level-1) << "Global timings ("<< total_time << ") -> batch: "
             << global_metrics.batch_time << "(" << global_metrics.batch_time/total_time*100
@@ -1167,12 +1175,14 @@ void  BaAndStartNewLandmarks()
             << " ba: " << global_metrics.ba_time << " (" << global_metrics.ba_time/total_time*100 << "%)"
                " analyze: " << global_metrics.analyze_time << " (" << global_metrics.analyze_time/total_time*100 << "%)"
             << " queue: " <<  global_metrics.queue_time << " (" << global_metrics.queue_time/total_time*100 << "%)" <<
-               " snl: " << global_metrics.snl_time << " (" << global_metrics.snl_time/total_time*100 << "%)" << std::endl;
+               " snl: " << global_metrics.snl_time << " (" << global_metrics.snl_time/total_time*100 << "%)" <<
+               " aac: " << global_metrics.aac_time << " (" << global_metrics.aac_time/total_time*100 << "%)" << std::endl;
   StreamMessage(selfcal_debug_level-1) << "Global time/call -> batch: " << (global_metrics.batch_calls > 0 ? global_metrics.batch_time/global_metrics.batch_calls:0)
             << " ba: " << global_metrics.ba_time/global_metrics.ba_calls <<
                " analyze: " << (global_metrics.analyze_calls > 0 ? global_metrics.analyze_time/global_metrics.analyze_calls : 0)
             << " queue: " << (global_metrics.queue_calls > 0 ? global_metrics.queue_time/global_metrics.queue_calls : 0) <<
-               " snl: " <<  global_metrics.snl_time/global_metrics.snl_calls << std::endl;
+               " snl: " <<  global_metrics.snl_time/global_metrics.snl_calls <<
+               " aac: " <<  (global_metrics.aac_calls > 0 ? global_metrics.aac_time/global_metrics.aac_calls : 0) << std::endl;
 
   std::ofstream("timings.txt", std::ios_base::app) << keyframe_id << ", " <<
     batch_time << ", " << ba_time << ", " << analyze_time << ", " <<
@@ -1194,8 +1204,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   aac_bundle_adjuster.debug_level_threshold = aac_ba_debug_level;
 
   // Set the desired debug levels for all the online calibrators ba instances
-  for(auto calib : calibrations){
-    calib->online_calibrator.SetBaDebugLevel(selfcal_ba_debug_level);
+  for(auto const &calib : calibrations){
+    calib.second->online_calibrator.SetBaDebugLevel(selfcal_ba_debug_level);
   }
 
 
@@ -1395,38 +1405,38 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   }
 
   // Check to see if any online calibrator should be plotted
-  for(std::shared_ptr<Calibration> calib : calibrations){
-    if (calib->plot_graphs && calib->do_self_cal){
+  for(auto const &calib : calibrations){
+    if (calib.second->plot_graphs && calib.second->do_self_cal){
 
       uint32_t num_params = 0;
-      switch (calib->type){
+      switch (calib.second->type){
         case Camera :
           num_params = rig.cameras_[0]->NumParams();
-          if(calib->candidate_window.mean.rows() == 0){
-            calib->candidate_window.mean = rig.cameras_[0]->GetParams();
+          if(calib.second->candidate_window.mean.rows() == 0){
+            calib.second->candidate_window.mean = rig.cameras_[0]->GetParams();
           }
 
           for (size_t ii = 0; ii < num_params; ++ii) {
             plot_logs[ii].Log(rig.cameras_[0]->GetParams()[ii],
-                calib->candidate_window.mean[ii]);
+                calib.second->candidate_window.mean[ii]);
           }
           break;
 
         case IMU :
           num_params = Sophus::SE3t::DoF;
-          if(calib->candidate_window.mean.rows() == 0){
-            calib->candidate_window.mean = rig.cameras_[0]->Pose().log();
+          if(calib.second->candidate_window.mean.rows() == 0){
+            calib.second->candidate_window.mean = rig.cameras_[0]->Pose().log();
           }
 
           for (size_t ii = 0; ii < num_params; ++ii) {
             plot_logs[ii].Log(rig.cameras_[0]->Pose().log()[ii],
-                calib->candidate_window.mean[ii]);
+                calib.second->candidate_window.mean[ii]);
           }
           break;
       }
 
-      analysis_logs[0].Log(calib->last_window_kl_divergence,
-                           calib->last_added_window_kl_divergence);
+      analysis_logs[0].Log(calib.second->last_window_kl_divergence,
+                           calib.second->last_added_window_kl_divergence);
       analysis_logs[1].Log(tracker.num_successful_tracks());
       analysis_logs[2].Log(total_last_frame_proj_norm);
 
@@ -1597,7 +1607,10 @@ void Run()
       for (int ii = 0; ii < images->Size() ; ++ii) {
         cvmat_images.push_back(images->at(ii)->Mat());
       }
+
+
       ProcessImage(cvmat_images, timestamp);
+
     }
 
     if (camera_img && camera_img->data()) {
@@ -2092,7 +2105,7 @@ int main(int argc, char** argv) {
                     imu_time_offset, &imu_buffer);
 
 
-  calibrations.push_back(cam_calib);
+  calibrations[Camera] = cam_calib;
 
 
   // Initialize inertial calibration (camera to imu: Tvs)
@@ -2109,7 +2122,7 @@ int main(int argc, char** argv) {
                              imu_time_offset, &imu_buffer);
 
 
-  calibrations.push_back(imu_calib);
+  calibrations[IMU] = imu_calib;
 
 
   // Initialize batch calibration queue (camera intrinsics + Tvs)
@@ -2124,7 +2137,7 @@ int main(int argc, char** argv) {
       (&aac_mutex, &selfcal_rig, batch_calib->num_self_cam_segments,
                              batch_calib->self_cal_segment_length, batch_weights,
                              imu_time_offset, &imu_buffer);
-  calibrations.push_back(batch_calib);
+  calibrations[Batch] = batch_calib;
 
   //imu_time_offset = -0.0697;
 
