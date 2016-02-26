@@ -727,7 +727,7 @@ void SemiDenseTracker::PruneTracks(int only_prune_camera) {
 
     uint32_t num_successful_cams = 0;
     for (uint32_t cam_id = 0; cam_id < num_cameras_ ; ++cam_id) {
-      if (only_prune_camera != -1 && track->ref_cam_id != only_prune_camera) {
+      if (only_prune_camera != -1 && (int)track->ref_cam_id != only_prune_camera) {
         continue;
       }
 
@@ -933,7 +933,7 @@ void SemiDenseTracker::StartNewLandmarks(int only_start_in_camera) {
 
   // Start tracks in every camera.
   for (uint32_t cam_id = 0; cam_id < num_cameras_; ++cam_id) {
-    if (only_start_in_camera != -1 && cam_id != only_start_in_camera) {
+    if (only_start_in_camera != -1 && (int)cam_id != only_start_in_camera) {
       continue;
     }
 

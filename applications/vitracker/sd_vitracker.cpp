@@ -226,7 +226,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
               imu_cond_residual_id = imu_residual_ids.back();
               // std::cerr << "Setting cond residual id to " <<
               //              imu_cond_residual_id << std::endl;
-            } else if (imu_cond_start_pose_id == ii - 1) {
+            } else if ((uint32_t)imu_cond_start_pose_id == ii - 1) {
               imu_cond_residual_id = imu_residual_ids.back();
               // std::cerr << "Setting cond residual id to " <<
               //              imu_cond_residual_id << std::endl;
@@ -282,7 +282,6 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
                 if (track->keypoints[jj][cam_id].tracked) {
                   const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
                   if (ba.GetNumPoses() > (pose->opt_id[id] + jj)) {
-                    const uint32_t res_id =
                         ba.AddProjectionResidual(
                           z, pose->opt_id[id] + jj,
                           track->external_id[id], cam_id, 2.0);
@@ -417,12 +416,12 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
     const uint32_t cond_dims =
         summary.num_cond_inertial_residuals * BaType::kPoseDim +
         summary.num_cond_proj_residuals * 2;
-    const uint32_t active_dims = summary.num_inertial_residuals +
-        summary.num_proj_residuals - cond_dims;
+//    const uint32_t active_dims = summary.num_inertial_residuals +
+//        summary.num_proj_residuals - cond_dims;
     const Scalar cond_error = summary.cond_inertial_error +
         summary.cond_proj_error;
-    const Scalar active_error =
-        summary.inertial_error + summary.proj_error_ - cond_error;
+//    const Scalar active_error =
+//        summary.inertial_error + summary.proj_error_ - cond_error;
 
     const double cond_inertial_error =
         ba.GetImuResidual(
@@ -432,12 +431,12 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
       prev_cond_error = DBL_MAX;
     }
 
-    const Scalar cond_chi2_dist = chi2inv(adaptive_threshold, cond_dims);
+//    const Scalar cond_chi2_dist = chi2inv(adaptive_threshold, cond_dims);
     const Scalar cond_v_chi2_dist =
         chi2inv(adaptive_threshold, summary.num_cond_proj_residuals * 2);
     const Scalar cond_i_chi2_dist =
         chi2inv(adaptive_threshold, BaType::kPoseDim);
-    const Scalar active_chi2_dist = chi2inv(adaptive_threshold, active_dims);
+//    const Scalar active_chi2_dist = chi2inv(adaptive_threshold, active_dims);
     plot_logs[0].Log(cond_i_chi2_dist, cond_inertial_error);
     plot_logs[2].Log(cond_v_chi2_dist, summary.cond_proj_error);
     // plot_logs[2].Log(cond_chi2_dist, cond_error);
@@ -539,7 +538,7 @@ void DoAAC()
     if (poses.size() > 10 && do_async_ba) {
 //      DoBundleAdjustment(bundle_adjuster, false, num_aac_poses, true, false,
 //                          1, aac_imu_residual_ids);
-      uint32_t num_poses = poses.size();
+      //uint32_t num_poses = poses.size();
       orig_num_aac_poses = num_aac_poses;
       while (true) {
         if (poses.size() > min_poses_for_imu && use_imu_measurements) {
@@ -547,7 +546,7 @@ void DoAAC()
                              false, do_adaptive, 1, aac_imu_residual_ids);
         }
 
-        if (num_aac_poses == orig_num_aac_poses || !do_adaptive) {
+        if ((int)num_aac_poses == orig_num_aac_poses || !do_adaptive) {
           break;
         }
       }
@@ -592,7 +591,7 @@ void BaAndStartNewLandmarks()
     gui_vars.timer.Toc("ba");
     return;
   }
-  uint32_t keyframe_id = poses.size();
+  //uint32_t keyframe_id = poses.size();
 
   double ba_time = sdtrack::Tic();
   if (do_bundle_adjustment) {
@@ -938,7 +937,7 @@ void Run()
       gui_vars.handler->image_width = image_width;
 
       std::vector<cv::Mat> cvmat_images;
-      for (int ii = 0; ii < (unsigned int) images->Size() ; ++ii) {
+      for (int ii = 0; (unsigned int) ii < (unsigned int) images->Size() ; ++ii) {
         cvmat_images.push_back(images->at(ii)->Mat());
       }
       ProcessImage(cvmat_images, timestamp);
@@ -1140,7 +1139,7 @@ void InitGui()
     std::ofstream lm_file("landmarks.txt", std::ios_base::trunc);
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
       for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
-        if (track->num_good_tracked_frames < min_lm_measurements_for_drawing) {
+        if ((int)track->num_good_tracked_frames < min_lm_measurements_for_drawing) {
           continue;
         }
         Eigen::Vector4d ray;
@@ -1155,7 +1154,7 @@ void InitGui()
     }
 
     for (uint32_t ii = 0; ii < plot_logs.size() ; ++ii) {
-      pangolin::DataLog& log = plot_logs[ii];
+      //pangolin::DataLog& log = plot_logs[ii];
       char filename[100];
       sprintf(filename, "log_%d.txt" , ii);
       // log.Save(filename);

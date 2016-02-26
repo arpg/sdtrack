@@ -86,7 +86,7 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
     std::shared_ptr<DenseTrack>& track = tracks[ii];
     // If we are only optimizing tracks from a single camera, skip track if
     // it wasn't initialized in the specified camera.
-    if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=
+    if (options.only_optimize_camera_id != -1 && (int)track->ref_cam_id !=
         options.only_optimize_camera_id) {
       continue;
     }
@@ -394,7 +394,7 @@ void Parallel2dAlignment::operator()(const tbb::blocked_range<int> &r) const
     const Sophus::SE3d& t_vc = tracker.camera_rig_->cameras_[track->ref_cam_id]->Pose();
     // If we are only optimizing tracks from a single camera, skip track if
     // it wasn't initialized in the specified camera.
-    if (options.only_optimize_camera_id != -1 && track->ref_cam_id !=
+    if (options.only_optimize_camera_id != -1 && (int)track->ref_cam_id !=
         options.only_optimize_camera_id) {
       continue;
     }
