@@ -43,7 +43,7 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 // Self calibration params
 uint32_t num_change_detected = 0;
 uint32_t num_change_needed = 3;
-bool unknown_cam_calibration = false;
+bool unknown_cam_calibration = true;
 bool unknown_imu_calibration = false;
 
 bool compare_self_cal_with_batch = false;
