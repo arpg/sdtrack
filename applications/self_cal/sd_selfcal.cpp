@@ -242,7 +242,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
               imu_cond_residual_id = imu_residual_ids.back();
               // std::cerr << "Setting cond residual id to " <<
               //              imu_cond_residual_id << std::endl;
-            } else if (imu_cond_start_pose_id == ii - 1) {
+            } else if ((uint32_t)imu_cond_start_pose_id == ii - 1) {
               imu_cond_residual_id = imu_residual_ids.back();
               // std::cerr << "Setting cond residual id to " <<
               //              imu_cond_residual_id << std::endl;
@@ -470,7 +470,7 @@ void DoAAC()
   while (true) {
     if (has_imu && use_imu_measurements &&
         poses.size() > 10 && do_async_ba) {
-      uint32_t num_poses = poses.size();
+
       orig_num_aac_poses = num_aac_poses;
       while (true) {
         if (poses.size() > min_poses_for_imu &&
@@ -485,7 +485,7 @@ void DoAAC()
                              aac_rig);
         }
 
-        if (num_aac_poses == orig_num_aac_poses || !do_adaptive) {
+        if ((int)num_aac_poses == orig_num_aac_poses || !do_adaptive) {
           break;
         }
 
@@ -616,7 +616,7 @@ void BaAndStartNewLandmarks()
               candidate_window, 50);
       }
 
-      bool added = online_calib.AnalyzeCalibrationWindow(candidate_window);
+      online_calib.AnalyzeCalibrationWindow(candidate_window);
       last_window_kl_divergence =
           online_calib.ComputeYao1965(
             pq_window, candidate_window);
@@ -1190,7 +1190,7 @@ void InitGui() {
     std::ofstream lm_file("landmarks.txt", std::ios_base::trunc);
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
       for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
-        if (track->num_good_tracked_frames < min_lm_measurements_for_drawing) {
+        if ((int)track->num_good_tracked_frames < min_lm_measurements_for_drawing) {
           continue;
         }
         Eigen::Vector4d ray;

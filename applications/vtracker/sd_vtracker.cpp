@@ -152,8 +152,7 @@ void DoBundleAdjustment(uint32_t num_active_poses, uint32_t id)
           for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
             if (track->keypoints[jj][cam_id].tracked) {
               const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
-              const uint32_t res_id =
-                  bundle_adjuster.AddProjectionResidual(
+              bundle_adjuster.AddProjectionResidual(
                     z, pose->opt_id[id] + jj, track->external_id[id], cam_id);
             }
           }
@@ -245,7 +244,7 @@ void BaAndStartNewLandmarks()
     return;
   }
 
-  uint32_t keyframe_id = poses.size();
+  //uint32_t keyframe_id = poses.size();
 
   double ba_time = sdtrack::Tic();
   if (do_bundle_adjustment) {
