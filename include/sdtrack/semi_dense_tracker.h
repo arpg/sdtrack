@@ -12,7 +12,7 @@
 #include "FeatureMask.h"
 //#include <Utils/Utils.h>
 #include <fstream>
-#include <calibu/cam/camera_crtp_interop.h>
+#include <calibu/cam/camera_crtp.h>
 #include <Eigen/Eigenvalues>
 #include <random>
 #include <tbb/task_scheduler_init.h>

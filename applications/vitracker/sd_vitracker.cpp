@@ -9,7 +9,6 @@
 
 #include "etc_common.h"
 #include <HAL/Camera/CameraDevice.h>
-#include <calibu/utils/Xml.h>
 #include <sdtrack/TicToc.h>
 #include <HAL/IMU/IMUDevice.h>
 #include <HAL/Messages/Matrix.h>
