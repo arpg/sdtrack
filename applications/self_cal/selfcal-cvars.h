@@ -40,7 +40,7 @@ static bool& use_imu_for_guess =
 static bool& do_async_ba =
     CVarUtils::CreateCVar<>("sd.DoAsyncBA", true, "");
 static bool& use_imu_measurements =
-    CVarUtils::CreateCVar<>("sd.UseImu", true, "");
+    CVarUtils::CreateCVar<>("sd.UseImu", false, "");
 static uint32_t& num_aac_poses =
     CVarUtils::CreateCVar<>("sd.NumAACPoses",20u, "");
 static bool& do_keyframing =
