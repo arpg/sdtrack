@@ -159,10 +159,13 @@ void DrawLandmarks(const uint32_t min_lm_measurements_for_drawing,
       ray = sdtrack::MultHomogeneous(pose->t_wp * rig.cameras_[0]->Pose(), ray);
       ray /= ray[3];
       if (handler->selected_track == track) {
+        // yellow
         glColor3f(1.0, 1.0, 0.2);
       } else if (track->is_outlier) {
+        // red
         glColor3f(1.0, 0.2, 0.1);
       } else {
+        // white
         glColor3f(1.0, 1.0, 1.0);
       }
       glVertex3f(ray[0], ray[1], ray[2]);
