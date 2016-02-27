@@ -112,14 +112,30 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     }
   }
 
+  Sophus::SE3t M_vr;
+  M_vr.so3() = calibu::RdfRobotics.inverse();
+
+  if(DoTvs){
+    Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
+    t_vs = t_vs * M_vr;
+    StreamMessage(debug_level) << "PQ: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+  }else{
+    StreamMessage(debug_level-1) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+
+  }
+
   ba.Solve(num_iterations);
 
 
   // Obtain the mean from the BA.
   if(DoTvs && UseImu){
     overal_window.mean = ba.rig()->cameras_[0]->Pose().log();
+    Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
+    t_vs = t_vs * M_vr;
+    StreamMessage(debug_level) << "PQ: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
   }else{
     overal_window.mean = ba.rig()->cameras_[0]->GetParams();
+    StreamMessage(debug_level-1) << "PQ: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
   }
 
   overal_window.covariance =
@@ -248,9 +264,10 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
 bool OnlineCalibrator::AnalyzeCalibrationWindow(
     CalibrationWindow &new_window)
 {
-  StreamMessage(debug_level) << "Analyzing window with score " << new_window.score <<
+  StreamMessage(debug_level-1) << "Analyzing window with score " << new_window.score <<
                " start: " << new_window.start_index << " end: " <<
-               new_window.end_index << std::endl;
+               new_window.end_index << " mean: " << new_window.mean.transpose()
+                               << std::endl;
 
   // Do not add a degenerate window.
   if (new_window.score == 0) {
@@ -266,14 +283,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   uint32_t num_overlaps = 0;
   for (size_t ii = 0; ii < windows_.size() ; ++ii){
     CalibrationWindow& window = windows_[ii];
-     StreamMessage(debug_level) << "\t comparing with window " << ii << " with score : " <<
+     StreamMessage(debug_level+1) << "\t comparing with window " << ii << " with score : " <<
                   windows_[ii].score << " start " <<  windows_[ii].start_index <<
                   " end " << windows_[ii].end_index << std::endl;
     if (!((new_window.start_index < window.start_index && new_window.end_index <
            window.start_index) || (new_window.start_index > window.end_index &&
                                    new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
       num_overlaps++;
-      StreamMessage(debug_level) << "Overlap detected between " << window.start_index << ", " <<
+      StreamMessage(debug_level+1) << "Overlap detected between " << window.start_index << ", " <<
                    window.end_index << " and " << new_window.start_index <<
                    ", " << new_window.end_index << std::endl;
 
@@ -281,7 +298,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     }
 
     if (num_overlaps > 1) {
-      StreamMessage(debug_level) << "Num overlaps: " << num_overlaps << " rejecting window. " <<
+      StreamMessage(debug_level-1) << "Num overlaps: " << num_overlaps << " rejecting window. " <<
                    std::endl;
       // Then this window intersects with more than one other window.
       // We cannot continue.
@@ -299,14 +316,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   if (windows_.size() < queue_length_) {
     if (num_overlaps == 0) {
       windows_.push_back(new_window);
-      StreamMessage(debug_level) << "Pushing back non overlapping window into position " <<
+      StreamMessage(debug_level-1) << "Pushing back non overlapping window into position " <<
                    windows_.size() << std::endl;
       needs_update_ = true;
       return true;
     } else {
       // If the queue is not full yet, there is no reason to add overlapping
       // windows.
-      StreamMessage(debug_level) << "Rejecting window as queue is incomplete and window "
+      StreamMessage(debug_level-1) << "Rejecting window as queue is incomplete and window "
                    "overlaps" << std::endl;
       return false;
     }
@@ -318,20 +335,20 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       // the overlapping window otherwise information will be double counted.
       max_id = overlap_id;
       max_score = windows_[max_id].score;
-      StreamMessage(debug_level) << "Overlapping with 1 segment. Using overlapping score " <<
+      StreamMessage(debug_level-1) << "Overlapping with 1 segment. Using overlapping score " <<
                    max_score << " and id " << max_id << std::endl;
     }
 
     // Calculate the margin by which this candidate window beats what's in the
     // priority queue (or the window it overlaps with)
     const double margin = (max_score - new_window.score) / max_score;
-    StreamMessage(debug_level) << "Max score: " << max_score<< " margin: " << margin*100
-              << "%" << std::endl;
+    StreamMessage(debug_level-1) << "Max score: " << max_score<< " margin: " << margin
+               << std::endl;
 
     // Replace it if it beats a non-overlapping window.
     if (max_id != UINT_MAX && margin > 0.05) {
       const CalibrationWindow& old_window = windows_[max_id];
-      StreamMessage(debug_level) << "Replaced window at idx " << max_id << " with score " <<
+      StreamMessage(debug_level-1) << "Replaced window at idx " << max_id << " with score " <<
                    old_window.score << " start: " << old_window.start_index <<
                    " end: " << old_window.end_index << " with score " <<
                    new_window.score << " start: " << new_window.start_index <<
@@ -592,7 +609,10 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
       t_vs = t_vs * M_vr;
-      StreamMessage(debug_level) << "PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      StreamMessage(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+    }else{
+      StreamMessage(debug_level-1) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+
     }
 
     // Optimize the poses and calibration parameters
@@ -604,15 +624,17 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     // Obtain the mean from the BA
     //TODO: Currently this only supports Tvs OR Camera params. Change
     // so that it supports joint mode also
-    if(DoTvs){
+    if(DoTvs && UseImu){
       Eigen::MatrixXd imu_parameters = ba.rig()->cameras_[0]->Pose().log();
       window.mean = imu_parameters;
 
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
       t_vs = t_vs * M_vr;
-      StreamMessage(debug_level) << "POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      StreamMessage(debug_level) << "Window: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
+      StreamMessage(debug_level-1) << "Window: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+
     }
 
     window.covariance = summary.calibration_marginals;
