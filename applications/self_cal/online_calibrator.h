@@ -46,7 +46,7 @@ class OnlineCalibrator {
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       std::list<std::shared_ptr<DenseTrack>>* current_tracks,
       CalibrationWindow& overal_window, uint32_t num_iterations = 1,
-      bool apply_results = false);
+      bool apply_results = false, bool rorotation_only_Tvs = false);
 
   template <bool UseImu, bool DoTvs>
   void AddCalibrationWindowToBa(
@@ -60,7 +60,8 @@ class OnlineCalibrator {
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       std::list<std::shared_ptr<DenseTrack>>* current_tracks,
       uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
-      uint32_t num_iterations = 1, bool apply_results = false);
+      uint32_t num_iterations = 1, bool apply_results = false,
+      bool rotation_only_Tvs = false);
   const std::vector<CalibrationWindow>& windows() { return windows_; }
   void ClearQueue() { windows_.clear(); }
   double GetWindowScore(const CalibrationWindow& window);
@@ -100,6 +101,7 @@ private:
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
   // Visual BA with camera parameters
+  // Lm size: 1, Pose size: 6, Calibration size: 5
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
   // VI BA with camera parameters
   ba::BundleAdjuster<double, 1, 15, 5, false> vi_selfcal_ba;

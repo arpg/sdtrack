@@ -9,6 +9,7 @@ OnlineCalibrator::OnlineCalibrator()
 
 }
 
+///////////////////////////////////////////////////////////////////////////
 void OnlineCalibrator::Init(std::mutex* ba_mutex,
                             calibu::Rig<Scalar> *rig,
                             uint32_t num_windows,
@@ -45,6 +46,7 @@ void OnlineCalibrator::Init(std::mutex* ba_mutex,
   vi_only_tvs_selfcal_ba.debug_level_threshold = -1;
 }
 
+///////////////////////////////////////////////////////////////////////////
 void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                                     Sophus::SE3t t_ba,
                                     Scalar rho)
@@ -76,14 +78,17 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
                std::endl;
 }
 
+///////////////////////////////////////////////////////////////////////////
 template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AnalyzePriorityQueue(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
-    CalibrationWindow &overal_window,
-    uint32_t num_iterations, bool apply_results)
+    CalibrationWindow &window,
+    uint32_t num_iterations, bool apply_results, bool rotation_only_Tvs)
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
+  Sophus::SE3d imu_params_backup = rig_->cameras_[0]->Pose();
+
   Proxy<UseImu, DoTvs> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
 
@@ -94,6 +99,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   options.use_triangular_matrices = true;
   /// ZZZZZZ FIGURE OUT WHY USING SPARSE HERE FAILS SOMETIMES
   options.use_sparse_solver = false;
+  options.use_per_pose_cam_params = false;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
 
@@ -112,37 +118,68 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     }
   }
 
+
+  if(DoTvs){
+    Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
+    t_vs = RoboticsToVision(t_vs);
+    StreamMessage(debug_level) << "PQ: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+  }else{
+    StreamMessage(debug_level-1) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+  }
+
   ba.Solve(num_iterations);
 
 
   // Obtain the mean from the BA.
   if(DoTvs && UseImu){
-    overal_window.mean = ba.rig()->cameras_[0]->Pose().log();
+    window.mean = ba.rig()->cameras_[0]->Pose().log();
+    Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
+    t_vs = RoboticsToVision(t_vs);
+    StreamMessage(debug_level) << "PQ: POST BA Tvs is:\n"
+                               << t_vs.matrix() << std::endl;
   }else{
-    overal_window.mean = ba.rig()->cameras_[0]->GetParams();
+    window.mean = ba.rig()->cameras_[0]->GetParams();
+    {
+      std::lock_guard<std::mutex> lock(*ba_mutex_);
+      StreamMessage(debug_level-1) << "PQ: POST BA Params :"
+                                   << ba.rig()->cameras_[0]->GetParams().transpose()
+                                   << std::endl;
+    }
+
   }
 
-  overal_window.covariance =
+  window.covariance =
       ba.GetSolutionSummary().calibration_marginals;
 
-  // At this point the BA rig t_wc_ does not update the external one, so we
-  // have to manually do it.
+
+  // We don't have to manually update the rig parameters since ba
+  // has already done that (for camera and imu parameters)
   {
     std::lock_guard<std::mutex> lock(*ba_mutex_);
     if (apply_results) {
       if(DoTvs){
-        rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
-        StreamMessage(debug_level) << "new PQ t_wc\n:" << rig_->cameras_[0]->Pose().matrix()
-                  << std::endl;
+        if(rotation_only_Tvs){
+          // If only updating rotation, perserve original translation:
+          Sophus::SE3t new_imu_params = ba.rig()->cameras_[0]->Pose();
+          new_imu_params.translation() = imu_params_backup.translation();
+          rig_->cameras_[0]->SetPose(new_imu_params);
+        }
+        StreamMessage(debug_level) << "new PQ t_wc\n:" <<
+                                      RoboticsToVision(rig_->cameras_[0]->Pose())
+                                      .matrix()
+                                   << std::endl;
       }
     } else {
+      // If not updating the rig, rollback parameters to the original values
       rig_->cameras_[0]->SetParams(cam_params_backup);
+      rig_->cameras_[0]->SetPose(imu_params_backup);
     }
   }
 
   needs_update_ = false;
 }
 
+///////////////////////////////////////////////////////////////////////////
 template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AddCalibrationWindowToBa(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
@@ -178,9 +215,11 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
     /// ZZZZZZZZ: This is problematic. What if track size was zero but the pose
     /// had projection residuals? we don't want to regularize in this case
     if (pose->tracks.size() == 0 && !UseImu) {
+      // Regularize pose translation and rotation
       ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
     }
 
+    // Add inerital residual, if using IMU
     if (UseImu && ii > start_active_pose && ii > 0) {
       std::vector<ba::ImuMeasurementT<Scalar>> meas =
           imu_buffer->GetRange(poses[ii - 1]->time, pose->time);
@@ -193,16 +232,17 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
 
       ba.AddImuResidual(poses[ii - 1]->opt_id[ba_id_],
           pose->opt_id[ba_id_], meas);
-
-      // If using an IMU and this is the first pose in the window, regularize
-      // the translation and gravity rotation so there are no nullspaces
-      if (ii == start_active_pose) {
-        /*StreamMessage(debug_level) << "OC regularizing gravity and trans and bias of pose " <<
-                     pose->opt_id[ba_id_] << std::endl;*/
-        ba.RegularizePose(pose->opt_id[ba_id_], true, true, false, false);
-      }
     }
 
+    // If using an IMU and this is the first pose in the window, regularize
+    // the translation and gravity rotation so there are no nullspaces
+    if (UseImu && ii == start_active_pose) {
+      /*StreamMessage(debug_level) << "OC regularizing gravity and trans and bias of pose " <<
+                   pose->opt_id[ba_id_] << std::endl;*/
+      ba.RegularizePose(pose->opt_id[ba_id_], true, true, false, false);
+    }
+
+    // Add all landmarks to ba
     for (std::shared_ptr<DenseTrack> track: pose->tracks) {
       if (track->num_good_tracked_frames == 1 || track->is_outlier) {
         track->external_id[ba_id_] = UINT_MAX;
@@ -217,13 +257,13 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
         (UseImu ? true : track->id != longest_track->id);
       track->external_id[ba_id_] =
           ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
-      // StreamMessage(debug_level) << "Adding lm with opt_id " << track->external_id << " and "
-      //              " x_r " << ray.transpose() << " and x_orig: " <<
-      //              x_r_orig_->transpose() << std::endl;
+//       StreamMessage(debug_level) << "Adding lm with opt_id " << track->external_id << " and "
+//                    " x_r " << ray.transpose() << " and x_orig: " <<
+//                    x_r_orig_->transpose() << std::endl;
     }
   }
 
-  // Now add all reprojections to ba)
+  // Now add all reprojections to ba
   for (uint32_t ii = window.start_index ; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
     for (std::shared_ptr<DenseTrack> track : pose->tracks) {
@@ -245,12 +285,14 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   }
 }
 
+///////////////////////////////////////////////////////////////////////////
 bool OnlineCalibrator::AnalyzeCalibrationWindow(
     CalibrationWindow &new_window)
 {
-  StreamMessage(debug_level) << "Analyzing window with score " << new_window.score <<
+  StreamMessage(debug_level-1) << "Analyzing window with score " << new_window.score <<
                " start: " << new_window.start_index << " end: " <<
-               new_window.end_index << std::endl;
+               new_window.end_index << " mean: " << new_window.mean.transpose()
+                               << std::endl;
 
   // Do not add a degenerate window.
   if (new_window.score == 0) {
@@ -266,14 +308,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   uint32_t num_overlaps = 0;
   for (size_t ii = 0; ii < windows_.size() ; ++ii){
     CalibrationWindow& window = windows_[ii];
-     StreamMessage(debug_level) << "\t comparing with window " << ii << " with score : " <<
+     StreamMessage(debug_level+1) << "\t comparing with window " << ii << " with score : " <<
                   windows_[ii].score << " start " <<  windows_[ii].start_index <<
                   " end " << windows_[ii].end_index << std::endl;
     if (!((new_window.start_index < window.start_index && new_window.end_index <
            window.start_index) || (new_window.start_index > window.end_index &&
                                    new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
       num_overlaps++;
-      StreamMessage(debug_level) << "Overlap detected between " << window.start_index << ", " <<
+      StreamMessage(debug_level+1) << "Overlap detected between " << window.start_index << ", " <<
                    window.end_index << " and " << new_window.start_index <<
                    ", " << new_window.end_index << std::endl;
 
@@ -281,7 +323,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     }
 
     if (num_overlaps > 1) {
-      StreamMessage(debug_level) << "Num overlaps: " << num_overlaps << " rejecting window. " <<
+      StreamMessage(debug_level-1) << "Num overlaps: " << num_overlaps << " rejecting window. " <<
                    std::endl;
       // Then this window intersects with more than one other window.
       // We cannot continue.
@@ -299,14 +341,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   if (windows_.size() < queue_length_) {
     if (num_overlaps == 0) {
       windows_.push_back(new_window);
-      StreamMessage(debug_level) << "Pushing back non overlapping window into position " <<
+      StreamMessage(debug_level-1) << "Pushing back non overlapping window into position " <<
                    windows_.size() << std::endl;
       needs_update_ = true;
       return true;
     } else {
       // If the queue is not full yet, there is no reason to add overlapping
       // windows.
-      StreamMessage(debug_level) << "Rejecting window as queue is incomplete and window "
+      StreamMessage(debug_level-1) << "Rejecting window as queue is incomplete and window "
                    "overlaps" << std::endl;
       return false;
     }
@@ -318,20 +360,20 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       // the overlapping window otherwise information will be double counted.
       max_id = overlap_id;
       max_score = windows_[max_id].score;
-      StreamMessage(debug_level) << "Overlapping with 1 segment. Using overlapping score " <<
+      StreamMessage(debug_level-1) << "Overlapping with 1 segment. Using overlapping score " <<
                    max_score << " and id " << max_id << std::endl;
     }
 
     // Calculate the margin by which this candidate window beats what's in the
     // priority queue (or the window it overlaps with)
     const double margin = (max_score - new_window.score) / max_score;
-    StreamMessage(debug_level) << "Max score: " << max_score<< " margin: " << margin*100
-              << "%" << std::endl;
+    StreamMessage(debug_level-1) << "Max score: " << max_score<< " margin: " << margin
+               << std::endl;
 
     // Replace it if it beats a non-overlapping window.
     if (max_id != UINT_MAX && margin > 0.05) {
       const CalibrationWindow& old_window = windows_[max_id];
-      StreamMessage(debug_level) << "Replaced window at idx " << max_id << " with score " <<
+      StreamMessage(debug_level-1) << "Replaced window at idx " << max_id << " with score " <<
                    old_window.score << " start: " << old_window.start_index <<
                    " end: " << old_window.end_index << " with score " <<
                    new_window.score << " start: " << new_window.start_index <<
@@ -344,6 +386,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   }
 }
 
+///////////////////////////////////////////////////////////////////////////
 double OnlineCalibrator::ComputeBhattacharyyaDistance(
     const CalibrationWindow& window0,
     const CalibrationWindow& window1)
@@ -410,6 +453,7 @@ double OnlineCalibrator::ComputeYao1965(
   return p_score;
 }
 
+///////////////////////////////////////////////////////////////////////////
 double OnlineCalibrator::ComputeNelVanDerMerwe1986(
     const CalibrationWindow& window0,
     const CalibrationWindow& window1)
@@ -453,6 +497,7 @@ double OnlineCalibrator::ComputeNelVanDerMerwe1986(
   return p_score;
 }
 
+///////////////////////////////////////////////////////////////////////////
 void OnlineCalibrator::SetBaDebugLevel(int level)
 {
    selfcal_ba.debug_level_threshold = level;
@@ -461,6 +506,7 @@ void OnlineCalibrator::SetBaDebugLevel(int level)
    vi_only_tvs_selfcal_ba.debug_level_threshold = level;
 }
 
+///////////////////////////////////////////////////////////////////////////
 double OnlineCalibrator::ComputeHotellingScore(
     const CalibrationWindow& window0,
     const CalibrationWindow& window1)
@@ -483,6 +529,7 @@ double OnlineCalibrator::ComputeHotellingScore(
   return p_score;
 }
 
+///////////////////////////////////////////////////////////////////////////
 double OnlineCalibrator::ComputeKlDivergence(
     const CalibrationWindow& window0,
     const CalibrationWindow& window1)
@@ -506,6 +553,7 @@ double OnlineCalibrator::ComputeKlDivergence(
       log(cov0.determinant() / cov1.determinant());
 }
 
+///////////////////////////////////////////////////////////////////////////
 void OnlineCalibrator::SetPriorityQueueDistribution(
     const Eigen::MatrixXd &covariance, const Eigen::VectorXd &mean)
 {
@@ -524,6 +572,7 @@ void OnlineCalibrator::SetPriorityQueueDistribution(
   }*/
 }
 
+///////////////////////////////////////////////////////////////////////////
 double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
 {
 
@@ -537,15 +586,18 @@ double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
   }
 }
 
+///////////////////////////////////////////////////////////////////////////
 template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AnalyzeCalibrationWindow(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     uint32_t start_pose, uint32_t end_pose,
     CalibrationWindow &window,
-    uint32_t num_iterations, bool apply_results)
+    uint32_t num_iterations, bool apply_results, bool rotation_only_Tvs)
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
+  Sophus::SE3t imu_params_backup = rig_->cameras_[0]->Pose();
+
 
   StreamMessage(debug_level) << "Analyzing calibration window with imu = " << UseImu <<
                " and DoTvs = " << DoTvs <<
@@ -559,13 +611,14 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   ba::Options<double> options;
   options.write_reduced_camera_matrix = false;
   options.projection_outlier_threshold = 1.0;
-  options.trust_region_size = 10;
   options.use_dogleg = true;
   options.use_sparse_solver = false;//(end_pose - start_pose) > window_length_ * 10;
   /// ZZZZ WHY IS THIS NEEDED? SPARSE IS BROKEN WITH TRIANGULAR IT SEEMS.
   options.use_triangular_matrices = !options.use_sparse_solver;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
+  options.use_per_pose_cam_params = false;
+  // Why is the trust region size so large?
   options.trust_region_size = 100;
 
   // Do a bundle adjustment on the current set
@@ -581,22 +634,24 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
                     current_tracks->size() * poses.size());
 
     {
+      // Add the self-cal rig to ba
       ba.AddCamera(rig_->cameras_[0]);
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       AddCalibrationWindowToBa<UseImu, DoTvs>(poses, window);
     }
 
-    Sophus::SE3t M_vr;
-    M_vr.so3() = calibu::RdfRobotics.inverse();
-
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = t_vs * M_vr;
-      StreamMessage(debug_level) << "PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      t_vs = RoboticsToVision(t_vs);
+      StreamMessage(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+    }else{
+      StreamMessage(debug_level-1) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+
     }
 
     // Optimize the poses and calibration parameters
     ba.Solve(num_iterations);
+
 
     const ba::SolutionSummary<double>& summary =
         ba.GetSolutionSummary();
@@ -604,26 +659,37 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     // Obtain the mean from the BA
     //TODO: Currently this only supports Tvs OR Camera params. Change
     // so that it supports joint mode also
-    if(DoTvs){
+    if(DoTvs && UseImu){
       Eigen::MatrixXd imu_parameters = ba.rig()->cameras_[0]->Pose().log();
       window.mean = imu_parameters;
 
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = t_vs * M_vr;
-      StreamMessage(debug_level) << "POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      t_vs = RoboticsToVision(t_vs);
+      StreamMessage(debug_level) << "Window: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
+      StreamMessage(debug_level-1) << "BA: POST BA Cam Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
     }
 
     window.covariance = summary.calibration_marginals;
     window.score = GetWindowScore(window);
 
+
     if (apply_results) {
+
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       if(DoTvs){
-        rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
+        // We don't have to manually update the rig parameters since ba
+        // has already done that (for camera and imu parameters)
+        if(rotation_only_Tvs){
+          // If only updating rotation, perserve original translation:
+          Sophus::SE3t new_imu_params =  ba.rig()->cameras_[0]->Pose();
+          new_imu_params.translation() = imu_params_backup.translation();
+          rig_->cameras_[0]->SetPose(new_imu_params);
+        }
         StreamMessage(debug_level) << "new selfcal_rig t_wc\n:"
-                  << rig_->cameras_[0]->Pose().matrix() << std::endl;
+                  << RoboticsToVision(rig_->cameras_[0]->Pose()).matrix()
+                  << std::endl;
       }
 
       //Sophus::SE3d t_ba;
@@ -655,10 +721,12 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
         }
       }
     } else {
-      // TODO: check why this needs to be set back to the original camera
-      // parameters. Should not have changed.
+      // BA updates the selfcal rig (cam and imu parameters),
+      // so if we don't want parameters to be updated
+      // we have to roll back to the original param values.
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->cameras_[0]->SetParams(cam_params_backup);
+      rig_->cameras_[0]->SetPose(imu_params_backup);
     }
   }
 }
@@ -667,19 +735,19 @@ template void OnlineCalibrator::AnalyzePriorityQueue<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     CalibrationWindow& overal_window, uint32_t num_iterations = 1,
-    bool apply_results = false);
+    bool apply_results = false, bool rorotation_only_Tvs = false );
 
 template void OnlineCalibrator::AnalyzePriorityQueue<true, true>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     CalibrationWindow& overal_window, uint32_t num_iterations = 1,
-    bool apply_results = false);
+    bool apply_results = false, bool rorotation_only_Tvs = false);
 
 template void OnlineCalibrator::AnalyzePriorityQueue<true, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     CalibrationWindow& overal_window, uint32_t num_iterations = 1,
-    bool apply_results = false);
+    bool apply_results = false, bool rorotation_only_Tvs = false);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
@@ -701,16 +769,19 @@ template void OnlineCalibrator::AnalyzeCalibrationWindow<false, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
-    uint32_t num_iterations = 1, bool apply_results = false);
+    uint32_t num_iterations = 1, bool apply_results = false,
+    bool rorotation_only_Tvs = false);
 
 template void OnlineCalibrator::AnalyzeCalibrationWindow<true, true>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
-    uint32_t num_iterations = 1, bool apply_results = false);
+    uint32_t num_iterations = 1, bool apply_results = false,
+    bool rorotation_only_Tvs = false);
 
 template void OnlineCalibrator::AnalyzeCalibrationWindow<true, false>(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
     uint32_t start_pose, uint32_t end_pose, CalibrationWindow& window,
-    uint32_t num_iterations = 1, bool apply_results = false);
+    uint32_t num_iterations = 1, bool apply_results = false,
+    bool rorotation_only_Tvs = false);

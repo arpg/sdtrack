@@ -203,4 +203,11 @@ inline void GetBaPoseRange(
     start_pose = std::min(ii - (pose->longest_track - 1), start_pose);
   }
 }
+
+inline Sophus::SE3d RoboticsToVision(Sophus::SE3d T_r){
+  Sophus::SE3t M_vr;
+  M_vr.so3() = calibu::RdfRobotics.inverse();
+  return (T_r * M_vr);
+}
+
 }
