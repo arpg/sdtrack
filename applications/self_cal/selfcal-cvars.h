@@ -48,9 +48,11 @@ static bool& do_async_ba =
 static bool& use_imu_measurements =
     CVarUtils::CreateCVar<>("sd.UseImu", true, "");
 static bool& do_cam_self_cal =
-    CVarUtils::CreateCVar<>("sd.DoCamSelfCal", true, "");
+    CVarUtils::CreateCVar<>("sd.DoCamSelfCal", false, "");
 static bool& do_imu_self_cal =
-    CVarUtils::CreateCVar<>("sd.DoIMUSelfCal", false, "");
+    CVarUtils::CreateCVar<>("sd.DoIMUSelfCal", true, "");
+static bool& do_only_rotation_imu_self_cal =
+    CVarUtils::CreateCVar<>("sd.DoRotationOnlyIMUSelfCal", true, "");
 static uint32_t& num_aac_poses =
     CVarUtils::CreateCVar<>("sd.NumAACPoses",20u, "");
 static bool& do_keyframing =

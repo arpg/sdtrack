@@ -44,8 +44,8 @@ Sophus::SE3d last_t_ba, prev_delta_t_ba, prev_t_ba;
 int debug_level_threshold = 0;
 
 bool compare_self_cal_with_batch = false;
-bool unknown_cam_calibration = true;
-bool unknown_imu_calibration = false;
+bool unknown_cam_calibration = false;
+bool unknown_imu_calibration = true;
 
 
 const int window_width = 640 * 1.5;
@@ -162,6 +162,7 @@ double total_last_frame_proj_norm = 0;
 // State variables
 std::vector<cv::KeyPoint> keypoints;
 Sophus::SE3d guess;
+
 
 ///////////////////////////////////////////////////////////////////////////
 double GetTotalMeasured(Metrics m){
@@ -682,6 +683,8 @@ void DoAAC()
 ///////////////////////////////////////////////////////////////////////////
 void  BaAndStartNewLandmarks()
 {
+
+  // Temporary solution to multi-threading issues
   DoSerialAAC();
 
   if (!is_keyframe) {
@@ -738,7 +741,8 @@ void  BaAndStartNewLandmarks()
         batch_calib->online_calibrator.
             AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, batch_calib->unknown_calibration_start_pose,
-              batch_end, batch_calib->pq_window, num_selfcal_ba_iterations, true);
+              batch_end, batch_calib->pq_window, num_selfcal_ba_iterations, true,
+              do_only_rotation_imu_self_cal);
         window_analyzed = true;
         score = batch_calib->online_calibrator.GetWindowScore(
               batch_calib->pq_window);
@@ -779,7 +783,8 @@ void  BaAndStartNewLandmarks()
         imu_calib->online_calibrator
             .AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, imu_calib->unknown_calibration_start_pose,
-              batch_end, imu_calib->pq_window, num_selfcal_ba_iterations, true);
+              batch_end, imu_calib->pq_window, num_selfcal_ba_iterations, true,
+              do_only_rotation_imu_self_cal);
         window_analyzed = true;
         score = imu_calib->online_calibrator.
             GetWindowScore(imu_calib->pq_window);
@@ -788,7 +793,6 @@ void  BaAndStartNewLandmarks()
           imu_calib->current_window = imu_calib->pq_window;
         }
         num_params = Sophus::SE3t::DoF;
-
       }
     }
 
@@ -798,20 +802,29 @@ void  BaAndStartNewLandmarks()
       // Priority Queue window is good enough for us to use the calibraiton
       // parameters in the actual rig:
 
-      const Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
-        // Copy over the new parameters
-        rig.cameras_[0]->SetParams(new_params);
-        //rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
+      const Eigen::VectorXd new_cam_params = selfcal_rig.cameras_[0]->GetParams();
+      // Copy over the new parameters
+      rig.cameras_[0]->SetParams(new_cam_params);
 
-        StreamMessage(selfcal_debug_level) << "Setting new batch params from selfcal_rig to rig: "
-                                           << std::endl;
-        StreamMessage(selfcal_debug_level) << "new rig cam params: " <<
-                                              rig.cameras_[0]->GetParams().transpose()
-                                           << std::endl;
+      if(do_only_rotation_imu_self_cal){
+        Sophus::SE3t new_imu_params = selfcal_rig.cameras_[0]->Pose();
+        // Preserve the rig's translation
+        new_imu_params.translation() = rig.cameras_[0]->Pose().translation();
+        rig.cameras_[0]->SetPose(new_imu_params);
+      }else{
+        rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
+      }
 
-//        StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
-//                                              rig.cameras_[0]->Pose().matrix()
-//                                           << std::endl;
+      StreamMessage(selfcal_debug_level) << "Setting new batch params from selfcal_rig to rig: "
+                                         << std::endl;
+      StreamMessage(selfcal_debug_level) << "new rig cam params: " <<
+                                            rig.cameras_[0]->GetParams().transpose()
+                                         << std::endl;
+
+      StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
+                                            sdtrack::RoboticsToVision(rig.cameras_[0]->Pose())
+                                              .matrix()
+                                           << std::endl;
       {
         // We need to backproject all the tracks associated
         // to the poses that we did not know anything about the
@@ -822,7 +835,7 @@ void  BaAndStartNewLandmarks()
              ii < poses.size() ; ++ii) {
           // Set the per-pose camera parameters. If the params change, we need
           // to know the right calibration for each pose.
-          poses[ii]->cam_params = new_params;
+          poses[ii]->cam_params = new_cam_params;
           for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
             if (track->external_id[0] == UINT_MAX) {
               continue;
@@ -867,7 +880,7 @@ void  BaAndStartNewLandmarks()
           ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
            ((batch_end - imu_calib->unknown_calibration_start_pose)
             > imu_calib->self_cal_segment_length * 2))) {
-        StreamMessage(selfcal_debug_level) << "Determinant small enough, switching to imu self-cal" <<
+        StreamMessage(selfcal_debug_level) << "Determinant small enough, switching to IMU self-cal" <<
                                               std::endl;
         imu_calib->unknown_calibration = false;
       }
@@ -921,14 +934,8 @@ void  BaAndStartNewLandmarks()
         poses.size() > min_poses_for_imu) {
       StreamMessage(selfcal_debug_level) << "doing VI BA." << std::endl;
       global_metrics.ba_calls++;
-      StreamMessage(selfcal_debug_level) << "Using main rig params for VI ba: "
-                                         << rig.cameras_[0]->GetParams().transpose()
-                                         << std::endl;
       DoBundleAdjustment(vi_bundle_adjuster, true, false, ba_size, 0,
                          ba_imu_residual_ids, rig);
-      StreamMessage(selfcal_debug_level) << "POST VI BA Rig Cam Params "
-                                         << rig.cameras_[0]->GetParams().transpose()
-                                         << std::endl;
     } else {
       StreamMessage(selfcal_debug_level) << "doing visual BA." << std::endl;
       global_metrics.ba_calls++;
@@ -954,21 +961,21 @@ void  BaAndStartNewLandmarks()
       analyze_time = sdtrack::Tic();
       global_metrics.analyze_calls++;
 
-      {
-        std::lock_guard<std::mutex> lock(aac_mutex);
-        StreamMessage(selfcal_debug_level) << "New iter: \n cam PQ mean: " <<
-                                              cam_calib->pq_window.mean.transpose()
-                                           << std::endl <<
-                                              "selfcal rig params: " <<
-                                              selfcal_rig.cameras_[0]->GetParams().transpose()
-                                           << std::endl <<
-                                              "main rig params: " <<
-                                              rig.cameras_[0]->GetParams().transpose() <<
-                                              std::endl <<
-                                              " aac rig params: "<<
-                                              aac_rig.cameras_[0]->GetParams().transpose()<<
-                                              std::endl;
-      }
+//      {
+//        std::lock_guard<std::mutex> lock(aac_mutex);
+//        StreamMessage(selfcal_debug_level) << "New iter: \n Tvs PQ mean: " <<
+//                                              cam_calib->pq_window.mean.transpose()
+//                                           << std::endl <<
+//                                              "selfcal rig params: " <<
+//                                              selfcal_rig.cameras_[0]->Pose().log().transpose()
+//                                           << std::endl <<
+//                                              "main rig params: " <<
+//                                              rig.cameras_[0]->Pose().log().transpose() <<
+//                                              std::endl <<
+//                                              " aac rig params: "<<
+//                                              aac_rig.cameras_[0]->Pose().log().transpose()<<
+//                                              std::endl;
+//      }
 
 
 
@@ -981,7 +988,7 @@ void  BaAndStartNewLandmarks()
         uint32_t start_pose =
             std::max(0, (int)poses.size() - (int)cam_calib->self_cal_segment_length);
         uint32_t end_pose = poses.size();
-        StreamMessage(selfcal_debug_level) << "Analysing calibration window for camera parameters (visual) "
+        StreamMessage(selfcal_debug_level) << "Analyzing calibration window for camera parameters (visual) "
                                            << "from pose " << start_pose << " to pose " << end_pose <<
                                               std::endl;
         cam_calib->online_calibrator.AnalyzeCalibrationWindow<false, false>(
@@ -1001,12 +1008,13 @@ void  BaAndStartNewLandmarks()
         uint32_t start_pose =
             std::max(0, (int)poses.size() - (int)imu_calib->self_cal_segment_length);
         uint32_t end_pose = poses.size();
-        StreamMessage(selfcal_debug_level-1) << "Analysing calibration window for IMU parameters from pose " <<
+        StreamMessage(selfcal_debug_level-1) << "Analyzing calibration window for IMU parameters from pose " <<
                                                 start_pose << " to pose " << end_pose << " (visual + imu)" <<
                                                 std::endl;
         imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, start_pose, end_pose,
-              imu_calib->candidate_window, num_selfcal_ba_iterations);
+              imu_calib->candidate_window, num_selfcal_ba_iterations, false,
+              do_only_rotation_imu_self_cal);
 
         // Analyse the candidate window and add to the priority queue if it's good enough
         imu_calib->online_calibrator.AnalyzeCalibrationWindow(
@@ -1050,7 +1058,6 @@ void  BaAndStartNewLandmarks()
           /*-----CHANGE DETECTION-----*/
           // Check if there has been a change in calibration parameters.
           // If so, clear the priority queue.
-          // ZZZZZZZZZZZZZZZZZZZZ Re enable change detection:
           CheckParameterChange(calib.second);
 
         }
@@ -1104,7 +1111,7 @@ void  BaAndStartNewLandmarks()
         if (SelfCalActive(imu_calib)
             && imu_calib->online_calibrator.needs_update()) {
           analysed_imu_calib = true;
-          StreamMessage(selfcal_debug_level) << "Analysing IMU params PQ..." << std::endl;
+          StreamMessage(selfcal_debug_level) << "Analyzing IMU params PQ..." << std::endl;
           imu_calib->online_calibrator.AnalyzePriorityQueue<true, true>(
                 poses, current_tracks, imu_calib->pq_window, num_selfcal_ba_iterations,
                 !imu_calib->unknown_calibration);
@@ -1112,7 +1119,7 @@ void  BaAndStartNewLandmarks()
 
         if (SelfCalActive(cam_calib) && cam_calib->online_calibrator.needs_update()){
           analysed_cam_calib = true;
-          StreamMessage(selfcal_debug_level) << "Analysing Cam params PQ (visual)..." << std::endl;
+          StreamMessage(selfcal_debug_level) << "Analyzing Cam params PQ (visual)..." << std::endl;
           cam_calib->online_calibrator.AnalyzePriorityQueue<false, false>(
                 poses, current_tracks, cam_calib->pq_window, num_selfcal_ba_iterations,
                 !cam_calib->unknown_calibration);
@@ -1123,13 +1130,21 @@ void  BaAndStartNewLandmarks()
         if (apply_results) {
 
           std::unique_lock<std::mutex>(aac_mutex);
-          const Eigen::VectorXd new_params =
-              selfcal_rig.cameras_[0]->GetParams();
+          Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
           rig.cameras_[0]->SetParams(new_params);
-          //rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
+          if(do_only_rotation_imu_self_cal){
+            Sophus::SE3t new_imu_params = selfcal_rig.cameras_[0]->Pose();
+            // Preserve the rig's translation
+            new_imu_params.translation() = rig.cameras_[0]->Pose().translation();
+            rig.cameras_[0]->SetPose(new_imu_params);
+          }else{
+            rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
+          }
 
-          // Set the correct camera params for all the poses that were
+          // Set the correct cam params for all the poses that were
           // created with the previous parameters
+          // If we are not doint cam self-cal then it will just set the
+          // same parameters
           for (size_t ii = cam_calib->unknown_calibration_start_pose;
                ii < poses.size(); ++ii) {
             for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
@@ -1147,9 +1162,10 @@ void  BaAndStartNewLandmarks()
                                                 rig.cameras_[0]->GetParams().transpose()
                                              << std::endl;
 
-//          StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
-//                                                rig.cameras_[0]->Pose().matrix()
-//                                             << std::endl;
+          StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
+                                                sdtrack::RoboticsToVision(rig.cameras_[0]->Pose())
+                                                .matrix()
+                                             << std::endl;
         }
 
         if(analysed_cam_calib){
@@ -2072,9 +2088,12 @@ bool LoadCameras(GetPot& cl)
 
   if (has_imu && unknown_imu_calibration) {
 
-    rig.cameras_[0]->Pose().so3() = rig.cameras_[0]->Pose().so3() *
+    Sophus::SE3t Tvs = rig.cameras_[0]->Pose();
+    // If IMU calibration is unknown, perturb the given IMU rotation
+    Tvs.so3() = rig.cameras_[0]->Pose().so3() *
         Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
+    rig.cameras_[0]->SetPose(Tvs);
 
     for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
       selfcal_rig.cameras_[cam_id]->SetPose(rig.cameras_[cam_id]->Pose());
@@ -2203,7 +2222,7 @@ int main(int argc, char** argv) {
   cam_calib->do_self_cal = do_cam_self_cal;
   cam_calib->self_cal_segment_length = min_poses_for_camera;
   cam_calib->unknown_calibration = unknown_cam_calibration;
-  cam_calib->plot_graphs = true;
+  cam_calib->plot_graphs = false;
   cam_calib->online_calibrator.Init
       (&aac_mutex, &selfcal_rig, cam_calib->num_self_cam_segments,
        cam_calib->self_cal_segment_length, camera_weights,
