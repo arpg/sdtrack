@@ -80,7 +80,7 @@ template<bool UseImu, bool DoTvs>
 void OnlineCalibrator::AnalyzePriorityQueue(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
     std::list<std::shared_ptr<DenseTrack>>* current_tracks,
-    CalibrationWindow &overal_window,
+    CalibrationWindow &window,
     uint32_t num_iterations, bool apply_results)
 {
   Eigen::VectorXd cam_params_backup = rig_->cameras_[0]->GetParams();
@@ -94,6 +94,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   options.use_triangular_matrices = true;
   /// ZZZZZZ FIGURE OUT WHY USING SPARSE HERE FAILS SOMETIMES
   options.use_sparse_solver = false;
+  options.use_per_pose_cam_params = false;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
 
@@ -129,16 +130,21 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   // Obtain the mean from the BA.
   if(DoTvs && UseImu){
-    overal_window.mean = ba.rig()->cameras_[0]->Pose().log();
+    window.mean = ba.rig()->cameras_[0]->Pose().log();
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
     t_vs = t_vs * M_vr;
     StreamMessage(debug_level) << "PQ: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
   }else{
-    overal_window.mean = ba.rig()->cameras_[0]->GetParams();
-    StreamMessage(debug_level-1) << "PQ: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+    window.mean = ba.rig()->cameras_[0]->GetParams();
+    {
+      std::lock_guard<std::mutex> lock(*ba_mutex_);
+      StreamMessage(debug_level-1) << "PQ: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+      StreamMessage(debug_level-1) << "PQ Window mean :" << window.mean.transpose() << std::endl;
+    }
+
   }
 
-  overal_window.covariance =
+  window.covariance =
       ba.GetSolutionSummary().calibration_marginals;
 
   // At this point the BA rig t_wc_ does not update the external one, so we
@@ -153,6 +159,10 @@ void OnlineCalibrator::AnalyzePriorityQueue(
       }
     } else {
       rig_->cameras_[0]->SetParams(cam_params_backup);
+      StreamMessage(debug_level-1) << "Not applying updates, setting seflcal rig params back to: "
+                                   << rig_->cameras_[0]->GetParams().transpose() << std::endl;
+      StreamMessage(debug_level-1) << "Sanity check. PQ mean is: "
+                                   << window.mean.transpose() << std::endl;
     }
   }
 
@@ -637,7 +647,9 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       StreamMessage(debug_level) << "Window: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
-      StreamMessage(debug_level-1) << "Window: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+      StreamMessage(debug_level-1) << "BA: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+      StreamMessage(debug_level-1) << "Candidate Window mean :" << window.mean.transpose() << std::endl;
+
     }
 
     window.covariance = summary.calibration_marginals;
@@ -686,9 +698,15 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       }
     } else {
       // Change back to original parameters since the selfcal rig cam params
-      // are automatically updated to the ba rig params
+      // are updated to the ba rig params inside of ba.
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->cameras_[0]->SetParams(cam_params_backup);
+      StreamMessage(debug_level-1) << "Not applying updates, setting seflcal rig params back to: "
+                                   << rig_->cameras_[0]->GetParams().transpose() << std::endl;
+      StreamMessage(debug_level-1) << "Sanity check. Candidate mean is: "
+                                   << window.mean.transpose() << std::endl;
+
+
     }
   }
 }

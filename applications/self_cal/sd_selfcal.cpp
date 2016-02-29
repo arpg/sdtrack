@@ -97,7 +97,7 @@ struct Calibration {
   uint32_t unknown_calibration_start_pose = 0;
 
   // This is the overall priority queue window. It's start and end pose
-  // do not have meaning since it it usually used to hold the mean and
+  // do not have meaning since it's usually used to hold the mean and
   // covariance of the whole priority queue. It is also used in the initial
   // batch mode.
   sdtrack::CalibrationWindow pq_window;
@@ -304,6 +304,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
   bool all_poses_active = start_active_pose == start_pose_id;
 
+
   // Do a bundle adjustment on the current set
   if (current_tracks && end_pose_id) {
     {
@@ -430,8 +431,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
     // Optimize the poses
     ba.Solve(num_ba_iterations);
 
+
     {
       std::lock_guard<std::mutex> lock(aac_mutex);
+
       total_last_frame_proj_norm = 0;
 
       ////ZZZZZZZZZZ THIS IS NOT THREAD SAFE
@@ -583,6 +586,53 @@ void UpdateCurrentPose()
                                         current_pose->longest_track << std::endl;
 }
 
+
+
+///////////////////////////////////////////////////////////////////////////
+void DoSerialAAC()
+{
+  aac_time = 0;
+
+  if (has_imu && use_imu_measurements &&
+      poses.size() > 10 && do_async_ba) {
+    orig_num_aac_poses = num_aac_poses;
+    while (true) {
+      if (poses.size() > min_poses_for_imu &&
+          use_imu_measurements && has_imu) {
+        {
+          // Get the lastest parameters from the rig
+          std::lock_guard<std::mutex> lock(aac_mutex);
+          //aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
+          Eigen::VectorXd rig_params = rig.cameras_[0]->GetParams();
+          aac_rig.cameras_[0]->SetParams(rig_params);
+          //aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
+        }
+        aac_time = sdtrack::Tic();
+        aac_calls++;
+        DoBundleAdjustment(aac_bundle_adjuster, true, do_adaptive,
+                           num_aac_poses, 1, aac_imu_residual_ids,
+                           aac_rig);
+        aac_time = sdtrack::Toc(aac_time);
+        global_metrics.aac_calls += aac_calls;
+        global_metrics.aac_time += aac_time;
+
+      }
+
+      if ((int)num_aac_poses == orig_num_aac_poses || !do_adaptive) {
+        // If the adaptive window did not have to increase, or
+        // if adaptive mode had been tured off, exit the inner loop
+        break;
+      }
+
+      usleep(10);
+    }
+
+    imu_cond_start_pose_id = -1;
+    prev_cond_error = -1;
+  }
+
+}
+
 ///////////////////////////////////////////////////////////////////////////
 void DoAAC()
 {
@@ -597,7 +647,9 @@ void DoAAC()
           {
             // Get the lastest parameters from the rig
             std::lock_guard<std::mutex> lock(aac_mutex);
-            aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
+            //aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
+            Eigen::VectorXd rig_params = rig.cameras_[0]->GetParams();
+            aac_rig.cameras_[0]->SetParams(rig_params);
             //aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
           }
           aac_time = sdtrack::Tic();
@@ -630,6 +682,8 @@ void DoAAC()
 ///////////////////////////////////////////////////////////////////////////
 void  BaAndStartNewLandmarks()
 {
+  DoSerialAAC();
+
   if (!is_keyframe) {
     return;
   }
@@ -867,8 +921,14 @@ void  BaAndStartNewLandmarks()
         poses.size() > min_poses_for_imu) {
       StreamMessage(selfcal_debug_level) << "doing VI BA." << std::endl;
       global_metrics.ba_calls++;
+      StreamMessage(selfcal_debug_level) << "Using main rig params for VI ba: "
+                                         << rig.cameras_[0]->GetParams().transpose()
+                                         << std::endl;
       DoBundleAdjustment(vi_bundle_adjuster, true, false, ba_size, 0,
                          ba_imu_residual_ids, rig);
+      StreamMessage(selfcal_debug_level) << "POST VI BA Rig Cam Params "
+                                         << rig.cameras_[0]->GetParams().transpose()
+                                         << std::endl;
     } else {
       StreamMessage(selfcal_debug_level) << "doing visual BA." << std::endl;
       global_metrics.ba_calls++;
@@ -893,6 +953,24 @@ void  BaAndStartNewLandmarks()
     if (should_do_self_cal) {
       analyze_time = sdtrack::Tic();
       global_metrics.analyze_calls++;
+
+      {
+        std::lock_guard<std::mutex> lock(aac_mutex);
+        StreamMessage(selfcal_debug_level) << "New iter: \n cam PQ mean: " <<
+                                              cam_calib->pq_window.mean.transpose()
+                                           << std::endl <<
+                                              "selfcal rig params: " <<
+                                              selfcal_rig.cameras_[0]->GetParams().transpose()
+                                           << std::endl <<
+                                              "main rig params: " <<
+                                              rig.cameras_[0]->GetParams().transpose() <<
+                                              std::endl <<
+                                              " aac rig params: "<<
+                                              aac_rig.cameras_[0]->GetParams().transpose()<<
+                                              std::endl;
+      }
+
+
 
       // Check if camera parameters self-cal is active and if we have
       // enough poses to run the optimizaiton
@@ -940,8 +1018,6 @@ void  BaAndStartNewLandmarks()
             cam_calib->online_calibrator.ComputeYao1965(
               cam_calib->pq_window,
               cam_calib->candidate_window);
-        //ZZZZZZZZZZZ: Re enamble kl divergence calculation for cam params
-        //cam_calib->last_window_kl_divergence = 0;
       }
 
       if(SelfCalActive(imu_calib)){
@@ -962,7 +1038,7 @@ void  BaAndStartNewLandmarks()
         if(SelfCalActive(calib.second)){
 
           if(calib.second->candidate_window.mean.rows() != 0){
-            cam_calib->current_window = calib.second->candidate_window;
+            calib.second->current_window = calib.second->candidate_window;
           }
 
           // Treat cases where the KL divergence was not computable
@@ -1004,6 +1080,7 @@ void  BaAndStartNewLandmarks()
         global_metrics.queue_calls++;
         bool apply_results = false;
         for(auto const &calib : calibrations){
+
           if(calib.second->online_calibrator.needs_update() &&
              !calib.second->unknown_calibration){
             // This is just for plotting the KL divergence
@@ -1031,7 +1108,9 @@ void  BaAndStartNewLandmarks()
           imu_calib->online_calibrator.AnalyzePriorityQueue<true, true>(
                 poses, current_tracks, imu_calib->pq_window, num_selfcal_ba_iterations,
                 !imu_calib->unknown_calibration);
-        } if (SelfCalActive(cam_calib) && cam_calib->online_calibrator.needs_update()){
+        }
+
+        if (SelfCalActive(cam_calib) && cam_calib->online_calibrator.needs_update()){
           analysed_cam_calib = true;
           StreamMessage(selfcal_debug_level) << "Analysing Cam params PQ (visual)..." << std::endl;
           cam_calib->online_calibrator.AnalyzePriorityQueue<false, false>(
@@ -1074,9 +1153,12 @@ void  BaAndStartNewLandmarks()
         }
 
         if(analysed_cam_calib){
-          StreamMessage(selfcal_debug_level) << "Analyzed camera priority queue with mean " <<
+          {
+            std::lock_guard<std::mutex> lock(aac_mutex);
+            StreamMessage(selfcal_debug_level) << "Analyzed camera priority queue with mean " <<
                                                 cam_calib->pq_window.mean.transpose() << " and cov\n " <<
                                                 cam_calib->pq_window.covariance << std::endl;
+          }
           cam_calib->online_calibrator.SetPriorityQueueDistribution(
                 cam_calib->pq_window.covariance,
                 cam_calib->pq_window.mean);
@@ -2164,7 +2246,9 @@ int main(int argc, char** argv) {
 
   //imu_time_offset = -0.0697;
 
-  aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
+  //ZZZZZZZZZZZZZZZZZZZZ
+  // Temorarily disabled Async Conditioning, concurrency problems.
+  //aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
 
   Run();
 
