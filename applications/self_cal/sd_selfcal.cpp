@@ -236,6 +236,7 @@ void CheckParameterChange(std::shared_ptr<Calibration> calib){
   }
 }
 
+///////////////////////////////////////////////////////////////////////////
 template <typename BaType>
 void DoBundleAdjustment(BaType& ba, bool use_imu,
                         bool do_adaptive_conditioning,
@@ -327,6 +328,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
         if (ii == start_active_pose && use_imu && all_poses_active) {
           // Regularize the IMU nullspace: translation and the rotation about
           // the gravity vector.
+          StreamMessage(selfcal_debug_level) << "Regularizing first pose"
+                                             << " translation and gravity." <<
+                                                std::endl;
           ba.RegularizePose(pose->opt_id[id], true, true, false, false);
         }
 
@@ -362,11 +366,14 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           }
         }
 
+        // Add landmarks to ba
         for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
-          const bool constrains_active =
+          // Check if this landmark was seen in any poses that are in the
+          // active window
+          const bool constraints_active =
               track->keypoints.size() + ii > start_active_pose;
           if (track->num_good_tracked_frames <= 1 || track->is_outlier ||
-              !constrains_active) {
+              !constraints_active) {
             track->external_id[id] = UINT_MAX;
             continue;
           }
@@ -384,7 +391,7 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
         }
       }
 
-      // Now add all reprojections to ba)
+      // Now add all reprojections to ba
       for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
         std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
         uint32_t total_proj_res = 0;
@@ -535,8 +542,6 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
     if (num_active_poses > end_pose_id) {
       num_active_poses = orig_num_aac_poses;
-      StreamMessage(selfcal_debug_level) << "Reached batch solution. resetting number of poses to " <<
-                                            num_ba_poses << std::endl;
     }
 
     if (cond_error == 0 || cond_dims == 0) {
@@ -593,7 +598,7 @@ void DoAAC()
             // Get the lastest parameters from the rig
             std::lock_guard<std::mutex> lock(aac_mutex);
             aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
-            aac_rig.cameras_[0] = rig.cameras_[0];
+            //aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
           }
           aac_time = sdtrack::Tic();
           aac_calls++;
@@ -607,6 +612,8 @@ void DoAAC()
         }
 
         if ((int)num_aac_poses == orig_num_aac_poses || !do_adaptive) {
+          // If the adaptive window did not have to increase, or
+          // if adaptive mode had been tured off, exit the inner loop
           break;
         }
 
@@ -740,8 +747,7 @@ void  BaAndStartNewLandmarks()
       const Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
         // Copy over the new parameters
         rig.cameras_[0]->SetParams(new_params);
-        //ZZZZZZZZZZZZZZZ Is this wise?
-        rig.cameras_[0] = selfcal_rig.cameras_[0];
+        //rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
 
         StreamMessage(selfcal_debug_level) << "Setting new batch params from selfcal_rig to rig: "
                                            << std::endl;
@@ -749,9 +755,9 @@ void  BaAndStartNewLandmarks()
                                               rig.cameras_[0]->GetParams().transpose()
                                            << std::endl;
 
-        StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
-                                              rig.cameras_[0]->Pose().matrix()
-                                           << std::endl;
+//        StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
+//                                              rig.cameras_[0]->Pose().matrix()
+//                                           << std::endl;
       {
         // We need to backproject all the tracks associated
         // to the poses that we did not know anything about the
@@ -760,6 +766,8 @@ void  BaAndStartNewLandmarks()
         std::unique_lock<std::mutex>(aac_mutex);
         for (uint32_t ii = cam_calib->unknown_calibration_start_pose ;
              ii < poses.size() ; ++ii) {
+          // Set the per-pose camera parameters. If the params change, we need
+          // to know the right calibration for each pose.
           poses[ii]->cam_params = new_params;
           for (std::shared_ptr<sdtrack::DenseTrack> track: poses[ii]->tracks) {
             if (track->external_id[0] == UINT_MAX) {
@@ -932,6 +940,8 @@ void  BaAndStartNewLandmarks()
             cam_calib->online_calibrator.ComputeYao1965(
               cam_calib->pq_window,
               cam_calib->candidate_window);
+        //ZZZZZZZZZZZ: Re enamble kl divergence calculation for cam params
+        //cam_calib->last_window_kl_divergence = 0;
       }
 
       if(SelfCalActive(imu_calib)){
@@ -964,8 +974,8 @@ void  BaAndStartNewLandmarks()
           /*-----CHANGE DETECTION-----*/
           // Check if there has been a change in calibration parameters.
           // If so, clear the priority queue.
-          //ZZZZZZZZZZZZZZZZZZZ Re enable this
-          //CheckParameterChange(calib);
+          // ZZZZZZZZZZZZZZZZZZZZ Re enable change detection:
+          CheckParameterChange(calib.second);
 
         }
       }
@@ -1002,6 +1012,9 @@ void  BaAndStartNewLandmarks()
           }
 
           if(!apply_results){
+            // only apply resuslts if the calibration is already known,
+            // otherwise the batch estimation will take care of estimating
+            // the calibraiton parameters.
             apply_results = !calib.second->unknown_calibration &&
                 SelfCalActive(calib.second);
           }
@@ -1034,7 +1047,7 @@ void  BaAndStartNewLandmarks()
           const Eigen::VectorXd new_params =
               selfcal_rig.cameras_[0]->GetParams();
           rig.cameras_[0]->SetParams(new_params);
-          rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
+          //rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
 
           // Set the correct camera params for all the poses that were
           // created with the previous parameters
@@ -1055,9 +1068,9 @@ void  BaAndStartNewLandmarks()
                                                 rig.cameras_[0]->GetParams().transpose()
                                              << std::endl;
 
-          StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
-                                                rig.cameras_[0]->Pose().matrix()
-                                             << std::endl;
+//          StreamMessage(selfcal_debug_level) << "new rig Tvs params: \n" <<
+//                                                rig.cameras_[0]->Pose().matrix()
+//                                             << std::endl;
         }
 
         if(analysed_cam_calib){
@@ -1259,6 +1272,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
       // Set the initial velocity and bias.
       new_pose->v_w.setZero();
       new_pose->b.setZero();
+//       new_pose->b << 0.00209809 , 0.00167743, -7.46213e-05 ,
+//           0.151629 ,0.0224114, 0.826392;
     }
 
     // Add new pose to global poses array.
@@ -1348,7 +1363,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                                             " successful tracks. Using guess." << std::endl;
       tracking_failed = true;
       tracker.set_t_ba(guess);
-    }else{
+    }else if(tracker.num_successful_tracks() < 10){
       StreamMessage(selfcal_debug_level) << "Tracking failed. But no IMU data"
                                          << " so using tracker guess anyway." <<
                                             std::endl;
@@ -1569,6 +1584,16 @@ void Run()
     glColor4f(1.0f,1.0f,1.0f,1.0f);
 
     if (go) {
+
+      if (has_imu && use_imu_measurements &&
+          imu_buffer.elements.size() == 0) {
+        // Capture an image so we have some IMU data.
+        std::shared_ptr<hal::ImageArray> img = hal::ImageArray::Create();
+        while (imu_buffer.elements.size() == 0) {
+          camera_device.Capture(*img);
+        }
+      }
+
       capture_success = camera_device.Capture(*images);
     }
 
@@ -1970,19 +1995,10 @@ bool LoadCameras(GetPot& cl)
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
 
     for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
-      selfcal_rig.cameras_[cam_id]->Pose() = rig.cameras_[cam_id]->Pose();
-      aac_rig.cameras_[cam_id]->Pose() = aac_rig.cameras_[cam_id]->Pose();
+      selfcal_rig.cameras_[cam_id]->SetPose(rig.cameras_[cam_id]->Pose());
+      aac_rig.cameras_[cam_id]->SetPose(aac_rig.cameras_[cam_id]->Pose());
     }
 
-  }
-
-
-  if (has_imu && use_imu_measurements) {
-    // Capture an image so we have some IMU data.
-    std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
-    while (imu_buffer.elements.size() == 0) {
-      camera_device.Capture(*images);
-    }
   }
 
   return true;
@@ -2092,7 +2108,7 @@ int main(int argc, char** argv) {
   Eigen::VectorXd imu_weights(6);
   imu_weights << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
 
-  Eigen::VectorXd batch_weights(rig.cameras_[0]->NumParams() + 6);
+  Eigen::VectorXd batch_weights(rig.cameras_[0]->NumParams() + Sophus::SE3d::DoF);
   batch_weights << camera_weights, imu_weights;
 
 
