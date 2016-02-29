@@ -100,6 +100,7 @@ private:
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
   // Visual BA with camera parameters
+  // Lm size: 1, Pose size: 6, Calibration size: 5
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
   // VI BA with camera parameters
   ba::BundleAdjuster<double, 1, 15, 5, false> vi_selfcal_ba;

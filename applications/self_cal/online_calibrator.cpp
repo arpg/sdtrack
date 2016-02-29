@@ -194,9 +194,11 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
     /// ZZZZZZZZ: This is problematic. What if track size was zero but the pose
     /// had projection residuals? we don't want to regularize in this case
     if (pose->tracks.size() == 0 && !UseImu) {
+      // Regularize pose translation and rotation
       ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
     }
 
+    // Add inerital residual, if using IMU
     if (UseImu && ii > start_active_pose && ii > 0) {
       std::vector<ba::ImuMeasurementT<Scalar>> meas =
           imu_buffer->GetRange(poses[ii - 1]->time, pose->time);
@@ -219,6 +221,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       }
     }
 
+    // Add all landmarks to ba
     for (std::shared_ptr<DenseTrack> track: pose->tracks) {
       if (track->num_good_tracked_frames == 1 || track->is_outlier) {
         track->external_id[ba_id_] = UINT_MAX;
@@ -233,13 +236,13 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
         (UseImu ? true : track->id != longest_track->id);
       track->external_id[ba_id_] =
           ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
-      // StreamMessage(debug_level) << "Adding lm with opt_id " << track->external_id << " and "
-      //              " x_r " << ray.transpose() << " and x_orig: " <<
-      //              x_r_orig_->transpose() << std::endl;
+//       StreamMessage(debug_level) << "Adding lm with opt_id " << track->external_id << " and "
+//                    " x_r " << ray.transpose() << " and x_orig: " <<
+//                    x_r_orig_->transpose() << std::endl;
     }
   }
 
-  // Now add all reprojections to ba)
+  // Now add all reprojections to ba
   for (uint32_t ii = window.start_index ; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
     for (std::shared_ptr<DenseTrack> track : pose->tracks) {
@@ -576,13 +579,13 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   ba::Options<double> options;
   options.write_reduced_camera_matrix = false;
   options.projection_outlier_threshold = 1.0;
-  options.trust_region_size = 10;
   options.use_dogleg = true;
   options.use_sparse_solver = false;//(end_pose - start_pose) > window_length_ * 10;
   /// ZZZZ WHY IS THIS NEEDED? SPARSE IS BROKEN WITH TRIANGULAR IT SEEMS.
   options.use_triangular_matrices = !options.use_sparse_solver;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
+  options.use_per_pose_cam_params = false;
   options.trust_region_size = 100;
 
   // Do a bundle adjustment on the current set
@@ -598,6 +601,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
                     current_tracks->size() * poses.size());
 
     {
+      // Add the self-cal rig to ba
       ba.AddCamera(rig_->cameras_[0]);
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       AddCalibrationWindowToBa<UseImu, DoTvs>(poses, window);
@@ -634,13 +638,17 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
       StreamMessage(debug_level-1) << "Window: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
-
     }
 
     window.covariance = summary.calibration_marginals;
     window.score = GetWindowScore(window);
 
     if (apply_results) {
+
+      // No need to get the camera parameters from ba as the selfcal rig
+      // has already been updated. We do however, need to get the Tvs update
+      // from ba as that does not automatically update the selfcal rig.
+
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       if(DoTvs){
         rig_->cameras_[0]->Pose() = ba.rig()->cameras_[0]->Pose();
@@ -677,8 +685,8 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
         }
       }
     } else {
-      // TODO: check why this needs to be set back to the original camera
-      // parameters. Should not have changed.
+      // Change back to original parameters since the selfcal rig cam params
+      // are automatically updated to the ba rig params
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->cameras_[0]->SetParams(cam_params_backup);
     }
