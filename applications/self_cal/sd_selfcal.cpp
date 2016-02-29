@@ -703,7 +703,7 @@ void  BaAndStartNewLandmarks()
 {
 
   // Temporary solution to multi-threading issues
-  DoSerialAAC();
+  //DoSerialAAC();
 
   if (!is_keyframe) {
     return;
@@ -2295,7 +2295,7 @@ int main(int argc, char** argv) {
 
   //ZZZZZZZZZZZZZZZZZZZZ
   // Temorarily disabled Async Conditioning, concurrency problems.
-  //aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
+  aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
 
   Run();
 
