@@ -604,9 +604,19 @@ void DoSerialAAC()
           // Get the lastest parameters from the rig
           std::lock_guard<std::mutex> lock(aac_mutex);
           //aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
-          Eigen::VectorXd rig_params = rig.cameras_[0]->GetParams();
-          aac_rig.cameras_[0]->SetParams(rig_params);
-          //aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
+          Eigen::VectorXd rig_cam_params = rig.cameras_[0]->GetParams();
+          aac_rig.cameras_[0]->SetParams(rig_cam_params);
+
+          if(do_only_rotation_imu_self_cal){
+            Sophus::SE3t new_imu_params = rig.cameras_[0]->Pose();
+            new_imu_params.translation() = aac_rig.cameras_[0]->Pose().
+                translation();
+            aac_rig.cameras_[0]->SetPose(new_imu_params);
+          }else{
+            aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
+          }
+
+
         }
         aac_time = sdtrack::Tic();
         aac_calls++;
@@ -651,7 +661,15 @@ void DoAAC()
             //aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
             Eigen::VectorXd rig_params = rig.cameras_[0]->GetParams();
             aac_rig.cameras_[0]->SetParams(rig_params);
-            //aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
+
+            if(do_only_rotation_imu_self_cal){
+              Sophus::SE3t new_imu_params = rig.cameras_[0]->Pose();
+              new_imu_params.translation() = aac_rig.cameras_[0]->Pose().
+                  translation();
+              aac_rig.cameras_[0]->SetPose(new_imu_params);
+            }else{
+              aac_rig.cameras_[0]->SetPose(rig.cameras_[0]->Pose());
+            }
           }
           aac_time = sdtrack::Tic();
           aac_calls++;
@@ -2035,6 +2053,9 @@ bool LoadCameras(GetPot& cl)
 {
   LoadCameraAndRig(cl, camera_device, rig);
 
+  StreamMessage(selfcal_debug_level) << "Rig RDF: \n" <<
+                                        rig.cameras_[0]->RDF() << std::endl;
+
   for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
     selfcal_rig.AddCamera(rig.cameras_[cam_id]);
     aac_rig.AddCamera(rig.cameras_[cam_id]);
@@ -2094,12 +2115,19 @@ bool LoadCameras(GetPot& cl)
         Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
     rig.cameras_[0]->SetPose(Tvs);
+    StreamMessage(selfcal_debug_level) << "Unknown IMU calibration, using:\n"
+                                       << sdtrack::RoboticsToVision(rig.cameras_[0]->Pose()).
+                                        matrix() << std::endl;
 
     for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
       selfcal_rig.cameras_[cam_id]->SetPose(rig.cameras_[cam_id]->Pose());
       aac_rig.cameras_[cam_id]->SetPose(aac_rig.cameras_[cam_id]->Pose());
     }
 
+  }else{
+    StreamMessage(selfcal_debug_level) << "Using IMU calibration:\n"
+                                       << sdtrack::RoboticsToVision(rig.cameras_[0]->Pose()).
+                                        matrix() << std::endl;
   }
 
   return true;
