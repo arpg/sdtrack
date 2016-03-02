@@ -371,7 +371,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
                << std::endl;
 
     // Replace it if it beats a non-overlapping window.
-    if (max_id != UINT_MAX && margin > 0.05) {
+    //if (max_id != UINT_MAX && margin > 0.05)
+    if (max_id != UINT_MAX && margin > 0.15){
       const CalibrationWindow& old_window = windows_[max_id];
       StreamMessage(debug_level-1) << "Replaced window at idx " << max_id << " with score " <<
                    old_window.score << " start: " << old_window.start_index <<

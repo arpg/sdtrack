@@ -620,6 +620,8 @@ void DoSerialAAC()
         }
         aac_time = sdtrack::Tic();
         aac_calls++;
+        StreamMessage(selfcal_debug_level) << "AAC active poses: " <<
+                                              num_aac_poses << std::endl;
         DoBundleAdjustment(aac_bundle_adjuster, true, do_adaptive,
                            num_aac_poses, 1, aac_imu_residual_ids,
                            aac_rig);
@@ -703,7 +705,7 @@ void  BaAndStartNewLandmarks()
 {
 
   // Temporary solution to multi-threading issues
-  //DoSerialAAC();
+  DoSerialAAC();
 
   if (!is_keyframe) {
     return;
@@ -1037,6 +1039,15 @@ void  BaAndStartNewLandmarks()
         // Analyse the candidate window and add to the priority queue if it's good enough
         imu_calib->online_calibrator.AnalyzeCalibrationWindow(
               imu_calib->candidate_window);
+
+        // Write this to the imu candidate window file.
+        std::ofstream("imu_candidate.txt", std::ios_base::app) << keyframe_id << ", " <<
+                                                          imu_calib->candidate_window.covariance.diagonal().transpose().format(
+                                                                    sdtrack::kLongCsvFmt) <<
+                                                          imu_calib->candidate_window.mean.format(
+                                                            sdtrack::kLongCsvFmt)  << ", " <<
+                                                          imu_calib->candidate_window.score << std::endl;
+
       }
 
       if(SelfCalActive(cam_calib)){
@@ -1052,7 +1063,11 @@ void  BaAndStartNewLandmarks()
         //TODO: Implement 6DOF transform mean and remove this line
         // this effectively removes the change detection, as a change will
         // never be triggered.
-        imu_calib->last_window_kl_divergence = 0;
+        //imu_calib->last_window_kl_divergence = 0;
+//        imu_calib->last_window_kl_divergence =
+//            imu_calib->online_calibrator.ComputeYao1965(
+//              imu_calib->pq_window,
+//              imu_calib->candidate_window);
       }
 
       StreamMessage(selfcal_debug_level) << "KL divergence for last cam window: " <<
@@ -1132,7 +1147,7 @@ void  BaAndStartNewLandmarks()
           StreamMessage(selfcal_debug_level) << "Analyzing IMU params PQ..." << std::endl;
           imu_calib->online_calibrator.AnalyzePriorityQueue<true, true>(
                 poses, current_tracks, imu_calib->pq_window, num_selfcal_ba_iterations,
-                !imu_calib->unknown_calibration);
+                !imu_calib->unknown_calibration, do_only_rotation_imu_self_cal);
         }
 
         if (SelfCalActive(cam_calib) && cam_calib->online_calibrator.needs_update()){
@@ -1158,6 +1173,15 @@ void  BaAndStartNewLandmarks()
           }else{
             rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
           }
+
+          // Write this to the imu candidate window file
+          std::ofstream("imu_pq.txt", std::ios_base::app) << keyframe_id << ", " <<
+                                                            imu_calib->pq_window.mean.format(
+                                                              sdtrack::kLongCsvFmt) << ", " <<
+                                                             selfcal_rig.cameras_[0]->Pose().translation().transpose().format(
+                                                               sdtrack::kLongCsvFmt) << ", " <<
+                                                             selfcal_rig.cameras_[0]->Pose().rotationMatrix().eulerAngles(0,1,2).transpose().format(
+                                                               sdtrack::kLongCsvFmt) << std::endl;
 
           // Set the correct cam params for all the poses that were
           // created with the previous parameters
@@ -1974,7 +1998,7 @@ void InitGui() {
 
     const uint32_t num_cam_params = do_cam_self_cal ?
           rig.cameras_[0]->NumParams() : 0;
-    const uint32_t num_imu_params = imu_plots_needed ? 6 : 0;
+    const uint32_t num_imu_params = imu_plots_needed ? Sophus::SE3t::DoF : 0;
     const uint32_t num_plots = num_cam_params + num_imu_params;
 
     plot_views.resize(num_plots);
@@ -2176,9 +2200,13 @@ int main(int argc, char** argv) {
   // Clear the log files.
   {
     std::ofstream sigmas_file("sigmas.txt", std::ios_base::trunc);
-    std::ofstream pq_file("pq.txt", std::ios_base::trunc);
+    std::ofstream imu_pq_file("imu_pq.txt", std::ios_base::trunc);
+    std::ofstream imu_candidate_file("imu_candidate.txt", std::ios_base::trunc);
+    std::ofstream cam_pq_file("cam_pq.txt", std::ios_base::trunc);
+    std::ofstream cam_candidate_file("cam_candidate.txt", std::ios_base::trunc);
     std::ofstream batch_file("batch.txt", std::ios_base::trunc);
     std::ofstream pose_file("timings.txt", std::ios_base::trunc);
+
   }
   srand(0);
   GetPot cl(argc, argv);
@@ -2232,10 +2260,10 @@ int main(int argc, char** argv) {
     camera_weights << 1.0, 1.0, 1.7, 1.7;
   }
 
-  // TOOD: Run a large optimization to find out what the scaling wieights for
+  // TOOD: Run a large optimization to find out what the scaling weights for
   // the IMU transform are
   Eigen::VectorXd imu_weights(6);
-  imu_weights << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
+  imu_weights << 100, 100, 1000, 500000, 500000, 500000;
 
   Eigen::VectorXd batch_weights(rig.cameras_[0]->NumParams() + Sophus::SE3d::DoF);
   batch_weights << camera_weights, imu_weights;
@@ -2263,11 +2291,11 @@ int main(int argc, char** argv) {
   // Initialize inertial calibration (camera to imu: Tvs)
   std::shared_ptr<Calibration> imu_calib(new Calibration);
   imu_calib->type = CalibrationType::IMU;
-  imu_calib->num_self_cam_segments = 10;
+  imu_calib->num_self_cam_segments = 5;
   imu_calib->do_self_cal = do_imu_self_cal;
-  imu_calib->self_cal_segment_length = min_poses_for_imu;
+  imu_calib->self_cal_segment_length = 10;
   imu_calib->unknown_calibration = unknown_imu_calibration;
-  imu_calib->plot_graphs = false;
+  imu_calib->plot_graphs = true;
   imu_calib->online_calibrator.Init
       (&aac_mutex, &selfcal_rig, imu_calib->num_self_cam_segments,
        imu_calib->self_cal_segment_length, imu_weights,
@@ -2295,7 +2323,7 @@ int main(int argc, char** argv) {
 
   //ZZZZZZZZZZZZZZZZZZZZ
   // Temorarily disabled Async Conditioning, concurrency problems.
-  aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
+  //aac_thread = std::shared_ptr<std::thread>(new std::thread(&DoAAC));
 
   Run();
 
