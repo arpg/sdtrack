@@ -1043,8 +1043,8 @@ void  BaAndStartNewLandmarks()
         // Write this to the imu candidate window file.
         std::ofstream("imu_candidate.txt", std::ios_base::app) << keyframe_id << ", " <<
                                                           imu_calib->candidate_window.covariance.diagonal().transpose().format(
-                                                                    sdtrack::kLongCsvFmt) <<
-                                                          imu_calib->candidate_window.mean.format(
+                                                                    sdtrack::kLongCsvFmt) << ", " <<
+                                                          imu_calib->candidate_window.mean.transpose().format(
                                                             sdtrack::kLongCsvFmt)  << ", " <<
                                                           imu_calib->candidate_window.score << std::endl;
 
@@ -1063,7 +1063,7 @@ void  BaAndStartNewLandmarks()
         //TODO: Implement 6DOF transform mean and remove this line
         // this effectively removes the change detection, as a change will
         // never be triggered.
-        //imu_calib->last_window_kl_divergence = 0;
+        imu_calib->last_window_kl_divergence = 0;
 //        imu_calib->last_window_kl_divergence =
 //            imu_calib->online_calibrator.ComputeYao1965(
 //              imu_calib->pq_window,
@@ -1176,7 +1176,9 @@ void  BaAndStartNewLandmarks()
 
           // Write this to the imu candidate window file
           std::ofstream("imu_pq.txt", std::ios_base::app) << keyframe_id << ", " <<
-                                                            imu_calib->pq_window.mean.format(
+                                                             imu_calib->candidate_window.covariance.diagonal().transpose().format(
+                                                                       sdtrack::kLongCsvFmt) << ", " <<
+                                                            imu_calib->pq_window.mean.transpose().format(
                                                               sdtrack::kLongCsvFmt) << ", " <<
                                                              selfcal_rig.cameras_[0]->Pose().translation().transpose().format(
                                                                sdtrack::kLongCsvFmt) << ", " <<
