@@ -369,8 +369,13 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
 
   }
 
+  Sophus::SE3d Tvs = sdtrack::VisionToRobotics(crig->cameras_[0]->Pose());
+
   LOG(INFO) << "Starting Tvs: " << std::endl
-            << crig->cameras_[0]->Pose().matrix();
+            << Tvs.matrix() << std::endl;
+  LOG(INFO) << "Starting Tvs euler angles: "
+            << Tvs.rotationMatrix().eulerAngles(0,1,2).transpose() <<
+               std::endl;
 
   rig.cameras_.clear();
   for (uint32_t cam_id = 0; cam_id < crig->cameras_.size(); ++cam_id) {
