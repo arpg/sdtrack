@@ -121,7 +121,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   if(DoTvs){
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = RoboticsToVision(t_vs);
+    t_vs = VisionToRobotics(t_vs);
     StreamMessage(debug_level) << "PQ: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
   }else{
     StreamMessage(debug_level-1) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
@@ -134,7 +134,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   if(DoTvs && UseImu){
     window.mean = ba.rig()->cameras_[0]->Pose().log();
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = RoboticsToVision(t_vs);
+    t_vs = VisionToRobotics(t_vs);
     StreamMessage(debug_level) << "PQ: POST BA Tvs is:\n"
                                << t_vs.matrix() << std::endl;
   }else{
@@ -165,7 +165,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
         StreamMessage(debug_level) << "new PQ t_wc\n:" <<
-                                      RoboticsToVision(rig_->cameras_[0]->Pose())
+                                      VisionToRobotics(rig_->cameras_[0]->Pose())
                                       .matrix()
                                    << std::endl;
       }
@@ -219,15 +219,15 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
     }
 
-    // Add inerital residual, if using IMU
+    // Add inertial residual, if using IMU
     if (UseImu && ii > start_active_pose && ii > 0) {
       std::vector<ba::ImuMeasurementT<Scalar>> meas =
           imu_buffer->GetRange(poses[ii - 1]->time, pose->time);
 
-      /*StreamMessage(debug_level) << "Adding OC imu residual between poses " << ii - 1 << " with "
-                 " time " << poses[ii - 1]->time <<  " and " << ii <<
-                 " with time " << pose->time << " with " << meas.size() <<
-                 " measurements" << std::endl;*/
+//      StreamMessage(debug_level) << "Adding OC imu residual between poses " << ii - 1 << " with "
+//                 "time " << poses[ii - 1]->time <<  " and " << ii <<
+//                 " with time " << pose->time << " with " << meas.size() <<
+//                 " measurements" << std::endl;
 
 
       ba.AddImuResidual(poses[ii - 1]->opt_id[ba_id_],
@@ -643,7 +643,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = RoboticsToVision(t_vs);
+      t_vs = VisionToRobotics(t_vs);
       StreamMessage(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }else{
       StreamMessage(debug_level-1) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
@@ -665,7 +665,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       window.mean = imu_parameters;
 
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = RoboticsToVision(t_vs);
+      t_vs = VisionToRobotics(t_vs);
       StreamMessage(debug_level) << "Window: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
@@ -689,7 +689,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
         StreamMessage(debug_level) << "new selfcal_rig t_wc\n:"
-                  << RoboticsToVision(rig_->cameras_[0]->Pose()).matrix()
+                  << VisionToRobotics(rig_->cameras_[0]->Pose()).matrix()
                   << std::endl;
       }
 
