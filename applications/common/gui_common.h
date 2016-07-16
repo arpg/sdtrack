@@ -344,10 +344,9 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
   def_dir = camera_device.GetDeviceProperty(hal::DeviceDirectory);
   std::string src_dir = cl.follow(def_dir.c_str(), "-sdir");
 
-  LOG(INFO) << "Loading camera models...";
   std::string cmod_file = cl.follow("cameras.xml", "-cmod");
   std::string filename = src_dir + "/" + cmod_file;
-  LOG(INFO) << "Loading camera models from " << filename;
+  VLOG(0) << "Loading camera models from " << filename;
 
   std::shared_ptr<calibu::Rig<Scalar>> xmlrig = calibu::ReadXmlRig(filename);
   if (xmlrig->cameras_.empty()) {
@@ -356,26 +355,23 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
 
   std::shared_ptr<calibu::Rig<Scalar>> crig = xmlrig;
 
+  VLOG(0) << "XML Rig Tvs: " << "[ "
+            << crig->cameras_[0]->Pose().translation().transpose() <<
+            " | " << crig->cameras_[0]->Pose().rotationMatrix().
+               eulerAngles(0,1,2).transpose() << " ]";
+
+
   if (transform_to_robotics_coords) {
     crig = calibu::ToCoordinateConvention<Scalar>(
         xmlrig, calibu::RdfRobotics.cast<Scalar>());
 
-    Sophus::SE3t M_rv;
+    Sophus::SE3d M_rv;
     M_rv.so3() = calibu::RdfRobotics;
     for (std::shared_ptr<calibu::CameraInterface<Scalar>> model : crig->cameras_)
       {
         model->SetPose(model->Pose() * M_rv);
       }
-
   }
-
-  Sophus::SE3d Tvs = sdtrack::VisionToRobotics(crig->cameras_[0]->Pose());
-
-  LOG(INFO) << "Starting Tvs: " << std::endl
-            << Tvs.matrix() << std::endl;
-  LOG(INFO) << "Starting Tvs euler angles: "
-            << Tvs.rotationMatrix().eulerAngles(0,1,2).transpose() <<
-               std::endl;
 
   rig.cameras_.clear();
   for (uint32_t cam_id = 0; cam_id < crig->cameras_.size(); ++cam_id) {
@@ -383,10 +379,13 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
   }
 
   for (size_t ii = 0; ii < rig.cameras_.size(); ++ii) {
-    LOG(INFO) << ">>>>>>>> Camera " << ii << ":" << std::endl
+    VLOG(0) << "\n>>>>>>>> Camera " << ii << ":" << std::endl
               << "Model: " << std::endl << rig.cameras_[ii]->K()
-              << std::endl << "Pose: " << std::endl
-              << rig.cameras_[ii]->Pose().matrix();
+              << std::endl << "Pose: "
+              << "[ " << rig.cameras_[ii]->Pose().translation().transpose()<<
+                 " | " << rig.cameras_[ii]->Pose().rotationMatrix().eulerAngles(0,1,2).
+                 transpose()
+              << " ]";
   }
   return true;
 }

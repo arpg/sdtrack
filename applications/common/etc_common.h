@@ -169,6 +169,23 @@ inline std::istream& operator>>(std::istream& Stream,
   }
   return Stream;
 }
+
+}
+
+namespace sdtrackUtils {
+inline std::ostream& operator<<(std::ostream& Stream,
+                                Sophus::SE3d const& pose) {
+
+  Stream << "[ " <<
+            pose.translation().transpose() <<
+            " | " <<
+            pose.rotationMatrix().eulerAngles(0,1,2).transpose() <<
+            " ]";
+
+  return Stream;
+}
+
+
 }
 
 namespace sdtrack {
@@ -204,10 +221,42 @@ inline void GetBaPoseRange(
   }
 }
 
-inline Sophus::SE3d VisionToRobotics(Sophus::SE3d T_r){
+
+// Convenience functions to rotate and un-rotate a transformation.
+// A pose needs to be rotated to be input into BA and un-rotated to be
+// read out of ba.
+inline Sophus::SE3d UnrotatePose(Sophus::SE3d T_v){
   Sophus::SE3t M_vr;
   M_vr.so3() = calibu::RdfRobotics.inverse();
-  return (T_r * M_vr);
+  return T_v * M_vr;
+}
+inline Sophus::SE3d RotatePose(Sophus::SE3d T_r){
+  Sophus::SE3t M_rv;
+  M_rv.so3() = calibu::RdfRobotics;
+  return T_r * M_rv;
+}
+
+
+// Converts a pose from vision frame to robotics
+inline Sophus::SE3d Vision2Robotics(Sophus::SE3d T_v){
+  Sophus::SO3t M_vr;
+  // Vision to robotics RDF
+  M_vr = calibu::RdfRobotics;
+
+  T_v.so3() = M_vr*T_v.so3()*M_vr.inverse();
+  T_v.translation() = M_vr*T_v.translation();
+  return T_v;
+}
+
+// Converts a pose from robotics frame to vision
+inline Sophus::SE3d Robotics2Vision(Sophus::SE3d T_r){
+  Sophus::SO3t M_rv;
+  // Robotics to vision RDF
+  M_rv = calibu::RdfRobotics.inverse();
+
+  T_r.so3() = M_rv*T_r.so3()*M_rv.inverse();
+  T_r.translation() = M_rv*T_r.translation();
+  return T_r;
 }
 
 }
