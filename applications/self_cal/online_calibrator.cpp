@@ -3,6 +3,8 @@
 #include "ftest.h"
 
 using namespace sdtrack;
+using sdtrackUtils::operator<<;
+
 
 OnlineCalibrator::OnlineCalibrator()
 {
@@ -73,9 +75,8 @@ void OnlineCalibrator::TestJacobian(Eigen::Vector2t pix,
 
   // Now compare the two jacobians.
   auto jacobian = cam->dTransfer_dparams(t_ba, pix, rho);
-  StreamMessage(debug_level) << "jacobian:\n" << jacobian << "\n jacobian_fd:\n" <<
-               jacobian_fd << "\n error: " << (jacobian - jacobian_fd).norm() <<
-               std::endl;
+  VLOG(debug_level) << "jacobian:\n" << jacobian << "\n jacobian_fd:\n" <<
+               jacobian_fd << "\n error: " << (jacobian - jacobian_fd).norm();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -121,10 +122,10 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   if(DoTvs){
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = VisionToRobotics(t_vs);
-    StreamMessage(debug_level) << "PQ: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+    t_vs = Vision2Robotics(t_vs);
+    VLOG(debug_level) << "PQ: PRE BA Tvs is:\n" << t_vs;
   }else{
-    StreamMessage(debug_level-1) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+    VLOG(debug_level) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
   }
 
   ba.Solve(num_iterations);
@@ -134,16 +135,15 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   if(DoTvs && UseImu){
     window.mean = ba.rig()->cameras_[0]->Pose().log();
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = VisionToRobotics(t_vs);
-    StreamMessage(debug_level) << "PQ: POST BA Tvs is:\n"
-                               << t_vs.matrix() << std::endl;
+    t_vs = Vision2Robotics(t_vs);
+    VLOG(debug_level) << "PQ: POST BA Tvs is"
+                               << t_vs;
   }else{
     window.mean = ba.rig()->cameras_[0]->GetParams();
     {
       std::lock_guard<std::mutex> lock(*ba_mutex_);
-      StreamMessage(debug_level-1) << "PQ: POST BA Params :"
-                                   << ba.rig()->cameras_[0]->GetParams().transpose()
-                                   << std::endl;
+      VLOG(debug_level) << "PQ: POST BA Params :"
+                                   << ba.rig()->cameras_[0]->GetParams().transpose();
     }
 
   }
@@ -165,8 +165,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
         StreamMessage(debug_level) << "new PQ t_wc\n:" <<
-                                      VisionToRobotics(rig_->cameras_[0]->Pose())
-                                      .matrix()
+                                      UnrotatePose(rig_->cameras_[0]->Pose())
                                    << std::endl;
       }
     } else {
@@ -289,10 +288,9 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
 bool OnlineCalibrator::AnalyzeCalibrationWindow(
     CalibrationWindow &new_window)
 {
-  StreamMessage(debug_level-1) << "Analyzing window with score " << new_window.score <<
+  VLOG(debug_level) << "Analyzing window with score " << new_window.score <<
                " start: " << new_window.start_index << " end: " <<
-               new_window.end_index << " mean: " << new_window.mean.transpose()
-                               << std::endl;
+               new_window.end_index << " mean: " << new_window.mean.transpose();
 
   // Do not add a degenerate window.
   if (new_window.score == 0) {
@@ -323,8 +321,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     }
 
     if (num_overlaps > 1) {
-      StreamMessage(debug_level-1) << "Num overlaps: " << num_overlaps << " rejecting window. " <<
-                   std::endl;
+      VLOG(debug_level) << "Num overlaps: " << num_overlaps << " rejecting window. ";
       // Then this window intersects with more than one other window.
       // We cannot continue.
       max_id = UINT_MAX;
@@ -341,15 +338,15 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   if (windows_.size() < queue_length_) {
     if (num_overlaps == 0) {
       windows_.push_back(new_window);
-      StreamMessage(debug_level-1) << "Pushing back non overlapping window into position " <<
-                   windows_.size() << std::endl;
+      VLOG(debug_level) << "Pushing back non overlapping window into position " <<
+                   windows_.size();
       needs_update_ = true;
       return true;
     } else {
       // If the queue is not full yet, there is no reason to add overlapping
       // windows.
-      StreamMessage(debug_level-1) << "Rejecting window as queue is incomplete and window "
-                   "overlaps" << std::endl;
+      VLOG(debug_level) << "Rejecting window as queue is incomplete and window "
+                   "overlaps";
       return false;
     }
   } else {
@@ -360,25 +357,24 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       // the overlapping window otherwise information will be double counted.
       max_id = overlap_id;
       max_score = windows_[max_id].score;
-      StreamMessage(debug_level-1) << "Overlapping with 1 segment. Using overlapping score " <<
-                   max_score << " and id " << max_id << std::endl;
+      VLOG(debug_level) << "Overlapping with 1 segment. Using overlapping score " <<
+                   max_score << " and id " << max_id;
     }
 
     // Calculate the margin by which this candidate window beats what's in the
     // priority queue (or the window it overlaps with)
     const double margin = (max_score - new_window.score) / max_score;
-    StreamMessage(debug_level-1) << "Max score: " << max_score<< " margin: " << margin
-               << std::endl;
+    VLOG(debug_level) << "Max score: " << max_score<< " margin: " << margin;
 
     // Replace it if it beats a non-overlapping window.
     //if (max_id != UINT_MAX && margin > 0.05)
     if (max_id != UINT_MAX && margin > 0.15){
       const CalibrationWindow& old_window = windows_[max_id];
-      StreamMessage(debug_level-1) << "Replaced window at idx " << max_id << " with score " <<
+      VLOG(debug_level) << "Replaced window at idx " << max_id << " with score " <<
                    old_window.score << " start: " << old_window.start_index <<
                    " end: " << old_window.end_index << " with score " <<
                    new_window.score << " start: " << new_window.start_index <<
-                   " end: " << new_window.end_index << std::endl;
+                   " end: " << new_window.end_index;
       windows_[max_id] = new_window;
       needs_update_ = true;
       return true;
@@ -443,13 +439,13 @@ double OnlineCalibrator::ComputeYao1965(
 
   }
   if (p_score < 0.5 || isnan(p_score) || isinf(p_score) || p_score == 1.0) {
-    StreamMessage(debug_level) << "computing p score for f " << f << " p: " << p << " n0 " <<
+    VLOG(debug_level) << "computing p score for f " << f << " p: " << p << " n0 " <<
                  n0 << " n1 " << n1 << " with t^2 " << t2 <<
                  " p_score: " << p_score << std::endl;
-    StreamMessage(debug_level) << "with cov0:\n" << window0.covariance << std::endl;
-    StreamMessage(debug_level) << "with mean0:\n" << window0.mean.transpose() << std::endl;
-    StreamMessage(debug_level) << "with cov1:\n" << window1.covariance << std::endl;
-    StreamMessage(debug_level) << "with mean1:\n" << window1.mean.transpose() << std::endl;
+    VLOG(debug_level) << "with cov0:\n" << window0.covariance << std::endl;
+    VLOG(debug_level) << "with mean0:\n" << window0.mean.transpose() << std::endl;
+    VLOG(debug_level) << "with cov1:\n" << window1.covariance << std::endl;
+    VLOG(debug_level) << "with mean1:\n" << window1.mean.transpose() << std::endl;
   }
   return p_score;
 }
@@ -487,13 +483,13 @@ double OnlineCalibrator::ComputeNelVanDerMerwe1986(
   const double p_score = compute_p_score(f, p, v - p + 1);
 
   if (p_score < 0.1 || isnan(p_score) || isinf(p_score)) {
-    StreamMessage(debug_level) << "computing p score for f " << f << " p: " << p << " n0 " <<
+    VLOG(debug_level) << "computing p score for f " << f << " p: " << p << " n0 " <<
                  n0 << " n1 " << n1 << " with t^2 " << t2 <<
-                 " p_score: " << p_score << std::endl;
-    StreamMessage(debug_level) << "with cov0:\n" << window0.covariance << std::endl;
-    StreamMessage(debug_level) << "with mean0:\n" << window0.mean.transpose() << std::endl;
-    StreamMessage(debug_level) << "with cov1:\n" << window1.covariance << std::endl;
-    StreamMessage(debug_level) << "with mean1:\n" << window1.mean.transpose() << std::endl;
+                 " p_score: " << p_score;
+    VLOG(debug_level) << "with cov0:\n" << window0.covariance;
+    VLOG(debug_level) << "with mean0:\n" << window0.mean.transpose();
+    VLOG(debug_level) << "with cov1:\n" << window1.covariance;
+    VLOG(debug_level) << "with mean1:\n" << window1.mean.transpose();
   }
   return p_score;
 }
@@ -600,9 +596,9 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   Sophus::SE3t imu_params_backup = rig_->cameras_[0]->Pose();
 
 
-  StreamMessage(debug_level) << "Analyzing calibration window with imu = " << UseImu <<
+  VLOG(debug_level) << "Analyzing calibration window with imu = " << UseImu <<
                " and DoTvs = " << DoTvs <<
-               " from " << start_pose << " to " << end_pose << std::endl;
+               " from " << start_pose << " to " << end_pose;
   Proxy<UseImu, DoTvs> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
 
@@ -643,10 +639,10 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = VisionToRobotics(t_vs);
-      StreamMessage(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      t_vs = Vision2Robotics(t_vs);
+      VLOG(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs;
     }else{
-      StreamMessage(debug_level-1) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+      VLOG(debug_level) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
 
     }
 
@@ -665,11 +661,13 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       window.mean = imu_parameters;
 
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = VisionToRobotics(t_vs);
-      StreamMessage(debug_level) << "Window: POST BA Tvs is:\n" << t_vs.matrix() << std::endl;
+      t_vs = UnrotatePose(t_vs);
+      VLOG(debug_level) << "Window: POST BA Tvs is: " << t_vs;
     }else{
+
       window.mean = ba.rig()->cameras_[0]->GetParams();
-      StreamMessage(debug_level-1) << "BA: POST BA Cam Params :" << ba.rig()->cameras_[0]->GetParams().transpose() << std::endl;
+      VLOG(debug_level) << "Window mean is: " << window.mean.transpose() <<
+                   std::endl;
     }
 
     window.covariance = summary.calibration_marginals;
@@ -677,6 +675,11 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
 
     if (apply_results) {
+
+      VLOG(debug_level) << "updating rig parameters, apply_results = true";
+      VLOG(debug_level) << "rig cam params: " <<
+                                            rig_->cameras_[0]->GetParams().transpose();
+
 
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       if(DoTvs){
@@ -688,27 +691,20 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           new_imu_params.translation() = imu_params_backup.translation();
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
-        StreamMessage(debug_level) << "new selfcal_rig t_wc\n:"
-                  << VisionToRobotics(rig_->cameras_[0]->Pose()).matrix()
-                  << std::endl;
+        VLOG(debug_level) << "new selfcal_rig t_wc: "
+                  << UnrotatePose(rig_->cameras_[0]->Pose());
       }
 
-      //Sophus::SE3d t_ba;
       std::shared_ptr<TrackerPose> last_pose = poses.back();
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
       last_pose->t_wp = ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
-      // StreamMessage(debug_level) << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
-      //              std::endl;
 
       // Read out the pose and landmark values.
       for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
         std::shared_ptr<TrackerPose> pose = poses[ii];
         const ba::PoseT<double>& ba_pose =
             ba.GetPose(pose->opt_id[ba_id_]);
-        // StreamMessage(debug_level) << "Pose " << pose->opt_id << " t_wp " << std::endl <<
-        //              pose->t_wp.matrix() << std::endl << " after opt: " <<
-        //              std::endl << ba_pose.t_wp.matrix() << std::endl;
 
         pose->t_wp = ba_pose.t_wp;
 
@@ -725,6 +721,8 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
       // BA updates the selfcal rig (cam and imu parameters),
       // so if we don't want parameters to be updated
       // we have to roll back to the original param values.
+
+      VLOG(debug_level) << "rolling back rig parameters, apply_results = false";
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       rig_->cameras_[0]->SetParams(cam_params_backup);
       rig_->cameras_[0]->SetPose(imu_params_backup);
