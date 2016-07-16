@@ -53,7 +53,7 @@ void SemiDenseTracker::Initialize(const KeypointOptions& keypoint_options,
   // Calculate the pyramid dimensions for each patch. This is used to initialize
   // new patches.
   for (uint32_t ii = 0 ; ii < tracker_options_.pyramid_levels ; ++ii) {
-    LOG(INFO) << "Level " << ii << " patch dim is " << patch_dim;
+    VLOG(3) << "Level " << ii << " patch dim is " << patch_dim;
     pyramid_error_thresholds_[ii] = robust_norm_thresh;
     robust_norm_thresh *= 2;
     pyramid_patch_dims_[ii] = patch_dim;
@@ -163,7 +163,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
 
   HarrisScore(image.data, image.cols, image.rows,
               tracker_options_.patch_dim, keypoints);
-  LOG(INFO) << "extract feature detection for " << keypoints.size() <<
+  VLOG(3) << "extract feature detection for " << keypoints.size() <<
       " and "  << cells_hit << " cells " <<  " keypoints took " <<
       Toc(time) << " seconds." << std::endl;
 }
@@ -508,7 +508,7 @@ void SemiDenseTracker::ReprojectTrackCenters() {
             tracker_options_.feature_cells;
         if (addressy > feature_cells_[cam_id].rows() ||
             addressx > feature_cells_[cam_id].cols()) {
-          LOG(INFO) << "Out of bounds feature cell access at : " << addressy <<
+          LOG(WARNING) << "Out of bounds feature cell access at : " << addressy <<
               ", " << addressx << std::endl;
         }
         if (feature_cells_[cam_id](addressy, addressx) != kUnusedCell) {
@@ -902,7 +902,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
       result.valid_projections.push_back(pix);
       result.valid_rays.push_back(ii);
       if (std::isnan(pix[0]) || std::isnan(pix[1])) {
-        LOG(INFO) << "Pixel at: " << pix.transpose() <<
+        VLOG(2) << "Pixel at: " << pix.transpose() <<
             " center ray: " << ref_kp.ray << " rho: " <<
             ref_kp.rho << std::endl;
       }
@@ -945,7 +945,7 @@ void SemiDenseTracker::StartNewLandmarks(int only_start_in_camera) {
         StartNewTracks(image_pyramid_[cam_id], cv_keypoints, num_new_tracks,
                        cam_id);
 
-    LOG(INFO) << "Tracked: " << num_successful_tracks_ << " started " <<
+    VLOG(2) << "Tracked: " << num_successful_tracks_ << " started " <<
         started << " out of " << num_new_tracks <<
         " new tracks with " << cv_keypoints.size() <<
         " keypoints in cam " << cam_id <<  std::endl;
@@ -1050,7 +1050,7 @@ void SemiDenseTracker::OptimizePyramidLevel(
         stats.delta_lm_norm += fabs(delta_ray);
 
         if (std::isnan(delta_ray) || std::isinf(delta_ray)) {
-          LOG(INFO) << "delta_ray " << track->id << ": " << delta_ray <<
+          VLOG(2) << "delta_ray " << track->id << ": " << delta_ray <<
               "vinv:" << track->v_inv_vec/*v_inv_vec[track->opt_id]*/ << " r_l " <<
               track->r_l_vec /*r_l_vec(track->residual_offset)*/ << " w: " <<
               track->w_vec.transpose() /*w_vec[track->opt_id].transpose()*/ << "dp : " <<

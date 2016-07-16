@@ -276,7 +276,7 @@ void OptimizeTrack::operator()(const tbb::blocked_range<int> &r) {
         track->keypoints.size() <= 2 &&
         options.optimize_landmarks && options.optimize_pose &&
         tracker.num_cameras_ == 1) {
-      LOG(WARNING) << "omitting longest track id " <<
+      VLOG(2) << "omitting longest track id " <<
                               tracker.longest_track_id_ << std::endl;
       omit_track = true;
     }
