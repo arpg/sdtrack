@@ -31,7 +31,7 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -Wextra -Wno-unused-par
 find_package(Calibu 0.1 REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(OpenCV2 REQUIRED)
-find_package(GLog REQUIRED)
+find_package(GFLags REQUIRED)
 find_package(CVars REQUIRED)
 find_package(TBB REQUIRED)
 
@@ -42,7 +42,7 @@ set(PROJ_INCLUDE_DIRS
   ${OpenCV2_INCLUDE_DIRS}
   ${Calibu_INCLUDE_DIRS}
   ${Sophus_INCLUDE_DIR}
-  ${GLog_INCLUDE_DIRS}
+  ${GFlags_INCLUDE_DIRS}
   ${CVars_INCLUDE_DIRS}
   ${TBB_INCLUDE_DIRS}
   )
@@ -52,9 +52,13 @@ set(PROJ_LIBRARIES
   ${Calibu_LIBRARY}
   ${OpenCV2_LIBRARIES}
   ${CVars_LIBRARIES}
-  ${GLog_LIBRARIES}
   ${TBB_LIBRARIES}
   )
+
+## If MAC OS, do not include GFLags_LIBRARIES; otherwise, include it.
+if( NOT _OSX_ )
+    list(APPEND PROJ_LIBRARIES ${GFlags_LIBRARIES} )
+endif()
 
 include_directories(${PROJ_INCLUDE_DIRS})
 set(INC_PREFIX ${CMAKE_SOURCE_DIR}/include/sdtrack) 
