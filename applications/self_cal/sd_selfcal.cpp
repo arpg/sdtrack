@@ -49,8 +49,8 @@ Sophus::SE3d prev_t_ba; //
 int debug_level_threshold = 0;
 
 bool compare_self_cal_with_batch = false;
-bool unknown_cam_calibration = true;
-bool unknown_imu_calibration = false;
+bool unknown_cam_calibration = false;
+bool unknown_imu_calibration = true;
 
 
 const int window_width = 640 * 1.5;
@@ -727,9 +727,9 @@ void  BaAndStartNewLandmarks()
 {
 
   // Temporary solution to multi-threading issues
-  if(do_serial_ac){
-    DoSerialAAC();
-  }
+//  if(do_serial_ac){
+//    DoSerialAAC();
+//  }
 
   if (!is_keyframe) {
     return;
@@ -825,11 +825,13 @@ void  BaAndStartNewLandmarks()
         VLOG(1) << "Performing batch optimization for the IMU "
                                            << "calibration";
 
+        // while doing batch, just optimize over the rotation of the imu-camera
+        // calibration.
         imu_calib->online_calibrator
             .AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, imu_calib->unknown_calibration_start_pose,
               batch_end, imu_calib->pq_window, num_selfcal_ba_iterations, true,
-              do_only_rotation_imu_self_cal);
+              true);
         window_analyzed = true;
         score = imu_calib->online_calibrator.
             GetWindowScore(imu_calib->pq_window);
@@ -1033,12 +1035,15 @@ void  BaAndStartNewLandmarks()
         uint32_t end_pose = poses.size();
         VLOG(1) << "Analyzing calibration window for IMU parameters from pose " <<
                                                 start_pose << " to pose " << end_pose << " (visual + imu)";
+        // Produce an estimate for the calibration params. for this calibration
+        // window
         imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, start_pose, end_pose,
               imu_calib->candidate_window, num_selfcal_ba_iterations, false,
               do_only_rotation_imu_self_cal);
 
-        // Analyse the candidate window and add to the priority queue if it's good enough
+        // Analyse the candidate window and add to the priority queue
+        // if it's good enough
         imu_calib->online_calibrator.AnalyzeCalibrationWindow(
               imu_calib->candidate_window);
 
@@ -1074,7 +1079,7 @@ void  BaAndStartNewLandmarks()
 //              imu_calib->candidate_window);
       }
 
-      VLOG(1) << "KL divergence for last cam  " <<
+      VLOG(2) << "KL divergence for last cam  " <<
                                             cam_calib->last_window_kl_divergence
                                          << " num window changes: " <<
                                             (int)cam_calib->num_change_detected;
@@ -1210,10 +1215,8 @@ void  BaAndStartNewLandmarks()
                                                 rig.cameras_[0]->GetParams().transpose()
                                              ;
 
-          VLOG(1) << "new rig Tvs params: \n" <<
-                                                sdtrack::Vision2Robotics(rig.cameras_[0]->Pose())
-                                                .matrix()
-                                             ;
+          VLOG(1) << "new rig Tvs params: \n" << sdtrack::UnrotatePose
+                     (rig.cameras_[0]->Pose());
         }
 
         if(analysed_cam_calib){
@@ -2163,10 +2166,28 @@ bool LoadCameras(GetPot& cl)
   if (has_imu && unknown_imu_calibration && use_imu_measurements) {
 
     Sophus::SE3t Tvs = rig.cameras_[0]->Pose();
-    // If IMU calibration is unknown, perturb the given IMU rotation
-    Tvs.so3() = rig.cameras_[0]->Pose().so3() *
-        Sophus::SO3d::exp(
+    // If IMU calibration is unknown, perturb the IMU rotation
+
+    Sophus::SO3d old_rot = sdtrack::UnrotatePose(Tvs).so3();
+    Sophus::SO3d new_rot = Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
+    VLOG(1) << "Changing rotation from: [ " << old_rot.matrix().eulerAngles
+               (0,1,2).transpose() << " ] to [ "<<  new_rot.matrix().eulerAngles
+               (0,1,2).transpose() << " ]";
+
+    Tvs.so3() = new_rot;
+    Tvs = sdtrack::RotatePose(Tvs);
+
+    // Add perturbation
+//    Tvs.so3() = rig.cameras_[0]->Pose().so3() * new_rot;
+
+
+    // Set translation to zero
+//    Eigen::Vector3d new_translation(Eigen::Vector3d::Zero());
+//    VLOG(1) << "Changing translation from: [ " << Tvs.translation().transpose()
+//            << " ] to [ "<<  new_translation.transpose() << " ]";
+    //Tvs.translation() = Eigen::Vector3d::Zero();
+
     rig.cameras_[0]->SetPose(Tvs);
     VLOG(1) << "Unknown IMU calibration, using:"
                                        << sdtrack::UnrotatePose(rig.cameras_[0]->Pose()) ;

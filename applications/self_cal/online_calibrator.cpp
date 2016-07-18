@@ -122,8 +122,8 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   if(DoTvs){
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = Vision2Robotics(t_vs);
-    VLOG(debug_level) << "PQ: PRE BA Tvs is:\n" << t_vs;
+    t_vs = UnrotatePose(t_vs);
+    VLOG(debug_level) << "PQ: PRE BA Tvs is: " << t_vs;
   }else{
     VLOG(debug_level) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
   }
@@ -135,7 +135,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   if(DoTvs && UseImu){
     window.mean = ba.rig()->cameras_[0]->Pose().log();
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = Vision2Robotics(t_vs);
+    t_vs = UnrotatePose(t_vs);
     VLOG(debug_level) << "PQ: POST BA Tvs is"
                                << t_vs;
   }else{
@@ -164,7 +164,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
           new_imu_params.translation() = imu_params_backup.translation();
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
-        StreamMessage(debug_level) << "new PQ t_wc\n:" <<
+        VLOG(debug_level) << "new PQ t_wc\n:" <<
                                       UnrotatePose(rig_->cameras_[0]->Pose())
                                    << std::endl;
       }
@@ -306,14 +306,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   uint32_t num_overlaps = 0;
   for (size_t ii = 0; ii < windows_.size() ; ++ii){
     CalibrationWindow& window = windows_[ii];
-     StreamMessage(debug_level+1) << "\t comparing with window " << ii << " with score : " <<
+     VLOG(debug_level) << "\t comparing with window " << ii << " with score : " <<
                   windows_[ii].score << " start " <<  windows_[ii].start_index <<
                   " end " << windows_[ii].end_index << std::endl;
     if (!((new_window.start_index < window.start_index && new_window.end_index <
            window.start_index) || (new_window.start_index > window.end_index &&
                                    new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
       num_overlaps++;
-      StreamMessage(debug_level+1) << "Overlap detected between " << window.start_index << ", " <<
+      VLOG(debug_level) << "Overlap detected between " << window.start_index << ", " <<
                    window.end_index << " and " << new_window.start_index <<
                    ", " << new_window.end_index << std::endl;
 
@@ -639,7 +639,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
 
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = Vision2Robotics(t_vs);
+      t_vs = UnrotatePose(t_vs);
       VLOG(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs;
     }else{
       VLOG(debug_level) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
