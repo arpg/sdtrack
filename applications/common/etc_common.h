@@ -221,7 +221,17 @@ inline void GetBaPoseRange(
   }
 }
 
+///////////////////////////////////////////////////////////////////////////////
+template<typename Scalar = double>
+inline Eigen::Matrix<Scalar, 6, 1> log_decoupled(
+    const Sophus::SE3Group<Scalar>& a) {
+  Eigen::Matrix<Scalar, 6, 1> res;
+  res.template head<3>() = a.translation();
+  res.template tail<3>() = a.so3().log();
+  return res;
+}
 
+///////////////////////////////////////////////////////////////////////////////
 // Convenience functions to rotate and un-rotate a transformation.
 // A pose needs to be rotated to be input into BA and un-rotated to be
 // read out of ba.

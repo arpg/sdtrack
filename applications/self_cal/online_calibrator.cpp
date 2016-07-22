@@ -4,7 +4,8 @@
 
 using namespace sdtrack;
 using sdtrackUtils::operator<<;
-
+using sdtrack::log_decoupled;
+using sdtrack::UnrotatePose;
 
 OnlineCalibrator::OnlineCalibrator()
 {
@@ -133,7 +134,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 
   // Obtain the mean from the BA.
   if(DoTvs && UseImu){
-    window.mean = ba.rig()->cameras_[0]->Pose().log();
+    window.mean = log_decoupled(ba.rig()->cameras_[0]->Pose());
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
     t_vs = UnrotatePose(t_vs);
     VLOG(debug_level) << "PQ: POST BA Tvs is"
@@ -164,9 +165,13 @@ void OnlineCalibrator::AnalyzePriorityQueue(
           new_imu_params.translation() = imu_params_backup.translation();
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
-        VLOG(debug_level) << "new PQ t_wc\n:" <<
-                                      UnrotatePose(rig_->cameras_[0]->Pose())
-                                   << std::endl;
+        VLOG(debug_level) << "new PQ t_wc:" <<
+                                      UnrotatePose(rig_->cameras_[0]->Pose());
+        VLOG(debug_level) << "new PQ t_wc matrix: \n" <<
+                             UnrotatePose(rig_->cameras_[0]->Pose()).matrix();
+        VLOG(debug_level) << "new PQ mean: " <<
+                             log_decoupled(UnrotatePose(rig_->cameras_[0]->Pose()))
+            .transpose();
       }
     } else {
       // If not updating the rig, rollback parameters to the original values
@@ -297,6 +302,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     return false;
   }
 
+  needs_update_ = false;
+
   // Go through all the windows and see if this one beats the one with the
   // highest score. We only consider windows with at most 1 overlap.
 
@@ -308,7 +315,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     CalibrationWindow& window = windows_[ii];
      VLOG(debug_level) << "\t comparing with window " << ii << " with score : " <<
                   windows_[ii].score << " start " <<  windows_[ii].start_index <<
-                  " end " << windows_[ii].end_index << std::endl;
+                  " end " << windows_[ii].end_index << " mean: [ " << window
+                          .mean.transpose() << " ]";
     if (!((new_window.start_index < window.start_index && new_window.end_index <
            window.start_index) || (new_window.start_index > window.end_index &&
                                    new_window.end_index > window.end_index) || window.score == DBL_MAX)) {
@@ -570,14 +578,28 @@ void OnlineCalibrator::SetPriorityQueueDistribution(
 }
 
 ///////////////////////////////////////////////////////////////////////////
-double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window)
+double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window){
+  return GetWindowScore(window, false);
+}
+
+///////////////////////////////////////////////////////////////////////////
+double OnlineCalibrator::GetWindowScore(const CalibrationWindow& window,
+                                        bool rotation_only_Tvs)
 {
 
   if (window.covariance.fullPivLu().rank() == covariance_weights_.rows()) {
     // First transform the covariance given the weights.
-    return
-        (covariance_weights_.asDiagonal() * window.covariance *
-         covariance_weights_.asDiagonal()).determinant();
+    if(rotation_only_Tvs){
+      // only use the rotation uncertainty to calculate the window score,
+      // as we are not changing the translation in this window.
+      return (covariance_weights_.tail<3>().asDiagonal() *
+          window.covariance.bottomRightCorner<3, 3>()*
+       covariance_weights_.tail<3>().asDiagonal()).determinant();
+    }else{
+      return
+          (covariance_weights_.asDiagonal() * window.covariance *
+           covariance_weights_.asDiagonal()).determinant();
+    }
   } else {
     return 0;
   }
@@ -615,6 +637,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
   options.use_per_pose_cam_params = false;
+  options.translation_enabled = !rotation_only_Tvs;
   // Why is the trust region size so large?
   options.trust_region_size = 100;
 
@@ -653,33 +676,42 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
     const ba::SolutionSummary<double>& summary =
         ba.GetSolutionSummary();
 
+    VLOG(debug_level) << "Window BA result: " << (summary.IsResultGood() ?
+                 "GOOD" : "BAD");
+
     // Obtain the mean from the BA
-    //TODO: Currently this only supports Tvs OR Camera params. Change
-    // so that it supports joint mode also
     if(DoTvs && UseImu){
-      Eigen::MatrixXd imu_parameters = ba.rig()->cameras_[0]->Pose().log();
+
+
+      Sophus::SE3d Tvs = UnrotatePose(ba.rig()->cameras_[0]->Pose());
+      VLOG(debug_level) << "Window: POST BA Tvs is: " << Tvs;
+
+
+      Eigen::MatrixXd imu_parameters = log_decoupled(UnrotatePose(
+            ba.rig()->cameras_[0]->Pose()));
+
+      if(rotation_only_Tvs){
+        // roll back the translation
+        imu_parameters.block<3,1>(0,0) = imu_params_backup.translation();
+      }
+
       window.mean = imu_parameters;
 
-      Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = UnrotatePose(t_vs);
-      VLOG(debug_level) << "Window: POST BA Tvs is: " << t_vs;
     }else{
-
       window.mean = ba.rig()->cameras_[0]->GetParams();
-      VLOG(debug_level) << "Window mean is: " << window.mean.transpose() <<
-                   std::endl;
     }
 
+    VLOG(debug_level) << "Window mean is: " << window.mean.transpose() <<
+                 std::endl;
+
     window.covariance = summary.calibration_marginals;
-    window.score = GetWindowScore(window);
+    window.score = GetWindowScore(window, rotation_only_Tvs);
 
 
     if (apply_results) {
-
-      VLOG(debug_level) << "updating rig parameters, apply_results = true";
-      VLOG(debug_level) << "rig cam params: " <<
-                                            rig_->cameras_[0]->GetParams().transpose();
-
+      // this will be true when running in batch mode.
+      // under normal circumstances the results from a candidate window
+      // would not be applied to the selfcal rig.
 
       std::lock_guard<std::mutex> lock(*ba_mutex_);
       if(DoTvs){
@@ -691,7 +723,7 @@ void OnlineCalibrator::AnalyzeCalibrationWindow(
           new_imu_params.translation() = imu_params_backup.translation();
           rig_->cameras_[0]->SetPose(new_imu_params);
         }
-        VLOG(debug_level) << "new selfcal_rig t_wc: "
+        VLOG(debug_level) << "Window: New selfcal_rig t_wc: "
                   << UnrotatePose(rig_->cameras_[0]->Pose());
       }
 

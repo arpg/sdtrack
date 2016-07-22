@@ -7,6 +7,7 @@
 #include <sdtrack/semi_dense_tracker.h>
 #include "math_types.h"
 #include "etc_common.h"
+#include <ceres/ceres.h>
 #include <mutex>
 
 #define LM_DIM 3
@@ -64,6 +65,7 @@ class OnlineCalibrator {
       bool rotation_only_Tvs = false);
   const std::vector<CalibrationWindow>& windows() { return windows_; }
   void ClearQueue() { windows_.clear(); }
+  double GetWindowScore(const CalibrationWindow& window, bool rotation_only_Tvs);
   double GetWindowScore(const CalibrationWindow& window);
 
   double ComputeKlDivergence(const CalibrationWindow& window0,
@@ -113,6 +115,9 @@ private:
   uint32_t ba_id_ = 2;
   double imu_time_offset;
   std::mutex* ba_mutex_;
+  // thread to run the priority queue optimization
+  std::shared_ptr<std::thread> pq_thread;
+
 
   template <bool, bool>
   struct Proxy {};

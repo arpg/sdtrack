@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 3.3.0, 2016-07-18T11:36:40. -->
+<!-- Written by QtCreator 3.3.0, 2016-07-21T15:42:48. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -364,7 +364,7 @@
      <value type="int">14</value>
     </valuelist>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguation.Title">sd_selfcal</value>
-    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments">-cam trailmix://files:///Users/fernando/Projects/Robotics/DATA/Peanut/CU_Lobby/superframes/*.pgm -imu join://trailmix://files://</value>
+    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments">-cam trailmix://files:///Users/fernando/Projects/Robotics/DATA/Peanut/CU_Lobby/superframes/*.pgm -imu join://trailmix://files:// -gt</value>
     <value type="bool" key="CMakeProjectManager.CMakeRunConfiguration.UseTerminal">false</value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory"></value>
     <value type="int" key="PE.EnvironmentAspect.Base">2</value>

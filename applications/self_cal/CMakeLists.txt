@@ -6,12 +6,14 @@ find_package(HAL REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(SceneGraph REQUIRED)
+find_package(Ceres REQUIRED)
 
 include_directories(${SDTRACK_INCLUDE_DIRS}
                     ${BA_INCLUDE_DIRS}
                     ${HAL_INCLUDE_DIRS}
                     ${Pangolin_INCLUDE_DIRS}
-                    ${SceneGraph_INCLUDE_DIRS} 
+                    ${SceneGraph_INCLUDE_DIRS}
+                    ${CERES_INCLUDE_DIRS}
                     ${CMAKE_CURRENT_SOURCE_DIR})
 
 def_executable(sd_selfcal
@@ -25,5 +27,6 @@ def_executable(sd_selfcal
   ${MINIGLOG_LIBRARIES}
   ${SceneGraph_LIBRARIES}
   ${Pangolin_LIBRARIES}
+  ${CERES_LIBRARIES}
   ${CMAKE_DL_LIBS}
   )
