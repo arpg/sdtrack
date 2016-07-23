@@ -187,7 +187,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     for (CalibrationWindow& window : windows_) {
       if (window.start_index < poses.size() &&
           window.end_index < poses.size()) {
-        AddCalibrationWindowToBa<UseImu, DoTvs, true>(poses, window);
+        AddCalibrationWindowToBa<UseImu, DoTvs, true>(poses, window, pq_ba_id_);
       }
     }
   }
@@ -263,7 +263,7 @@ void OnlineCalibrator::AnalyzePriorityQueue(
 template<bool UseImu, bool DoTvs, bool PriorityQueue>
 void OnlineCalibrator::AddCalibrationWindowToBa(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
-    CalibrationWindow &window)
+    CalibrationWindow &window, int ba_id)
 {
   window.num_measurements = 0;
   Proxy<UseImu, DoTvs, PriorityQueue> ba_proxy(this);
@@ -287,7 +287,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
     std::shared_ptr<TrackerPose> pose = poses[ii];
     // If not using an IMU, the first pose of the window is inactive. Otherwise
     // all poses are active and we do a manual regularization below.
-    pose->opt_id[ba_id_] = ba.AddPose(
+    pose->opt_id[ba_id] = ba.AddPose(
           pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
           (UseImu ? ii >= start_active_pose : ii > start_active_pose),
           pose->time);
@@ -296,7 +296,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
     /// had projection residuals? we don't want to regularize in this case
     if (pose->tracks.size() == 0 && !UseImu) {
       // Regularize pose translation and rotation
-      ba.RegularizePose(pose->opt_id[ba_id_], true, false, false, true);
+      ba.RegularizePose(pose->opt_id[ba_id], true, false, false, true);
     }
 
     // Add inertial residual, if using IMU
@@ -310,22 +310,22 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       //                 " measurements" << std::endl;
 
 
-      ba.AddImuResidual(poses[ii - 1]->opt_id[ba_id_],
-          pose->opt_id[ba_id_], meas);
+      ba.AddImuResidual(poses[ii - 1]->opt_id[ba_id],
+          pose->opt_id[ba_id], meas);
     }
 
     // If using an IMU and this is the first pose in the window, regularize
     // the translation and gravity rotation so there are no nullspaces
     if (UseImu && ii == start_active_pose) {
       /*StreamMessage(debug_level) << "OC regularizing gravity and trans and bias of pose " <<
-                   pose->opt_id[ba_id_] << std::endl;*/
-      ba.RegularizePose(pose->opt_id[ba_id_], true, true, false, false);
+                   pose->opt_id[ba_id] << std::endl;*/
+      ba.RegularizePose(pose->opt_id[ba_id], true, true, false, false);
     }
 
     // Add all landmarks to ba
     for (std::shared_ptr<DenseTrack> track: pose->tracks) {
       if (track->num_good_tracked_frames == 1 || track->is_outlier) {
-        track->external_id[ba_id_] = UINT_MAX;
+        track->external_id[ba_id] = UINT_MAX;
         continue;
       }
 
@@ -335,8 +335,8 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
       ray = sdtrack::MultHomogeneous(pose->t_wp  * rig_->cameras_[0]->Pose(), ray);
       bool active = longest_track == nullptr ? true :
                                                (UseImu ? true : track->id != longest_track->id);
-      track->external_id[ba_id_] =
-          ba.AddLandmark(ray, pose->opt_id[ba_id_], 0, active);
+      track->external_id[ba_id] =
+          ba.AddLandmark(ray, pose->opt_id[ba_id], 0, active);
       //       StreamMessage(debug_level) << "Adding lm with opt_id " << track->external_id << " and "
       //                    " x_r " << ray.transpose() << " and x_orig: " <<
       //                    x_r_orig_->transpose() << std::endl;
@@ -347,7 +347,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
   for (uint32_t ii = window.start_index ; ii < window.end_index ; ++ii) {
     std::shared_ptr<TrackerPose> pose = poses[ii];
     for (std::shared_ptr<DenseTrack> track : pose->tracks) {
-      if (track->external_id[ba_id_] == UINT_MAX) {
+      if (track->external_id[ba_id] == UINT_MAX) {
         continue;
       }
       // Limit the number of measurements we add here for a track, as they
@@ -357,7 +357,7 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
         if (track->keypoints[jj][0].tracked) {
           const Eigen::Vector2d& z = track->keypoints[jj][0].kp;
           ba.AddProjectionResidual(
-                z, pose->opt_id[ba_id_] + jj, track->external_id[ba_id_], 0);
+                z, pose->opt_id[ba_id] + jj, track->external_id[ba_id], 0);
           window.num_measurements++;
         }
       }
@@ -747,7 +747,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
         ba.AddCamera(rig_->cameras_[0], true);
       }
       std::lock_guard<std::mutex> lock(*ba_mutex_);
-      AddCalibrationWindowToBa<UseImu, DoTvs, false>(poses, window);
+      AddCalibrationWindowToBa<UseImu, DoTvs, false>(poses, window,
+                                                     candidate_ba_id_);
     }
 
     if(DoTvs){
@@ -825,19 +826,19 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       std::shared_ptr<TrackerPose> last_pose = poses.back();
       // Get the pose of the last pose. This is used to calculate the relative
       // transform from the pose to the current pose.
-      last_pose->t_wp = ba.GetPose(last_pose->opt_id[ba_id_]).t_wp;
+      last_pose->t_wp = ba.GetPose(last_pose->opt_id[candidate_ba_id_]).t_wp;
 
       // Read out the pose and landmark values.
       for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
         std::shared_ptr<TrackerPose> pose = poses[ii];
         const ba::PoseT<double>& ba_pose =
-            ba.GetPose(pose->opt_id[ba_id_]);
+            ba.GetPose(pose->opt_id[candidate_ba_id_]);
 
         pose->t_wp = ba_pose.t_wp;
 
         //t_ba = last_pose->t_wp.inverse() * pose->t_wp;
         for (std::shared_ptr<DenseTrack> track: pose->tracks) {
-          if (track->external_id[ba_id_] == UINT_MAX) {
+          if (track->external_id[candidate_ba_id_] == UINT_MAX) {
             continue;
           }
 
@@ -880,27 +881,27 @@ bool apply_results = false, bool rorotation_only_Tvs = false);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<false, false, true>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-CalibrationWindow& window);
+CalibrationWindow& window, int ba_id);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<true, true, true>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-CalibrationWindow& window);
+CalibrationWindow& window, int ba_id);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<true, false, true>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-CalibrationWindow& window);
+CalibrationWindow& window, int ba_id);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<false, false, false>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-CalibrationWindow& window);
+CalibrationWindow& window, int ba_id);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<true, true, false>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-CalibrationWindow& window);
+CalibrationWindow& window, int ba_id);
 
 template void OnlineCalibrator::AddCalibrationWindowToBa<true, false, false>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-CalibrationWindow& window);
+CalibrationWindow& window, int ba_id);
 
 //template void OnlineCalibrator::AddCalibrationWindowToBa<false, true>(
 //    std::vector<std::shared_ptr<TrackerPose>>& poses,

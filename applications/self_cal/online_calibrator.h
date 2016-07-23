@@ -47,8 +47,7 @@ struct PriorityQueueParams {
 class OnlineCalibrator {
  public:
   OnlineCalibrator();
-  void Init(
-      std::mutex* ba_mutex, std::mutex* oc_mutex, calibu::Rig<Scalar>* rig, uint32_t num_windows,
+  void Init(std::mutex* ba_mutex, std::mutex* oc_mutex, calibu::Rig<Scalar>* rig, uint32_t num_windows,
       uint32_t window_length, Eigen::VectorXd covariance_weights,
       double imu_time_offset_in = 0,
       ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* buffer =
@@ -65,7 +64,7 @@ class OnlineCalibrator {
   template <bool UseImu, bool DoTvs, bool PriorityQueue>
   void AddCalibrationWindowToBa(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
-      CalibrationWindow& window);
+      CalibrationWindow& window, int ba_id);
 
   bool AnalyzeCalibrationWindow(CalibrationWindow& new_window);
 
@@ -148,7 +147,8 @@ private:
   //VI BA with IMU parameters for PQ
   ba::BundleAdjuster<double, 1, 15, 0, true> pq_vi_only_tvs_selfcal_ba;
   ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* imu_buffer;
-  uint32_t ba_id_ = 2;
+  uint32_t candidate_ba_id_ = 2;
+  uint32_t pq_ba_id_ = 3;
   double imu_time_offset;
   std::mutex* ba_mutex_;
   std::mutex* oc_mutex_;
