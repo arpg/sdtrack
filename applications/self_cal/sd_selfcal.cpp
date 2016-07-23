@@ -1198,14 +1198,16 @@ void  BaAndStartNewLandmarks()
                    start_pose << " to pose " << end_pose << " (visual + imu)";
         // Produce an estimate for the calibration params. for this calibration
         // window
-        imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
+        bool use_candidate =
+            imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, start_pose, end_pose,
               imu_calib->candidate_window, num_selfcal_ba_iterations, false,
               do_only_rotation_imu_self_cal);
 
+
         // Analyse the candidate window and add to the priority queue
         // if it's good enough
-        if(imu_calib->online_calibrator.AnalyzeCalibrationWindow(
+        if(use_candidate && imu_calib->online_calibrator.AnalyzeCalibrationWindow(
              imu_calib->candidate_window)){
           // calibration window was added to the priority queue
           // compare to the gt, if available
