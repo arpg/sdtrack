@@ -62,7 +62,7 @@ void OnlineCalibrator::Init(std::mutex* ba_mutex,
 
 ///////////////////////////////////////////////////////////////////////////
 std::shared_ptr<PriorityQueueParams> OnlineCalibrator::PriorityQueueParameters(){
-    return pq_params_;
+  return pq_params_;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -221,40 +221,35 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   window.covariance =
       ba.GetSolutionSummary().calibration_marginals;
 
+  if (apply_results) {
+    std::lock_guard<std::mutex>(*ba_mutex_);
+    std::unique_lock<std::mutex>(*oc_mutex_);
 
-  {
-    if (apply_results) {
-      std::lock_guard<std::mutex> lock(*ba_mutex_);
-      std::unique_lock<std::mutex> lck_(*oc_mutex_);
-
-      // copy over the camera parameters
-      rig_->cameras_[0]->SetParams(ba.rig()->cameras_[0]->GetParams());
+    // copy over the camera parameters
+    rig_->cameras_[0]->SetParams(ba.rig()->cameras_[0]->GetParams());
 
 
-      if(DoTvs){
-        Sophus::SE3t new_imu_params = ba.rig()->cameras_[0]->Pose();
-        if(rotation_only_Tvs){
-          // If only updating rotation, perserve original translation:
-          new_imu_params.translation() = imu_params_backup.translation();
-        }
-        // copy over the imu parameters
-        rig_->cameras_[0]->SetPose(new_imu_params);
-
-        VLOG(debug_level) << "new PQ t_wc:" <<
-                             UnrotatePose(rig_->cameras_[0]->Pose());
-        VLOG(debug_level) << "new PQ mean: " <<
-                             log_decoupled(UnrotatePose(rig_->cameras_[0]->Pose()))
-            .transpose();
+    if(DoTvs){
+      Sophus::SE3t new_imu_params = ba.rig()->cameras_[0]->Pose();
+      if(rotation_only_Tvs){
+        // If only updating rotation, perserve original translation:
+        new_imu_params.translation() = imu_params_backup.translation();
       }
-    } /*else {
-      // If not updating the rig, rollback parameters to the original values
-      rig_->cameras_[0]->SetParams(cam_params_backup);
-      rig_->cameras_[0]->SetPose(imu_params_backup);
-    }*/
+      // copy over the imu parameters
+      rig_->cameras_[0]->SetPose(new_imu_params);
+
+      VLOG(debug_level) << "new PQ t_wc:" <<
+                           UnrotatePose(rig_->cameras_[0]->Pose());
+      VLOG(debug_level) << "new PQ mean: " <<
+                           log_decoupled(UnrotatePose(rig_->cameras_[0]->Pose()))
+          .transpose();
+    }
   }
 
+
   {
-    std::unique_lock<std::mutex> lck_(*oc_mutex_);
+    std::unique_lock<std::mutex>(*oc_mutex_);
+    VLOG(debug_level) << "PQ setting needs_update to false";
     needs_update_ = false;
   }
 }
@@ -377,6 +372,12 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   if (new_window.score == 0) {
     return false;
   }
+
+//  // set the needs update flag to false
+//  {
+//    std::unique_lock<std::mutex>(*oc_mutex_);
+//    needs_update_ = false;
+//  }
 
   // Go through all the windows and see if this one beats the one with the
   // highest score. We only consider windows with at most 1 overlap.

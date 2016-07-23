@@ -105,7 +105,10 @@ class OnlineCalibrator {
 
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
-  bool needs_update() { return needs_update_; }
+  bool needs_update() {
+    std::unique_lock<std::mutex>(*oc_mutex_);
+    return needs_update_;
+  }
   void SetDebugLevel(const int level){
     debug_level = level;
   }
