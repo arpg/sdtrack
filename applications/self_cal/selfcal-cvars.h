@@ -55,6 +55,10 @@ static bool& show_panel =
     CVarUtils::CreateCVar<>("sd.ShowPanel", true, "");
 static bool& do_imu_self_cal =
     CVarUtils::CreateCVar<>("sd.DoIMUSelfCal", true, "");
+static bool& use_batch_estimates =
+    CVarUtils::CreateCVar<>("sd.UseBatchEstimates", false, "");
+static bool& do_async_pq =
+    CVarUtils::CreateCVar<>("sd.DoAsyncPQ", false, "");
 static bool& do_only_rotation_imu_self_cal =
     CVarUtils::CreateCVar<>("sd.DoRotationOnlyIMUSelfCal", true, "");
 static uint32_t& num_aac_poses =

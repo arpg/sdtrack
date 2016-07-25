@@ -306,10 +306,14 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
                         std::vector<uint32_t>& imu_residual_ids,
                         calibu::Rig<Scalar>& ba_rig)
 {
-  std::lock_guard<std::mutex> lock(aac_mutex);
+
 
   std::vector<uint32_t> last_frame_proj_residual_ids;
   if (reset_outliers) {
+
+    std::lock_guard<std::mutex> aac_lock(aac_mutex);
+    std::lock_guard<std::mutex> oc_lock(online_calibrator_mutex);
+
     for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
       for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
         track->is_outlier = false;
@@ -341,7 +345,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
   uint32_t end_pose_id;
   {
-    //std::lock_guard<std::mutex> lock(aac_mutex);
+    std::lock_guard<std::mutex> aac_lock(aac_mutex);
+    std::lock_guard<std::mutex> oc_lock(online_calibrator_mutex);
+
     end_pose_id = poses.size() - 1;
 
     GetBaPoseRange(poses, num_active_poses, start_pose_id, start_active_pose);
@@ -372,7 +378,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
   // Do a bundle adjustment on the current set
   if (current_tracks && end_pose_id) {
     {
-      //std::lock_guard<std::mutex> lock(aac_mutex);
+      std::lock_guard<std::mutex> lock(aac_mutex);
+
       if (use_imu) {
         ba.SetGravity(gravity_vector);
       }
@@ -501,7 +508,8 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
 
 
     {
-      //std::lock_guard<std::mutex> lock(aac_mutex);
+      std::lock_guard<std::mutex> lock(aac_mutex);
+      std::lock_guard<std::mutex> oc_lock(online_calibrator_mutex);
 
       total_last_frame_proj_norm = 0;
 
@@ -776,10 +784,10 @@ void ApplyPriorityQueueResults(bool apply_results){
 
 
   // Apply the results from selfcal_rig over to the actual rig
-  if (apply_results) {
+  if (apply_results && !use_batch_estimates) {
 
-    std::unique_lock<std::mutex>(aac_mutex);
-    std::unique_lock<std::mutex>(online_calibrator_mutex);
+    std::lock_guard<std::mutex>aac_lock(aac_mutex);
+    std::lock_guard<std::mutex>oc_lock(online_calibrator_mutex);
     Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
     rig.cameras_[0]->SetParams(new_params);
     if(do_only_rotation_imu_self_cal){
@@ -820,16 +828,17 @@ void ApplyPriorityQueueResults(bool apply_results){
 
     // Set the correct cam params for all the poses that were
     // created with the previous parameters
-    // If we are not doint cam self-cal then it will just set the
-    // same parameters
-    for (size_t ii = cam_calib->unknown_calibration_start_pose;
-         ii < poses.size(); ++ii) {
-      for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
-        poses[ii]->cam_params = new_params;
-        track->ref_keypoint.ray =
-            rig.cameras_[0]->Unproject(
-              track->ref_keypoint.center_px).normalized();
-        track->needs_backprojection = true;
+
+    if(SelfCalActive(cam_calib)){
+      for (size_t ii = cam_calib->unknown_calibration_start_pose;
+           ii < poses.size(); ++ii) {
+        for (std::shared_ptr<sdtrack::DenseTrack> track : poses[ii]->tracks) {
+          poses[ii]->cam_params = new_params;
+          track->ref_keypoint.ray =
+              rig.cameras_[0]->Unproject(
+                track->ref_keypoint.center_px).normalized();
+          track->needs_backprojection = true;
+        }
       }
     }
 
@@ -841,27 +850,31 @@ void ApplyPriorityQueueResults(bool apply_results){
 
     VLOG(1) << "new rig Tvs params: \n" << sdtrack::UnrotatePose
                (rig.cameras_[0]->Pose());
-  }
 
-  if(analysed_cam_calib){
-    {
-      std::lock_guard<std::mutex> lock(aac_mutex);
-      VLOG(1) << "Analyzed camera priority queue with mean " <<
-                 cam_calib->pq_window.mean.transpose() << " and cov\n " <<
-                 cam_calib->pq_window.covariance ;
+
+    if(analysed_cam_calib){
+      {
+        std::lock_guard<std::mutex> lock(aac_mutex);
+        VLOG(1) << "Analyzed camera priority queue with mean " <<
+                   cam_calib->pq_window.mean.transpose() << " and cov\n " <<
+                   cam_calib->pq_window.covariance ;
+      }
+      cam_calib->online_calibrator.SetPriorityQueueDistribution(
+            cam_calib->pq_window.covariance,
+            cam_calib->pq_window.mean);
     }
-    cam_calib->online_calibrator.SetPriorityQueueDistribution(
-          cam_calib->pq_window.covariance,
-          cam_calib->pq_window.mean);
-  }
 
-  if(analysed_imu_calib){
-    VLOG(1) << "Analyzed IMU priority queue with mean " <<
-               imu_calib->pq_window.mean.transpose() << " and cov\n " <<
-               imu_calib->pq_window.covariance ;
-    imu_calib->online_calibrator.SetPriorityQueueDistribution(
-          imu_calib->pq_window.covariance,
-          imu_calib->pq_window.mean);
+    if(analysed_imu_calib){
+      VLOG(1) << "Analyzed IMU priority queue with mean " <<
+                 imu_calib->pq_window.mean.transpose() << " and cov\n " <<
+                 imu_calib->pq_window.covariance ;
+      imu_calib->online_calibrator.SetPriorityQueueDistribution(
+            imu_calib->pq_window.covariance,
+            imu_calib->pq_window.mean);
+    }
+  }else if(use_batch_estimates){
+    VLOG(1) << "Not applying PQ results to rig since we are using the batch" <<
+               " estimates";
   }
 }
 
@@ -901,7 +914,7 @@ void  BaAndStartNewLandmarks()
 
   batch_time = sdtrack::Tic();
 
-  if(have_unknown_calib){
+  if(have_unknown_calib || use_batch_estimates){
     global_metrics.batch_calls++;
 
     // If we have an unknown calibration, do batch optimization until we
@@ -933,9 +946,10 @@ void  BaAndStartNewLandmarks()
       }
     }
     // If we have no idea about *only* the camera calibration, do cam batch mode.
-    else if (cam_calib->unknown_calibration && SelfCalActive(cam_calib)
-             && ((batch_end - cam_calib->unknown_calibration_start_pose)
-                 > cam_calib->self_cal_segment_length)) {
+    else if ((use_batch_estimates || cam_calib->unknown_calibration) &&
+             SelfCalActive(cam_calib) &&
+             ((batch_end - cam_calib->unknown_calibration_start_pose)
+              > cam_calib->self_cal_segment_length)) {
       // Only visual
       VLOG(1) << "Performing batch optimization for the camera "
               << "calibration (visual only)";
@@ -954,15 +968,14 @@ void  BaAndStartNewLandmarks()
 
     }
     // If we have no idea about *only* the imu calibration, do imu batch mode.
-    else if (imu_calib->unknown_calibration && SelfCalActive(imu_calib)
-             && ((batch_end - imu_calib->unknown_calibration_start_pose
-                  ) > imu_calib->self_cal_segment_length)) {
+    else if ((use_batch_estimates || imu_calib->unknown_calibration) &&
+             SelfCalActive(imu_calib) &&
+             ((batch_end - imu_calib->unknown_calibration_start_pose)
+              > imu_calib->self_cal_segment_length)) {
       if (poses.size() > min_poses_for_imu) {
         VLOG(1) << "Performing batch optimization for the IMU "
                 << "calibration";
 
-        // while doing batch, initially just optimize over the rotation of the imu-camera
-        // calibration.
         use_batch_candidate= imu_calib->online_calibrator
             .AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, imu_calib->unknown_calibration_start_pose,
@@ -979,6 +992,8 @@ void  BaAndStartNewLandmarks()
           if(imu_calib->pq_window.mean.rows() != 0){
             imu_calib->current_window = imu_calib->pq_window;
           }
+        }else{
+          VLOG(1) << "rejecting batch candidate.";
         }
         num_params = Sophus::SE3t::DoF;
       }
@@ -993,11 +1008,10 @@ void  BaAndStartNewLandmarks()
       // Copy over the new parameters
 
       {
-        std::unique_lock<std::mutex>(online_calibrator_mutex);
-        std::unique_lock<std::mutex>(aac_mutex);
+        std::lock_guard<std::mutex>aac_lck(online_calibrator_mutex);
+        std::lock_guard<std::mutex>oc_lck(aac_mutex);
         rig.cameras_[0]->SetParams(selfcal_rig.cameras_[0]->GetParams());
         rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
-
       }
 
       VLOG(1) << "Setting new batch params from selfcal_rig to rig: "
@@ -1009,12 +1023,22 @@ void  BaAndStartNewLandmarks()
       VLOG(1)  << "new rig Tvs params: " <<
                   UnrotatePose(rig.cameras_[0]->Pose());
 
+      if(has_gt){
+        Eigen::VectorXd error = CompareWithGt(false, true,
+                                              log_decoupled(UnrotatePose(rig.cameras_[0]->Pose())));
+        VLOG(1) << "Tvs after batch Error: " << error.transpose();
+        VLOG(1) << "Tvs after batch Error Norm: " << error.norm();
+
+      }
+
       {
         // We need to backproject all the tracks associated
         // to the poses that we did not know anything about the
         // calibration.
 
-        std::unique_lock<std::mutex>(aac_mutex);
+        std::lock_guard<std::mutex> aac_lck(aac_mutex);
+        std::lock_guard<std::mutex> oc_lck(online_calibrator_mutex);
+
         for (uint32_t ii = cam_calib->unknown_calibration_start_pose ;
              ii < poses.size() ; ++ii) {
           // Set the per-pose camera parameters. If the params change, we need
@@ -1057,31 +1081,24 @@ void  BaAndStartNewLandmarks()
       }
 
       // If the determinant is smaller than a heuristic, switch to imu self_cal.
-      //TODO: Check if this heuristic is applicable to imu calibraiton
       if ((SelfCalActive(imu_calib)) &&
           ((score < 1e7 && score != 0 && !std::isnan(score) && !std::isinf(score)) ||
            ((batch_end - imu_calib->unknown_calibration_start_pose)
             > imu_calib->self_cal_segment_length * 2))) {
         VLOG(1) << "Determinant small enough, or we have enough poses.";
-        if(has_gt){
-          Eigen::VectorXd error = CompareWithGt(false, true,
-                                                log_decoupled(UnrotatePose(rig.cameras_[0]->Pose())));
-          VLOG(1) << "Tvs after batch Error: " << error.transpose();
-          VLOG(1) << "Tvs after batch Error Norm: " << error.norm();
 
-        }
-        if(do_only_rotation_imu_self_cal){
-          // we were optimizing only over rotation. try to converge on
-          // an initial estimate for the translation as well
-          VLOG(1) << "Enabling translation optimization.";
-          do_only_rotation_imu_self_cal = false;
-        }else{
-          // we optimized over rotation and translation.
-          // the calibraiton optimization can now be handed over to the
-          // priority queue.
-          VLOG(1) << "Rotation and Translation estimates found. Passing over to imu self-cal.";
-          imu_calib->unknown_calibration = false;
-        }
+                if(do_only_rotation_imu_self_cal){
+                  // we were optimizing only over rotation. try to converge on
+                  // an initial estimate for the translation as well
+                  VLOG(1) << "Enabling translation optimization.";
+                  do_only_rotation_imu_self_cal = false;
+                }else{
+                  // we optimized over rotation and translation.
+                  // the calibraiton optimization can now be handed over to the
+                  // priority queue.
+                  VLOG(1) << "Rotation and Translation estimates found. Passing over to imu self-cal.";
+                  imu_calib->unknown_calibration = false;
+                }
       }
     }else{
       if(use_batch_candidate){
@@ -1161,7 +1178,7 @@ void  BaAndStartNewLandmarks()
         break;
     }
 
-    if (should_do_self_cal) {
+    if (should_do_self_cal && !use_batch_estimates) {
       analyze_time = sdtrack::Tic();
       global_metrics.analyze_calls++;
 
@@ -1198,8 +1215,8 @@ void  BaAndStartNewLandmarks()
                    start_pose << " to pose " << end_pose << " (visual + imu)";
         // Produce an estimate for the calibration params. for this calibration
         // window
-        bool use_candidate =
-            imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
+        //        bool use_candidate =
+        imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, start_pose, end_pose,
               imu_calib->candidate_window, num_selfcal_ba_iterations, false,
               do_only_rotation_imu_self_cal);
@@ -1207,7 +1224,7 @@ void  BaAndStartNewLandmarks()
 
         // Analyse the candidate window and add to the priority queue
         // if it's good enough
-        if(use_candidate && imu_calib->online_calibrator.AnalyzeCalibrationWindow(
+        if(/*use_candidate && */imu_calib->online_calibrator.AnalyzeCalibrationWindow(
              imu_calib->candidate_window)){
           // calibration window was added to the priority queue
           // compare to the gt, if available
@@ -1284,8 +1301,8 @@ void  BaAndStartNewLandmarks()
       // This is when a window is swapped out or added to the priority queue
       bool queue_needs_update = false;
       for(auto const &calib : calibrations){
-        queue_needs_update = calib.second->online_calibrator.needs_update() /*&&
-            !calib.second->unknown_calibration*/ && SelfCalActive(calib.second);
+        queue_needs_update = calib.second->online_calibrator.needs_update() &&
+            !calib.second->unknown_calibration && SelfCalActive(calib.second);
 
         if(queue_needs_update){
           VLOG(1) << "PQ for sensor: " <<  calib.first << " needs update.";
@@ -1310,48 +1327,61 @@ void  BaAndStartNewLandmarks()
             calib.second->last_added_window_kl_divergence =
                 calib.second->last_window_kl_divergence;
           }
-
         }
 
-
-
+        bool apply_pq_results = false;
         if (SelfCalActive(imu_calib)
             && imu_calib->online_calibrator.needs_update()) {
           analysed_imu_calib = true;
 
-          // async priority queue, just set the parameters.
+          apply_pq_results =  (!imu_calib->unknown_calibration &&
+                               !use_batch_estimates);
 
-          std::shared_ptr<sdtrack::PriorityQueueParams> params =
-              imu_calib->online_calibrator.PriorityQueueParameters();
-          params->poses = poses;
-          params->current_tracks = *current_tracks;
-          params->num_iterations = num_selfcal_ba_iterations;
-          // only apply resuslts if the calibration is already known,
-          // otherwise the batch estimation will take care of estimating
-          // the calibraiton parameters.
-          params->apply_results = !imu_calib->unknown_calibration;
-          params->rotation_only_Tvs = do_only_rotation_imu_self_cal;
-          params->overal_window = &(imu_calib->pq_window);
+          if(do_async_pq){
+            // async priority queue, just set the parameters.
 
+            {
+              std::lock_guard<std::mutex> lck(online_calibrator_mutex);
 
-          // notify the online calibrator that there is a queue to be analysed
-          VLOG(1) << "Notifying online calibrator that PQ needs updating...";
-          imu_calib->online_calibrator.NotifyConditionVariable();
+              std::shared_ptr<sdtrack::PriorityQueueParams> params =
+                  imu_calib->online_calibrator.PriorityQueueParameters();
+              params->poses = poses;
+              params->current_tracks_size = current_tracks->size();
+              params->num_iterations = num_selfcal_ba_iterations;
+              // only apply resuslts if the calibration is already known,
+              // otherwise the batch estimation will take care of estimating
+              // the calibraiton parameters.
+              params->apply_results = apply_pq_results;
+              params->rotation_only_Tvs = do_only_rotation_imu_self_cal;
+              params->overal_window = &(imu_calib->pq_window);
+            }
 
-          //          imu_calib->online_calibrator.AnalyzePriorityQueue<true, true>(
-          //                poses, current_tracks, imu_calib->pq_window, num_selfcal_ba_iterations,
-          //                !imu_calib->unknown_calibration, do_only_rotation_imu_self_cal);
+            // notify the online calibrator that there is a queue to be analysed
+            VLOG(1) << "Notifying online calibrator that PQ needs updating...";
+
+            imu_calib->online_calibrator.NotifyConditionVariable();
+          }else{
+
+            imu_calib->online_calibrator.AnalyzePriorityQueue<true, true, false>(
+                  poses, current_tracks->size(), imu_calib->pq_window, num_selfcal_ba_iterations,
+                  apply_pq_results, do_only_rotation_imu_self_cal);
+          }
         }
 
         if (SelfCalActive(cam_calib) && cam_calib->online_calibrator.needs_update()){
           analysed_cam_calib = true;
+          apply_pq_results =  (!cam_calib->unknown_calibration &&
+                               !use_batch_estimates);
+
           VLOG(1) << "Analyzing Cam params PQ (visual)..." ;
-          cam_calib->online_calibrator.AnalyzePriorityQueue<false, false>(
-                poses, current_tracks, cam_calib->pq_window, num_selfcal_ba_iterations,
-                !cam_calib->unknown_calibration);
+          cam_calib->online_calibrator.AnalyzePriorityQueue<false, false, false>(
+                poses, current_tracks->size(), cam_calib->pq_window, num_selfcal_ba_iterations,
+                apply_pq_results);
         }
 
-
+        if(!do_async_pq){
+          ApplyPriorityQueueResults(apply_pq_results);
+        }
 
 
 
@@ -1536,7 +1566,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     // Add new pose to global poses array.
     {
-      std::unique_lock<std::mutex>(aac_mutex);
+      std::lock_guard<std::mutex> aac_lck(aac_mutex);
       new_pose->cam_params = rig.cameras_[0]->GetParams();
       poses.push_back(new_pose);
     }
@@ -2317,13 +2347,13 @@ bool LoadCameras(GetPot& cl)
     Tvs.so3() = new_rot;
     Tvs = sdtrack::RotatePose(Tvs);
 
-    // Set translation to a perturbed initial value, close to zero.
-    Eigen::Vector3d new_translation(Eigen::Vector3d::Zero());
-    // experimental initialization of the translation component.
-    new_translation << 0.01, 0.01, 0.01;
-    VLOG(1) << "Changing translation from: [ " << Tvs.translation().transpose()
-            << " ] to [ "<<  new_translation.transpose() << " ]";
-    Tvs.translation() = new_translation;
+    //     Set translation to a perturbed initial value, close to zero.
+        Eigen::Vector3d new_translation(Eigen::Vector3d::Zero());
+    //     experimental initialization of the translation component.
+        new_translation << 0.01, 0.01, 0.01;
+        VLOG(1) << "Changing translation from: [ " << Tvs.translation().transpose()
+                << " ] to [ "<<  new_translation.transpose() << " ]";
+        Tvs.translation() = new_translation;
 
     rig.cameras_[0]->SetPose(Tvs);
     VLOG(1) << "Unknown IMU calibration, using:"
@@ -2520,8 +2550,6 @@ int main(int argc, char** argv) {
   params->do_tvs = true;
   params->use_imu = true;
   params->callback = &ApplyPriorityQueueResults;
-
-
 
   // start the async priority queue thread
   imu_calib->online_calibrator.pq_thread

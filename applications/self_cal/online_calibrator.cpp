@@ -111,19 +111,24 @@ void OnlineCalibrator::DoPriorityQueueThread(){
 
     // priority queue has changed and needs to be analyzed
 
+    bool apply_results= true;
     if(pq_params_->use_imu && pq_params_->do_tvs){
-      AnalyzePriorityQueue<true, true>(
+      VLOG(debug_level) << "Calling analyze PQ with apply results = " <<
+                           pq_params_->apply_results;
+      apply_results = AnalyzePriorityQueue<true, true, true>(
             pq_params_->poses,
-            &(pq_params_->current_tracks),
+            //            &(pq_params_->current_tracks),
+            pq_params_->current_tracks_size,
             *(pq_params_->overal_window),
             pq_params_->num_iterations,
             pq_params_->apply_results,
             pq_params_->rotation_only_Tvs
             );
     }else{
-      AnalyzePriorityQueue<false, false>(
+      apply_results = AnalyzePriorityQueue<false, false, true>(
             pq_params_->poses,
-            &(pq_params_->current_tracks),
+            //            &(pq_params_->current_tracks),
+            pq_params_->current_tracks_size,
             *(pq_params_->overal_window),
             pq_params_->num_iterations,
             pq_params_->apply_results,
@@ -131,8 +136,9 @@ void OnlineCalibrator::DoPriorityQueueThread(){
             );
     }
 
+
     // Call the callback that will apply the update to the main rig
-    if(pq_params_->callback){
+    if(apply_results && pq_params_->callback){
       pq_params_->callback(pq_params_->apply_results);
     }
 
@@ -143,24 +149,25 @@ void OnlineCalibrator::DoPriorityQueueThread(){
 
 
 ///////////////////////////////////////////////////////////////////////////
-template<bool UseImu, bool DoTvs>
-void OnlineCalibrator::AnalyzePriorityQueue(
+template<bool UseImu, bool DoTvs, bool DoAsync>
+bool OnlineCalibrator::AnalyzePriorityQueue(
     std::vector<std::shared_ptr<TrackerPose>>& poses,
-    std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+    uint32_t current_tracks_size,
     CalibrationWindow &window,
     uint32_t num_iterations, bool apply_results, bool rotation_only_Tvs)
 {
 
+  bool result = true;
 
   Eigen::VectorXd cam_params_backup;
   Sophus::SE3d imu_params_backup;
   {
-    std::unique_lock<std::mutex> lck_(*oc_mutex_);
+    std::lock_guard<std::mutex> lck_(*oc_mutex_);
     cam_params_backup = rig_->cameras_[0]->GetParams();
     imu_params_backup = rig_->cameras_[0]->Pose();
   }
 
-  Proxy<UseImu, DoTvs, true> ba_proxy(this);
+  Proxy<UseImu, DoTvs, DoAsync> ba_proxy(this);
   auto& ba = ba_proxy.GetBa();
 
   ba::Options<double> options;
@@ -175,9 +182,9 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   options.error_change_threshold = 1e-6;
 
   ba.Init(options, poses.size(),
-          current_tracks->size() * poses.size());
+          current_tracks_size * poses.size());
   {
-    std::unique_lock<std::mutex> lck_(*oc_mutex_);
+    std::lock_guard<std::mutex> lck_(*oc_mutex_);
     ba.AddCamera(rig_->cameras_[0], true);
   }
 
@@ -187,7 +194,11 @@ void OnlineCalibrator::AnalyzePriorityQueue(
     for (CalibrationWindow& window : windows_) {
       if (window.start_index < poses.size() &&
           window.end_index < poses.size()) {
-        AddCalibrationWindowToBa<UseImu, DoTvs, true>(poses, window, pq_ba_id_);
+        if(DoAsync){
+          AddCalibrationWindowToBa<UseImu, DoTvs, true>(poses, window, pq_ba_id_);
+        }else{
+          AddCalibrationWindowToBa<UseImu, DoTvs, false>(poses, window, candidate_ba_id_);
+        }
       }
     }
   }
@@ -221,9 +232,11 @@ void OnlineCalibrator::AnalyzePriorityQueue(
   window.covariance =
       ba.GetSolutionSummary().calibration_marginals;
 
-  if (apply_results) {
-    std::lock_guard<std::mutex>(*ba_mutex_);
-    std::unique_lock<std::mutex>(*oc_mutex_);
+
+  if (apply_results &&
+      window.mean.head<3>().norm() < 1.0) {
+    std::lock_guard<std::mutex>ba_lck(*ba_mutex_);
+    std::lock_guard<std::mutex>oc_lck(*oc_mutex_);
 
     // copy over the camera parameters
     rig_->cameras_[0]->SetParams(ba.rig()->cameras_[0]->GetParams());
@@ -244,14 +257,17 @@ void OnlineCalibrator::AnalyzePriorityQueue(
                            log_decoupled(UnrotatePose(rig_->cameras_[0]->Pose()))
           .transpose();
     }
-  }
 
-
-  {
-    std::unique_lock<std::mutex>(*oc_mutex_);
     VLOG(debug_level) << "PQ setting needs_update to false";
     needs_update_ = false;
+
+  }else{
+    VLOG(debug_level) << "apply_resuts = false, or the PQ estimate is not good "
+                      << "and is being discarted...";
+    result = false;
   }
+
+  return result;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -373,11 +389,11 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     return false;
   }
 
-//  // set the needs update flag to false
-//  {
-//    std::unique_lock<std::mutex>(*oc_mutex_);
-//    needs_update_ = false;
-//  }
+    // set the needs update flag to false
+    {
+      std::unique_lock<std::mutex>(*oc_mutex_);
+      needs_update_ = false;
+    }
 
   // Go through all the windows and see if this one beats the one with the
   // highest score. We only consider windows with at most 1 overlap.
@@ -420,7 +436,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   // If we haven't got a full queue, insert the window if it doesn't overlap.
   if (windows_.size() < queue_length_) {
     if (num_overlaps == 0) {
-      std::unique_lock<std::mutex> lck_(*oc_mutex_);
+      std::lock_guard<std::mutex> lck_(*oc_mutex_);
       windows_.push_back(new_window);
       VLOG(debug_level) << "Pushing back non overlapping window into position " <<
                            windows_.size();
@@ -459,7 +475,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
                            " end: " << old_window.end_index << " with score " <<
                            new_window.score << " start: " << new_window.start_index <<
                            " end: " << new_window.end_index;
-      std::unique_lock<std::mutex> lck_(*oc_mutex_);
+      std::lock_guard<std::mutex> lck_(*oc_mutex_);
       windows_[max_id] = new_window;
       needs_update_ = true;
       return true;
@@ -697,7 +713,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   Eigen::VectorXd cam_params_backup;
   Sophus::SE3t imu_params_backup;
   {
-    std::unique_lock<std::mutex> lck(*oc_mutex_);
+    std::lock_guard<std::mutex> lck(*oc_mutex_);
     cam_params_backup = rig_->cameras_[0]->GetParams();
     imu_params_backup = rig_->cameras_[0]->Pose();
   }
@@ -742,7 +758,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     {
       // Add the self-cal rig to ba
       {
-        std::unique_lock<std::mutex> lck(*oc_mutex_);
+        std::lock_guard<std::mutex> lck(*oc_mutex_);
         // copy camera into ba. will need to get updated rig params
         // out of ba after optimization.
         ba.AddCamera(rig_->cameras_[0], true);
@@ -800,6 +816,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     if(use_candidate_estimate){
       window.covariance = summary.calibration_marginals;
       window.score = GetWindowScore(window, rotation_only_Tvs);
+    }else{
+      window.score = 0;
     }
 
 
@@ -862,21 +880,39 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   return use_candidate_estimate;
 }
 
-template void OnlineCalibrator::AnalyzePriorityQueue<false, false>(
+template bool OnlineCalibrator::AnalyzePriorityQueue<false, false, false>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-std::list<std::shared_ptr<DenseTrack>>* current_tracks,
-CalibrationWindow& overal_window, uint32_t num_iterations = 1,
-bool apply_results = false, bool rorotation_only_Tvs = false );
-
-template void OnlineCalibrator::AnalyzePriorityQueue<true, true>(
-std::vector<std::shared_ptr<TrackerPose>>& poses,
-std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+uint32_t current_tracks_size,
 CalibrationWindow& overal_window, uint32_t num_iterations = 1,
 bool apply_results = false, bool rorotation_only_Tvs = false);
 
-template void OnlineCalibrator::AnalyzePriorityQueue<true, false>(
+template bool OnlineCalibrator::AnalyzePriorityQueue<false, false, true>(
 std::vector<std::shared_ptr<TrackerPose>>& poses,
-std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+uint32_t current_tracks_size,
+CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+bool apply_results = false, bool rorotation_only_Tvs = false);
+
+template bool OnlineCalibrator::AnalyzePriorityQueue<true, true, true>(
+std::vector<std::shared_ptr<TrackerPose>>& poses,
+uint32_t current_tracks_size,
+CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+bool apply_results = false, bool rorotation_only_Tvs = false);
+
+template bool OnlineCalibrator::AnalyzePriorityQueue<true, true, false>(
+std::vector<std::shared_ptr<TrackerPose>>& poses,
+uint32_t current_tracks_size,
+CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+bool apply_results = false, bool rorotation_only_Tvs = false);
+
+template bool OnlineCalibrator::AnalyzePriorityQueue<true, false, false>(
+std::vector<std::shared_ptr<TrackerPose>>& poses,
+uint32_t current_tracks_size,
+CalibrationWindow& overal_window, uint32_t num_iterations = 1,
+bool apply_results = false, bool rorotation_only_Tvs = false);
+
+template bool OnlineCalibrator::AnalyzePriorityQueue<true, false, true>(
+std::vector<std::shared_ptr<TrackerPose>>& poses,
+uint32_t current_tracks_size,
 CalibrationWindow& overal_window, uint32_t num_iterations = 1,
 bool apply_results = false, bool rorotation_only_Tvs = false);
 

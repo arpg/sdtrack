@@ -36,7 +36,8 @@ struct PriorityQueueParams {
   bool use_imu;
   bool do_tvs;
   std::vector<std::shared_ptr<TrackerPose>> poses;
-  std::list<std::shared_ptr<DenseTrack>> current_tracks;
+//  std::list<std::shared_ptr<DenseTrack>> current_tracks;
+  uint32_t current_tracks_size;
   CalibrationWindow* overal_window;
   uint32_t num_iterations = 1;
   bool apply_results = false;
@@ -54,10 +55,10 @@ class OnlineCalibrator {
           nullptr);
   void TestJacobian(Eigen::Vector2t pix, Sophus::SE3t t_ba, Scalar rho);
 
-  template <bool UseImu, bool DoTvs>
-  void AnalyzePriorityQueue(
+  template <bool UseImu, bool DoTvs, bool DoAsync>
+  bool AnalyzePriorityQueue(
       std::vector<std::shared_ptr<TrackerPose>>& poses,
-      std::list<std::shared_ptr<DenseTrack>>* current_tracks,
+      uint32_t current_tracks_size,
       CalibrationWindow& overal_window, uint32_t num_iterations = 1,
       bool apply_results = false, bool rotation_only_Tvs = false);
 
@@ -106,7 +107,7 @@ class OnlineCalibrator {
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
   bool needs_update() {
-    std::unique_lock<std::mutex>(*oc_mutex_);
+    std::lock_guard<std::mutex>oc_lck(*oc_mutex_);
     return needs_update_;
   }
   void SetDebugLevel(const int level){
@@ -158,10 +159,6 @@ private:
   std::mutex  oc_prioriy_queue_mutex_;
   std::condition_variable oc_condition_var;
   std::shared_ptr<PriorityQueueParams> pq_params_;
-
-
-
-
 
   template <bool, bool, bool>
   struct Proxy {};
