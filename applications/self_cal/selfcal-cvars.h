@@ -33,6 +33,8 @@ static uint32_t& num_selfcal_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumSelfCalBAIterations",10u, "");
 static uint32_t& min_poses_for_imu =
     CVarUtils::CreateCVar<>("sd.MinPosesForImu", 20u, "");
+static uint32_t& min_poses_for_imu_rotation_initialization =
+    CVarUtils::CreateCVar<>("sd.MinPosesForImuRotationInit", 20u, "");
 static uint32_t& min_poses_for_camera =
     CVarUtils::CreateCVar<>("sd.MinPosesForCamera", 10u, "");
 static double& imu_extra_integration_time =
@@ -58,9 +60,7 @@ static bool& do_imu_self_cal =
 static bool& use_batch_estimates =
     CVarUtils::CreateCVar<>("sd.UseBatchEstimates", false, "");
 static bool& do_async_pq =
-    CVarUtils::CreateCVar<>("sd.DoAsyncPQ", false, "");
-static bool& do_only_rotation_imu_self_cal =
-    CVarUtils::CreateCVar<>("sd.DoRotationOnlyIMUSelfCal", true, "");
+    CVarUtils::CreateCVar<>("sd.DoAsyncPQ", true, "");
 static uint32_t& num_aac_poses =
     CVarUtils::CreateCVar<>("sd.NumAACPoses",20u, "");
 static bool& do_keyframing =
