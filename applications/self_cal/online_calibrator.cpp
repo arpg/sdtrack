@@ -5,7 +5,7 @@
 using namespace sdtrack;
 using sdtrackUtils::operator<<;
 using sdtrack::log_decoupled;
-using sdtrack::UnrotatePose;
+using sdtrack::VisionToRobotics;
 
 OnlineCalibrator::OnlineCalibrator()
 {
@@ -180,6 +180,7 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
   options.use_per_pose_cam_params = false;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
+  options.translation_enabled = !rotation_only_Tvs;
 
   ba.Init(options, poses.size(),
           current_tracks_size * poses.size());
@@ -206,7 +207,7 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
 
   if(DoTvs){
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = UnrotatePose(t_vs);
+    t_vs = VisionToRobotics(t_vs);
     VLOG(debug_level) << "PQ: PRE BA Tvs is: " << t_vs;
   }else{
     VLOG(debug_level) << "PQ: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
@@ -215,11 +216,19 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
   ba.Solve(num_iterations);
 
 
+  bool use_estimate = true;
   // Obtain the mean from the BA.
   if(DoTvs && UseImu){
-    window.mean = log_decoupled(ba.rig()->cameras_[0]->Pose());
+    Eigen::Vector6d imu_params = log_decoupled(ba.rig()->cameras_[0]->Pose());
+    if(imu_params.head<3>().norm() > 1){
+      use_estimate = false;
+    }else{
+      window.mean = imu_params;
+      VLOG(1) << "PQ estimate translation too large, not using...";
+    }
+
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-    t_vs = UnrotatePose(t_vs);
+    t_vs = VisionToRobotics(t_vs);
     VLOG(debug_level) << "PQ: POST BA Tvs is"
                       << t_vs;
   }else{
@@ -229,12 +238,14 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
 
   }
 
-  window.covariance =
-      ba.GetSolutionSummary().calibration_marginals;
+  if(use_estimate){
+    window.covariance =
+        ba.GetSolutionSummary().calibration_marginals;
+  }
 
 
   if (apply_results &&
-      window.mean.head<3>().norm() < 1.0) {
+      use_estimate) {
     std::lock_guard<std::mutex>ba_lck(*ba_mutex_);
     std::lock_guard<std::mutex>oc_lck(*oc_mutex_);
 
@@ -252,9 +263,9 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
       rig_->cameras_[0]->SetPose(new_imu_params);
 
       VLOG(debug_level) << "new PQ t_wc:" <<
-                           UnrotatePose(rig_->cameras_[0]->Pose());
+                           VisionToRobotics(rig_->cameras_[0]->Pose());
       VLOG(debug_level) << "new PQ mean: " <<
-                           log_decoupled(UnrotatePose(rig_->cameras_[0]->Pose()))
+                           log_decoupled(VisionToRobotics(rig_->cameras_[0]->Pose()))
           .transpose();
     }
 
@@ -389,11 +400,11 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     return false;
   }
 
-    // set the needs update flag to false
-    {
-      std::unique_lock<std::mutex>(*oc_mutex_);
-      needs_update_ = false;
-    }
+  // set the needs update flag to false
+  {
+    std::unique_lock<std::mutex>(*oc_mutex_);
+    needs_update_ = false;
+  }
 
   // Go through all the windows and see if this one beats the one with the
   // highest score. We only consider windows with at most 1 overlap.
@@ -739,7 +750,6 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   options.error_change_threshold = 1e-6;
   options.use_per_pose_cam_params = false;
   options.translation_enabled = !rotation_only_Tvs;
-  // Why is the trust region size so large?
   options.trust_region_size = 100;
 
   // Do a bundle adjustment on the current set
@@ -770,7 +780,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
 
     if(DoTvs){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
-      t_vs = UnrotatePose(t_vs);
+      t_vs = VisionToRobotics(t_vs);
       VLOG(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs;
     }else{
       VLOG(debug_level) << "Window: PRE BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
@@ -786,11 +796,11 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     // Obtain the mean from the BA
     if(DoTvs && UseImu){
 
-      Sophus::SE3d Tvs = UnrotatePose(ba.rig()->cameras_[0]->Pose());
+      Sophus::SE3d Tvs = VisionToRobotics(ba.rig()->cameras_[0]->Pose());
       VLOG(debug_level) << "Window: POST BA Tvs is: " << Tvs;
 
 
-      Eigen::MatrixXd imu_parameters = log_decoupled(UnrotatePose(
+      Eigen::MatrixXd imu_parameters = log_decoupled(VisionToRobotics(
                                                        ba.rig()->cameras_[0]->Pose()));
 
       if(rotation_only_Tvs){
@@ -798,13 +808,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
         imu_parameters.block<3,1>(0,0) = imu_params_backup.translation();
       }
 
-      if(apply_results && imu_parameters.block<3,1>(0,0).norm() > 1){
+      if(imu_parameters.block<3,1>(0,0).norm() > 1){
         use_candidate_estimate = false;
         VLOG(1) << "Candidate window translation too large (" <<
                    imu_parameters.block<3,1>(0,0).norm()  <<"m). not using.";
       }else{
         window.mean = imu_parameters;
       }
+
 
     }else{
       window.mean = ba.rig()->cameras_[0]->GetParams();
@@ -819,7 +830,6 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     }else{
       window.score = 0;
     }
-
 
     if (apply_results && use_candidate_estimate) {
       // this will be true when running in batch mode.
@@ -837,33 +847,33 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
         }
         rig_->cameras_[0]->SetPose(new_imu_params);
         VLOG(debug_level) << "Window: New selfcal_rig t_wc: "
-                          << UnrotatePose(rig_->cameras_[0]->Pose());
+                          << VisionToRobotics(rig_->cameras_[0]->Pose());
       }
 
       rig_->cameras_[0]->SetParams(ba.rig()->cameras_[0]->GetParams());
 
-      std::shared_ptr<TrackerPose> last_pose = poses.back();
-      // Get the pose of the last pose. This is used to calculate the relative
-      // transform from the pose to the current pose.
-      last_pose->t_wp = ba.GetPose(last_pose->opt_id[candidate_ba_id_]).t_wp;
+//      std::shared_ptr<TrackerPose> last_pose = poses.back();
+//      // Get the pose of the last pose. This is used to calculate the relative
+//      // transform from the pose to the current pose.
+//      last_pose->t_wp = ba.GetPose(last_pose->opt_id[candidate_ba_id_]).t_wp;
 
-      // Read out the pose and landmark values.
-      for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
-        std::shared_ptr<TrackerPose> pose = poses[ii];
-        const ba::PoseT<double>& ba_pose =
-            ba.GetPose(pose->opt_id[candidate_ba_id_]);
+//      // Read out the pose and landmark values.
+//      for (uint32_t ii = start_pose ; ii < poses.size() ; ++ii) {
+//        std::shared_ptr<TrackerPose> pose = poses[ii];
+//        const ba::PoseT<double>& ba_pose =
+//            ba.GetPose(pose->opt_id[candidate_ba_id_]);
 
-        pose->t_wp = ba_pose.t_wp;
+//        pose->t_wp = ba_pose.t_wp;
 
-        //t_ba = last_pose->t_wp.inverse() * pose->t_wp;
-        for (std::shared_ptr<DenseTrack> track: pose->tracks) {
-          if (track->external_id[candidate_ba_id_] == UINT_MAX) {
-            continue;
-          }
+//        //t_ba = last_pose->t_wp.inverse() * pose->t_wp;
+//        for (std::shared_ptr<DenseTrack> track: pose->tracks) {
+//          if (track->external_id[candidate_ba_id_] == UINT_MAX) {
+//            continue;
+//          }
 
-          track->needs_backprojection = true;
-        }
-      }
+//          track->needs_backprojection = true;
+//        }
+//      }
     } else {
       //      // BA updates the selfcal rig (cam and imu parameters),
       //      // so if we don't want parameters to be updated

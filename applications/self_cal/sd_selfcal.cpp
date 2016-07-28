@@ -26,6 +26,9 @@
 #include "selfcal-cvars.h"
 #include "chi2inv.h"
 #include "sophus/so2.hpp"
+#include <ceres/ceres.h>
+#include "CeresCostFunctions.h"
+#include "AutoDiffLocalParamSO3.h"
 
 #ifdef CHECK_NANS
 #include <xmmintrin.h>
@@ -39,7 +42,7 @@
 
 using sdtrackUtils::operator<<;
 using sdtrack::log_decoupled;
-using sdtrack::UnrotatePose;
+using sdtrack::VisionToRobotics;
 
 uint32_t keyframe_tracks = UINT_MAX;
 double start_time = 0;
@@ -73,6 +76,8 @@ bool do_start_new_landmarks = true;
 bool use_system_time = false;
 bool analysed_imu_calib = false;
 bool analysed_cam_calib = false;
+bool do_tvs_rotation_init = true;
+bool do_tvs_translation_init = false;
 double aac_time;
 double aac_calls;
 int image_width;
@@ -90,6 +95,10 @@ uint32_t keyframe_id;
 Eigen::Vector6d gt_Tvs;
 // ground truth camera parameters for comparison purposes
 Eigen::VectorXd gt_cam_params;
+
+ceres::Problem problem;
+Sophus::SO3d initial_Tvs_rotation_estimate(Eigen::Quaterniond::Identity());
+Eigen::Vector3d initial_Tvs_translation_estimate(Eigen::Vector3d::Zero());
 
 bool has_gt = false;
 
@@ -359,6 +368,9 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
     if(do_adaptive_conditioning){
       VLOG(3) << "Doing AAC with " << end_pose_id - start_pose_id + 1 << " poses"
               << " and " << end_pose_id - start_active_pose + 1 << " active poses" ;
+    }else{
+      VLOG_EVERY_N(2, 10) << "Doing BA from " << start_pose_id << " to " <<
+                             end_pose_id;
     }
 
     // Add an extra pose to conditon the IMU
@@ -682,7 +694,7 @@ void DoSerialAAC()
           Eigen::VectorXd rig_cam_params = rig.cameras_[0]->GetParams();
           aac_rig.cameras_[0]->SetParams(rig_cam_params);
 
-          if(do_only_rotation_imu_self_cal){
+          if(do_tvs_rotation_init){
             Sophus::SE3t new_imu_params = rig.cameras_[0]->Pose();
             new_imu_params.translation() = aac_rig.cameras_[0]->Pose().
                 translation();
@@ -738,7 +750,7 @@ void DoAAC()
             std::lock_guard<std::mutex> lock(aac_mutex);
             aac_rig.cameras_[0]->SetParams(rig.cameras_[0]->GetParams());
 
-            if(do_only_rotation_imu_self_cal){
+            if(do_tvs_rotation_init){
               Sophus::SE3t new_imu_params = rig.cameras_[0]->Pose();
               new_imu_params.translation() = aac_rig.cameras_[0]->Pose().
                   translation();
@@ -790,7 +802,7 @@ void ApplyPriorityQueueResults(bool apply_results){
     std::lock_guard<std::mutex>oc_lock(online_calibrator_mutex);
     Eigen::VectorXd new_params = selfcal_rig.cameras_[0]->GetParams();
     rig.cameras_[0]->SetParams(new_params);
-    if(do_only_rotation_imu_self_cal){
+    if(do_tvs_rotation_init){
       Sophus::SE3t new_imu_params = selfcal_rig.cameras_[0]->Pose();
       // Preserve the rig's translation
       new_imu_params.translation() = rig.cameras_[0]->Pose().translation();
@@ -803,7 +815,7 @@ void ApplyPriorityQueueResults(bool apply_results){
     if(has_gt && analysed_imu_calib){
       Eigen::VectorXd calib_comparison =
           CompareWithGt(false, true,
-                        log_decoupled(UnrotatePose(rig.cameras_[0]->Pose())));
+                        log_decoupled(VisionToRobotics(rig.cameras_[0]->Pose())));
 
       VLOG(1) << "PQ error: " << calib_comparison.transpose();
       VLOG(1) << "PQ error score: " << calib_comparison.norm();
@@ -848,7 +860,7 @@ void ApplyPriorityQueueResults(bool apply_results){
                rig.cameras_[0]->GetParams().transpose()
                ;
 
-    VLOG(1) << "new rig Tvs params: \n" << sdtrack::UnrotatePose
+    VLOG(1) << "new rig Tvs params: \n" << sdtrack::VisionToRobotics
                (rig.cameras_[0]->Pose());
 
 
@@ -917,12 +929,14 @@ void  BaAndStartNewLandmarks()
   if(have_unknown_calib || use_batch_estimates){
     global_metrics.batch_calls++;
 
+
     // If we have an unknown calibration, do batch optimization until we
     // converge on the calibration parameters
     double score = 0;
     int num_params = 0;
     bool use_batch_candidate = true;
 
+    //------------------------START JOINT BATCH MODE---------------------//
     // If we are optimizing over camera and imu parameters, but know
     // nothing about either, start in joint batch mode
     if(cam_calib->unknown_calibration && imu_calib->unknown_calibration &&
@@ -937,14 +951,15 @@ void  BaAndStartNewLandmarks()
             AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, batch_calib->unknown_calibration_start_pose,
               batch_end, batch_calib->pq_window, num_selfcal_ba_iterations, true,
-              do_only_rotation_imu_self_cal);
+              do_tvs_rotation_init);
         score = batch_calib->online_calibrator.GetWindowScore(
               batch_calib->pq_window);
         global_pq_window = batch_calib->pq_window;
         num_params = selfcal_rig.cameras_[0]->GetParams().rows() +
             Sophus::SE3t::DoF;
       }
-    }
+    }//---------------------------END JOINT BATCH MODE----------------------//
+    //---------------------------START CAMERA BATCH INITIALIZATION-----------//
     // If we have no idea about *only* the camera calibration, do cam batch mode.
     else if ((use_batch_estimates || cam_calib->unknown_calibration) &&
              SelfCalActive(cam_calib) &&
@@ -967,39 +982,159 @@ void  BaAndStartNewLandmarks()
       num_params = selfcal_rig.cameras_[0]->GetParams().rows();
 
     }
+    //-------------------END CAMERA BATCH INITIALIZATION---------------------//
+    //-------------------START IMU BATCH INITIALIZATION----------------------//
     // If we have no idea about *only* the imu calibration, do imu batch mode.
     else if ((use_batch_estimates || imu_calib->unknown_calibration) &&
-             SelfCalActive(imu_calib) &&
-             ((batch_end - imu_calib->unknown_calibration_start_pose)
-              > imu_calib->self_cal_segment_length)) {
-      if (poses.size() > min_poses_for_imu) {
-        VLOG(1) << "Performing batch optimization for the IMU "
-                << "calibration";
+             SelfCalActive(imu_calib)) {
 
-        use_batch_candidate= imu_calib->online_calibrator
-            .AnalyzeCalibrationWindow<true, true>(
-              poses, current_tracks, imu_calib->unknown_calibration_start_pose,
-              batch_end, imu_calib->pq_window, num_selfcal_ba_iterations,
-              true,
-              do_only_rotation_imu_self_cal);
+      // Do an initialization step for the IMU-Camera transform, getting
+      // rough estimates for rotation and then translation.
+      // The convergence on Tvs with the MLE estimator is very
+      // dependent on a good initial estimate.
+      if((do_tvs_rotation_init || do_tvs_translation_init) &&
+         poses.size() > 1){
 
+        if(do_tvs_rotation_init){
 
-        if(use_batch_candidate){
-          score = imu_calib->online_calibrator.
-              GetWindowScore(imu_calib->pq_window);
-          global_pq_window = imu_calib->pq_window;
+          // first, get the imu estimated rotation from frame i to frame j
+          Sophus::SO3d imu_rotation_estimate;
 
-          if(imu_calib->pq_window.mean.rows() != 0){
-            imu_calib->current_window = imu_calib->pq_window;
+          std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[poses.size()-2];
+          std::shared_ptr<sdtrack::TrackerPose> pose2 = poses[poses.size()-1];
+          std::vector<ba::ImuPoseT<Scalar>> imu_poses;
+          ba::PoseT<Scalar> start_pose;
+          start_pose.t_wp = pose1->t_wp;
+          start_pose.b = pose1->b;
+          start_pose.v_w = pose1->v_w;
+          start_pose.time = pose1->time;
+          // Integrate the measurements since the last frame.
+          std::vector<ba::ImuMeasurementT<Scalar> > meas =
+              imu_buffer.GetRange(pose1->time, pose2->time);
+          decltype(vi_bundle_adjuster)::ImuResidual::IntegrateResidual(
+                start_pose, meas, start_pose.b.head<3>(), start_pose.b.tail<3>(),
+                vi_bundle_adjuster.GetImuCalibration().g_vec, imu_poses);
+          if (imu_poses.size() > 1) {
+            ba::ImuPoseT<Scalar>& last_pose = imu_poses.back();
+            imu_rotation_estimate = (start_pose.t_wp.inverse() * last_pose.t_wp).so3();
           }
-        }else{
-          VLOG(1) << "rejecting batch candidate.";
+
+          // Now, get the camera estimated rotation from frame i to frame j
+          Sophus::SO3d cam_rotation_estimate = (poses[poses.size()-2]->t_wp.inverse() *
+              poses[poses.size()-1]->t_wp).so3();
+
+          VLOG(1) << "Adding residual block for rotation estimation";
+          VLOG(1) << "Imu rotation estimate: \n" << imu_rotation_estimate.matrix();
+          VLOG(1) << "Cam rotation estimate: \n" << cam_rotation_estimate.matrix();
+
+          // Create a residual block for these measurements
+          ceres::CostFunction* rotation_cost_function =
+              new ceres::AutoDiffCostFunction<sdtrack::NoiselessRotationCostFunctor<double>,
+              3,
+              Sophus::SO3d::num_parameters>
+              (new sdtrack::NoiselessRotationCostFunctor<double>(cam_rotation_estimate,
+                                                                 imu_rotation_estimate));
+
+          HuberLoss* loss_function = new HuberLoss(1.0);
+          // Add the residual block to the problem
+          problem.AddResidualBlock(rotation_cost_function,
+                                   loss_function,
+                                   initial_Tvs_rotation_estimate.data());
         }
-        num_params = Sophus::SE3t::DoF;
+
+        if(do_tvs_translation_init){
+          //TODO
+
+        }
+
+        // If we have enought poses to estimate the Tvs rotation
+        if ((poses.size() > min_poses_for_imu_rotation_init) &&
+            do_tvs_rotation_init) {
+          // Now that all the necessary measurements have been added to the
+          // problem, to get an initial estimate for Tvs rotation.
+
+          // Set a local parameterization for the Tvs parameter
+          ceres::LocalParameterization* local_parameterization =
+              new ceres::AutoDiffLocalParameterization
+              <Sophus::sdtrack::AutoDiffLocalParamSO3, 4, 3>;
+
+          if(problem.HasParameterBlock(initial_Tvs_rotation_estimate.data())){
+            problem.SetParameterization(initial_Tvs_rotation_estimate.data(),
+                                        local_parameterization);
+          }
+
+          ceres::Solver::Options ceres_options;
+          // use a dense rank-revealing factorization of A
+          ceres_options.linear_solver_type = ceres::DENSE_QR;
+          ceres_options.minimizer_progress_to_stdout = false;
+          ceres_options.max_num_iterations = 100;
+          ceres::Solver::Summary summary;
+          ceres::Solve(ceres_options, &problem, &summary);
+          VLOG(1) << summary.BriefReport();
+          initial_Tvs_rotation_estimate =
+              initial_Tvs_rotation_estimate.inverse();
+          Sophus::SO3d Tvs_robotics = initial_Tvs_rotation_estimate * calibu::RdfRobotics.inverse();
+          VLOG(1) << "got Tvs estimate (robotics): \n" <<
+                     (Tvs_robotics).matrix();
+          Eigen::Vector3d tangent = Tvs_robotics.log();
+          VLOG(1) << "Error in Tvs Estimate: " <<
+                     fabs(gt_Tvs[3] - tangent[0]) << ", " <<
+                                                     fabs(gt_Tvs[4] - tangent[1]) << ", " <<
+                                                                                     fabs(gt_Tvs[5] - tangent[2]);
+
+          VLOG(1) << "Setting initial rotation estimate for Tvs";
+          Sophus::SE3d rig_tvs = rig.cameras_[0]->Pose();
+          rig_tvs.so3() = initial_Tvs_rotation_estimate;
+          {
+            std::lock_guard<std::mutex>oc_lck(online_calibrator_mutex);
+            std::lock_guard<std::mutex>aac_lck(aac_mutex);
+            rig.cameras_[0]->SetPose(rig_tvs);
+            selfcal_rig.cameras_[0]->SetPose(rig_tvs);
+          }
+
+          VLOG(1) << "Enabling translation optimization";
+          do_tvs_translation_init = true;
+          do_tvs_rotation_init = false;
+          // Now that we have the rotation estimate, let's solve the linear system to
+          // get the translation initial guess, that we can then feed into the MLE
+          // estimator for further refinement.
+
+        }
       }
+
+      if(!do_tvs_rotation_init && !do_tvs_translation_init &&
+         ((batch_end - imu_calib->unknown_calibration_start_pose)
+          > imu_calib->self_cal_segment_length))
+        // We have found initial estimates for Tvs rotation and translation.
+        // If we have enough poses, try to feed those estimates into a batch
+        // MLE estimation for refinement.
+
+        VLOG(1) << "Performing batch MLE optimization for the IMU calibration";
+
+      use_batch_candidate= imu_calib->online_calibrator
+          .AnalyzeCalibrationWindow<true, true>(
+            poses, current_tracks, imu_calib->unknown_calibration_start_pose,
+            batch_end, imu_calib->pq_window, num_selfcal_ba_iterations,
+            true, false);
+
+      if(use_batch_candidate){
+        score = imu_calib->online_calibrator.
+            GetWindowScore(imu_calib->pq_window);
+        global_pq_window = imu_calib->pq_window;
+
+        if(imu_calib->pq_window.mean.rows() != 0){
+          imu_calib->current_window = imu_calib->pq_window;
+        }
+      }else{
+        VLOG(1) << "rejecting batch candidate.";
+      }
+      num_params = Sophus::SE3t::DoF;
+
     }
+    //-------------------END IMU BATCH INITIALIZATION-------------------------//
 
 
+    //-----------------------APPLY BATCH RESULTS TO RIG-----------------------//
     if (global_pq_window.covariance.fullPivLu().rank() ==
         num_params && num_params != 0 && use_batch_candidate /*&& score < 1e7*/) {
       // window is good enough for us to use the calibraiton
@@ -1008,8 +1143,8 @@ void  BaAndStartNewLandmarks()
       // Copy over the new parameters
 
       {
-        std::lock_guard<std::mutex>aac_lck(online_calibrator_mutex);
-        std::lock_guard<std::mutex>oc_lck(aac_mutex);
+        std::lock_guard<std::mutex>oc_lck(online_calibrator_mutex);
+        std::lock_guard<std::mutex>aac_lck(aac_mutex);
         rig.cameras_[0]->SetParams(selfcal_rig.cameras_[0]->GetParams());
         rig.cameras_[0]->SetPose(selfcal_rig.cameras_[0]->Pose());
       }
@@ -1021,11 +1156,11 @@ void  BaAndStartNewLandmarks()
                  ;
 
       VLOG(1)  << "new rig Tvs params: " <<
-                  UnrotatePose(rig.cameras_[0]->Pose());
+                  VisionToRobotics(rig.cameras_[0]->Pose());
 
       if(has_gt){
         Eigen::VectorXd error = CompareWithGt(false, true,
-                                              log_decoupled(UnrotatePose(rig.cameras_[0]->Pose())));
+                                              log_decoupled(VisionToRobotics(rig.cameras_[0]->Pose())));
         VLOG(1) << "Tvs after batch Error: " << error.transpose();
         VLOG(1) << "Tvs after batch Error Norm: " << error.norm();
 
@@ -1056,10 +1191,6 @@ void  BaAndStartNewLandmarks()
         }
       }
 
-    }
-
-    if(num_params > 0 && use_batch_candidate){
-
       // Write this to the batch file.
       std::ofstream("batch.txt", std::ios_base::app) << keyframe_id << ", " <<
                                                         global_pq_window.covariance.diagonal().transpose().format(
@@ -1087,18 +1218,18 @@ void  BaAndStartNewLandmarks()
             > imu_calib->self_cal_segment_length * 2))) {
         VLOG(1) << "Determinant small enough, or we have enough poses.";
 
-                if(do_only_rotation_imu_self_cal){
-                  // we were optimizing only over rotation. try to converge on
-                  // an initial estimate for the translation as well
-                  VLOG(1) << "Enabling translation optimization.";
-                  do_only_rotation_imu_self_cal = false;
-                }else{
-                  // we optimized over rotation and translation.
-                  // the calibraiton optimization can now be handed over to the
-                  // priority queue.
-                  VLOG(1) << "Rotation and Translation estimates found. Passing over to imu self-cal.";
-                  imu_calib->unknown_calibration = false;
-                }
+        if(do_tvs_rotation_init){
+          // we were optimizing only over rotation. try to converge on
+          // an initial estimate for the translation as well
+          VLOG(1) << "Enabling translation optimization.";
+          do_tvs_rotation_init = false;
+        }else{
+          // we optimized over rotation and translation.
+          // the calibraiton optimization can now be handed over to the
+          // priority queue.
+          VLOG(1) << "Rotation and Translation estimates found. Passing over to imu self-cal.";
+          imu_calib->unknown_calibration = false;
+        }
       }
     }else{
       if(use_batch_candidate){
@@ -1215,16 +1346,16 @@ void  BaAndStartNewLandmarks()
                    start_pose << " to pose " << end_pose << " (visual + imu)";
         // Produce an estimate for the calibration params. for this calibration
         // window
-        //        bool use_candidate =
-        imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
+        bool use_candidate =
+            imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
               poses, current_tracks, start_pose, end_pose,
               imu_calib->candidate_window, num_selfcal_ba_iterations, false,
-              do_only_rotation_imu_self_cal);
+              do_tvs_rotation_init);
 
 
         // Analyse the candidate window and add to the priority queue
         // if it's good enough
-        if(/*use_candidate && */imu_calib->online_calibrator.AnalyzeCalibrationWindow(
+        if(use_candidate && imu_calib->online_calibrator.AnalyzeCalibrationWindow(
              imu_calib->candidate_window)){
           // calibration window was added to the priority queue
           // compare to the gt, if available
@@ -1352,7 +1483,7 @@ void  BaAndStartNewLandmarks()
               // otherwise the batch estimation will take care of estimating
               // the calibraiton parameters.
               params->apply_results = apply_pq_results;
-              params->rotation_only_Tvs = do_only_rotation_imu_self_cal;
+              params->rotation_only_Tvs = do_tvs_rotation_init;
               params->overal_window = &(imu_calib->pq_window);
             }
 
@@ -1361,10 +1492,9 @@ void  BaAndStartNewLandmarks()
 
             imu_calib->online_calibrator.NotifyConditionVariable();
           }else{
-
             imu_calib->online_calibrator.AnalyzePriorityQueue<true, true, false>(
                   poses, current_tracks->size(), imu_calib->pq_window, num_selfcal_ba_iterations,
-                  apply_pq_results, do_only_rotation_imu_self_cal);
+                  apply_pq_results, do_tvs_rotation_init);
           }
         }
 
@@ -1435,6 +1565,50 @@ void  BaAndStartNewLandmarks()
         queue_time = sdtrack::Toc(queue_time);
       }// END PQ UPDATE
     }
+
+    //    if(poses.size() % 10 == 0 && poses.size() >= 20){
+    //      VLOG(1) << "Poses size = " << poses.size() << " doing BATCH Tvs estimate.";
+    //      sdtrack::CalibrationWindow batch_window;
+    //      Sophus::SE3d initial_Tvs(Eigen::Quaterniond::Identity(),
+    //                               Eigen::Vector3d::Zero());
+    //      Sophus::SO3d new_rot = Sophus::SO3d::exp(
+    //            (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
+    //      initial_Tvs.so3() = new_rot;
+    //      initial_Tvs = sdtrack::RotatePose(initial_Tvs);
+
+    //      // copy rotation estimate
+    //      //initial_Tvs.so3() = selfcal_rig.cameras_[0]->Pose().so3();
+
+    //      // set a perturbed translation (random perturbation)
+    //      Eigen::Vector3d new_trans = rig.cameras_[0]->Pose().translation();
+    //      new_trans[0] *= 1.05;
+    //      new_trans[1] *= 0.94;
+    //      new_trans[2] *= 1.03;
+    //      initial_Tvs.translation() = new_trans;
+
+    //      selfcal_rig.cameras_[0]->SetPose(initial_Tvs);
+
+
+    //      imu_calib->online_calibrator.AnalyzeCalibrationWindow<true, true>(
+    //            poses, current_tracks, 0, poses.size(), batch_window, 50,
+    //            true, false);
+
+    //      if(has_gt){
+    //        // write initial pq error to log file
+    //        Eigen::VectorXd calib_comparison =
+    //            CompareWithGt(false, true,
+    //                          log_decoupled(UnrotatePose(selfcal_rig.cameras_[0]->Pose())));
+    //        VLOG(1) << "batch tvs error: " << calib_comparison.transpose();
+    //        VLOG(1) << "batch tvs error norm: " << calib_comparison.norm();
+    //        VLOG(1) << "batch tvs covariance: \n" << batch_window.covariance;
+
+    //        if(calib_comparison.norm() < 1e-1){
+    //          exit(0);
+    //        }
+
+    //      }
+
+    //    }
 
     /* if ((do_cam_self_cal || ImuSelfCalActive()) && current_window.mean.rows() != 0) {
       std::ofstream("sigmas.txt", std::ios_base::app) << keyframe_id << ", " <<
@@ -1556,6 +1730,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         base.block<1, 3>(1, 0) = right;
         base.block<1, 3>(2, 0) = down;
         new_pose->t_wp = Sophus::SE3t(base);
+        VLOG(1) << "Initial pose: \n" <<new_pose->t_wp.matrix();
       }
       // Set the initial velocity and bias.
       new_pose->v_w.setZero();
@@ -1567,6 +1742,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     // Add new pose to global poses array.
     {
       std::lock_guard<std::mutex> aac_lck(aac_mutex);
+      std::lock_guard<std::mutex> oc_lck(online_calibrator_mutex);
       new_pose->cam_params = rig.cameras_[0]->GetParams();
       poses.push_back(new_pose);
     }
@@ -1637,11 +1813,12 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
   }
 
-  //StreamMessage(selfcal_debug_level) << "Guess:\n " << guess.matrix() << std::endl;
+  //VLOG(3) << "Guess:\n " << guess.matrix();
 
   bool tracking_failed = false;
   {
-    std::lock_guard<std::mutex> lock(aac_mutex);
+    std::lock_guard<std::mutex> aac_lock(aac_mutex);
+    std::lock_guard<std::mutex> oc_lock(online_calibrator_mutex);
 
     tracker.AddImage(images, guess);
     tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
@@ -1718,6 +1895,32 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     BaAndStartNewLandmarks();
   }
 
+  //  if(poses.size() == 20){
+  //    VLOG(1) << "pose 20 relative pose Tab:\n" <<
+  //               (poses.front()->t_wp.inverse() * poses.back()->t_wp).matrix();
+
+  //    std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[0];
+  //    std::shared_ptr<sdtrack::TrackerPose> pose2 = poses[poses.size()-1];
+  //    std::vector<ba::ImuPoseT<Scalar>> imu_poses;
+  //    ba::PoseT<Scalar> start_pose;
+  //    start_pose.t_wp = pose1->t_wp;
+  //    start_pose.b = pose1->b;
+  //    start_pose.v_w = pose1->v_w;
+  //    start_pose.time = pose1->time;
+  //    // Integrate the measurements since the last frame.
+  //    std::vector<ba::ImuMeasurementT<Scalar> > meas =
+  //        imu_buffer.GetRange(pose1->time, pose2->time);
+  //    decltype(vi_bundle_adjuster)::ImuResidual::IntegrateResidual(
+  //          start_pose, meas, start_pose.b.head<3>(), start_pose.b.tail<3>(),
+  //          vi_bundle_adjuster.GetImuCalibration().g_vec, imu_poses);
+  //    if (imu_poses.size() > 1) {
+  //      ba::ImuPoseT<Scalar>& last_pose = imu_poses.back();
+  //       VLOG(1) << "pose 20 relative IMU pose Tab:\n" <<
+  //                  (start_pose.t_wp.inverse() * last_pose.t_wp).matrix();
+  //    }
+  //    exit(0);
+  //  }
+
   // Check to see if any online calibrator should be plotted
   for(auto const &calib : calibrations){
     if (calib.second->plot_graphs && calib.second->do_self_cal){
@@ -1749,7 +1952,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         }
 
         for (size_t ii = 0; ii < num_params; ++ii) {
-          double pq_value = log_decoupled(UnrotatePose(rig.cameras_[0]->Pose())
+          double pq_value = log_decoupled(VisionToRobotics(rig.cameras_[0]->Pose())
               )[ii];
           double candidate_value = calib.second->candidate_window.mean[ii];
           if(has_gt){
@@ -2253,15 +2456,23 @@ void InitGui() {
 ///////////////////////////////////////////////////////////////////////////
 bool LoadCameras(GetPot& cl)
 {
+
+  // Loads the rig form the cameras.xml file.
+  // Populates the rig with the camera pose in vision coordinate convention.
+  // BA assumes poses are in the vision convention.
   LoadCameraAndRig(cl, camera_device, rig);
 
   for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
 
-    // Try to use shallow copy constructor
-    //std::remove_reference<decltype(*rig.cameras_[0])>::type cam;
-
     // Create a new camera for each rig, copying over the pose and params
     // from the rig that was read in from the XML.
+
+    // This is necessary since the selfcal rig can be updated while the
+    // calibration-parameters-BA is running, but we don't want those values
+    // to be used in the main or AAC rig for pose estimation.
+
+    //TODO: dynamically infer the type of camera,
+    //      using FovCamera model for now....
     std::shared_ptr<calibu::CameraInterface<Scalar>> cam_ptr(
           new calibu::FovCamera<Scalar>());
 
@@ -2323,47 +2534,51 @@ bool LoadCameras(GetPot& cl)
                                                       std::endl;
   }
 
+  if(has_imu && has_gt){
+    Sophus::SE3t Tvs = rig.cameras_[0]->Pose();
+    gt_Tvs = log_decoupled(VisionToRobotics(Tvs));
+    VLOG(1) << "gt_Tvs: " << gt_Tvs.transpose();
+    VLOG(1) << "gt_Tvs rotation matrix: \n" << VisionToRobotics(Tvs).so3().matrix();
+  }
+
   if (has_imu && unknown_imu_calibration && use_imu_measurements) {
 
     Sophus::SE3t Tvs = rig.cameras_[0]->Pose();
 
     // If IMU calibration is unknown, perturb the IMU rotation
     VLOG(1) << "IMU XML Calibration log: " <<
-               log_decoupled(UnrotatePose(Tvs)).transpose();
+               log_decoupled(VisionToRobotics(Tvs)).transpose();
 
 
-    if(has_gt){
-      gt_Tvs = log_decoupled(UnrotatePose(Tvs));
-      VLOG(1) << "gt_Tvs: " << gt_Tvs.transpose();
-    }
-
-    Sophus::SO3d old_rot = UnrotatePose(Tvs).so3();
-    Sophus::SO3d new_rot = Sophus::SO3d::exp(
+    Sophus::SO3d old_rot = VisionToRobotics(Tvs).so3();
+    Sophus::SO3d new_rot = old_rot * Sophus::SO3d::exp(
           (Eigen::Vector3d() << 0.1, 0.2, 0.3).finished());
     VLOG(1) << "Changing rotation from: [ " << old_rot.matrix().eulerAngles
                (0,1,2).transpose() << " ] to [ "<<  new_rot.matrix().eulerAngles
                (0,1,2).transpose() << " ]";
 
     Tvs.so3() = new_rot;
-    Tvs = sdtrack::RotatePose(Tvs);
+    Tvs = sdtrack::RoboticsToVision(Tvs);
 
     //     Set translation to a perturbed initial value, close to zero.
-        Eigen::Vector3d new_translation(Eigen::Vector3d::Zero());
+    Eigen::Vector3d new_translation(Tvs.translation());
     //     experimental initialization of the translation component.
-        new_translation << 0.01, 0.01, 0.01;
-        VLOG(1) << "Changing translation from: [ " << Tvs.translation().transpose()
-                << " ] to [ "<<  new_translation.transpose() << " ]";
-        Tvs.translation() = new_translation;
+    new_translation[0] *=1.05;
+    new_translation[1] *=0.94;
+    new_translation[2] *=1.03;
+    VLOG(1) << "Changing translation from: [ " << Tvs.translation().transpose()
+            << " ] to [ "<<  new_translation.transpose() << " ]";
+    Tvs.translation() = new_translation;
 
     rig.cameras_[0]->SetPose(Tvs);
     VLOG(1) << "Unknown IMU calibration, using:"
-            << sdtrack::UnrotatePose(rig.cameras_[0]->Pose());
+            << sdtrack::VisionToRobotics(rig.cameras_[0]->Pose());
 
     if(has_gt){
       // write initial pq error to log file
       Eigen::VectorXd calib_comparison =
           CompareWithGt(false, true,
-                        log_decoupled(UnrotatePose(rig.cameras_[0]->Pose())));
+                        log_decoupled(VisionToRobotics(rig.cameras_[0]->Pose())));
       VLOG(1) << "initial tvs error: " << calib_comparison.transpose();
       VLOG(1) << "initial tvs error norm: " << calib_comparison.norm();
     }
@@ -2375,7 +2590,7 @@ bool LoadCameras(GetPot& cl)
 
   }else if(has_imu && use_imu_measurements){
     VLOG(1) << "Using IMU calibration: "
-            << sdtrack::UnrotatePose(rig.cameras_[0]->Pose());
+            << sdtrack::VisionToRobotics(rig.cameras_[0]->Pose());
   }
 
   return true;
@@ -2461,6 +2676,14 @@ int main(int argc, char** argv) {
   VLOG(1) << "Initializing camera..." ;
   LoadCameras(cl);
 
+  //ZZZZZZZZZZZZZZZZZZZZZZ
+  // temporary for testing.
+  // it is important for the initialization of the Tvs rotation estimate that
+  // sdtrack does not have a guess for Tvs, but considers the camera to be
+  // co-located with the IMU.
+  Sophus::SE3d camera_pose(Eigen::Quaterniond::Identity(),
+                           Eigen::Vector3d::Zero());
+  rig.cameras_[0]->SetPose(camera_pose);
 
   pyramid_levels = 3;
   patch_size = 7;
@@ -2494,11 +2717,8 @@ int main(int argc, char** argv) {
     camera_weights << 1.0, 1.0, 1.7, 1.7;
   }
 
-  // TOOD: Run a large optimization to find out what the scaling weights for
-  // the IMU transform are
   Eigen::VectorXd imu_weights(6);
-  imu_weights << 500, 500, 5000, 500000, 500000, 500000;
-  //imu_weights << 1,1,1,1,1,1;
+  imu_weights << 1.0, 1.7, 4.0, 80.0, 25.0, 112.0;
 
   Eigen::VectorXd batch_weights(rig.cameras_[0]->NumParams() + Sophus::SE3d::DoF);
   batch_weights << camera_weights, imu_weights;
@@ -2535,7 +2755,7 @@ int main(int argc, char** argv) {
   imu_calib->type = CalibrationType::IMU;
   imu_calib->num_self_cal_segments = 5;
   imu_calib->do_self_cal = do_imu_self_cal;
-  imu_calib->self_cal_segment_length = min_poses_for_imu;
+  imu_calib->self_cal_segment_length = min_poses_for_imu*2;
   imu_calib->unknown_calibration = unknown_imu_calibration;
   imu_calib->plot_graphs = true;
   imu_calib->online_calibrator.Init
