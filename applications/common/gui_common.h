@@ -367,6 +367,8 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
 
     Sophus::SE3d M_rv;
     M_rv.so3() = calibu::RdfRobotics;
+    // This converts the camera pose to vision coordinate frame
+    // note that only the rotation has to change
     for (std::shared_ptr<calibu::CameraInterface<Scalar>> model : crig->cameras_)
       {
         model->SetPose(model->Pose() * M_rv);
@@ -381,7 +383,7 @@ bool LoadCameraAndRig(GetPot& cl, hal::Camera& camera_device,
   for (size_t ii = 0; ii < rig.cameras_.size(); ++ii) {
     VLOG(0) << "\n>>>>>>>> Camera " << ii << ":" << std::endl
               << "Model: " << std::endl << rig.cameras_[ii]->K()
-              << std::endl << "Pose: "
+              << std::endl << "Pose (vision coordinate convention): "
               << "[ " << rig.cameras_[ii]->Pose().translation().transpose()<<
                  " | " << rig.cameras_[ii]->Pose().rotationMatrix().eulerAngles(0,1,2).
                  transpose()
