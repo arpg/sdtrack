@@ -232,23 +232,23 @@ inline Eigen::Matrix<Scalar, 6, 1> log_decoupled(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Convenience functions to rotate and un-rotate a transformation.
-// A pose needs to be rotated to be input into BA and un-rotated to be
-// read out of ba.
-inline Sophus::SE3d UnrotatePose(Sophus::SE3d T_v){
+// Convenience functions to convert a pose between vision and robotics
+// coordinate conventions.
+// Poses used in BA need to be in the vision coordinate convention
+
+inline Sophus::SE3d VisionToRobotics(Sophus::SE3d T_v){
   Sophus::SE3t M_vr;
   M_vr.so3() = calibu::RdfRobotics.inverse();
   return T_v * M_vr;
 }
-inline Sophus::SE3d RotatePose(Sophus::SE3d T_r){
+inline Sophus::SE3d RoboticsToVision(Sophus::SE3d T_r){
   Sophus::SE3t M_rv;
   M_rv.so3() = calibu::RdfRobotics;
   return T_r * M_rv;
 }
 
-
-// Converts a pose from vision frame to robotics
-inline Sophus::SE3d Vision2Robotics(Sophus::SE3d T_v){
+// Converts a realtive pose from vision frame to robotics
+inline Sophus::SE3d RelVision2Robotics(Sophus::SE3d T_v){
   Sophus::SO3t M_vr;
   // Vision to robotics RDF
   M_vr = calibu::RdfRobotics;
@@ -258,8 +258,8 @@ inline Sophus::SE3d Vision2Robotics(Sophus::SE3d T_v){
   return T_v;
 }
 
-// Converts a pose from robotics frame to vision
-inline Sophus::SE3d Robotics2Vision(Sophus::SE3d T_r){
+// Converts a relative pose from robotics frame to vision
+inline Sophus::SE3d RelRobotics2Vision(Sophus::SE3d T_r){
   Sophus::SO3t M_rv;
   // Robotics to vision RDF
   M_rv = calibu::RdfRobotics.inverse();
