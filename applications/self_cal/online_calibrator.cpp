@@ -222,9 +222,9 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
     Eigen::Vector6d imu_params = log_decoupled(ba.rig()->cameras_[0]->Pose());
     if(imu_params.head<3>().norm() > 1){
       use_estimate = false;
+      VLOG(1) << "PQ estimate translation too large, not using...";
     }else{
       window.mean = imu_params;
-      VLOG(1) << "PQ estimate translation too large, not using...";
     }
 
     Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
@@ -389,7 +389,13 @@ void OnlineCalibrator::AddCalibrationWindowToBa(
 
 ///////////////////////////////////////////////////////////////////////////
 bool OnlineCalibrator::AnalyzeCalibrationWindow(
-    CalibrationWindow &new_window)
+    CalibrationWindow &new_window){
+  return AnalyzeCalibrationWindow(new_window, 0.05);
+}
+
+///////////////////////////////////////////////////////////////////////////
+bool OnlineCalibrator::AnalyzeCalibrationWindow(
+    CalibrationWindow &new_window, double window_margin_threshold)
 {
   VLOG(debug_level) << "Analyzing window with score " << new_window.score <<
                        " start: " << new_window.start_index << " end: " <<
@@ -478,8 +484,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     VLOG(debug_level) << "Max score: " << max_score<< " margin: " << margin;
 
     // Replace it if it beats a non-overlapping window.
-    //if (max_id != UINT_MAX && margin > 0.05)
-    if (max_id != UINT_MAX && margin > 0.15){
+    if (max_id != UINT_MAX && margin > window_margin_threshold){
       const CalibrationWindow& old_window = windows_[max_id];
       VLOG(debug_level) << "Replaced window at idx " << max_id << " with score " <<
                            old_window.score << " start: " << old_window.start_index <<

@@ -33,7 +33,7 @@ static uint32_t& num_selfcal_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumSelfCalBAIterations",10u, "");
 static uint32_t& min_poses_for_imu =
     CVarUtils::CreateCVar<>("sd.MinPosesForImu", 20u, "");
-static uint32_t& min_poses_for_imu_rotation_initialization =
+static uint32_t& min_poses_for_imu_rotation_init =
     CVarUtils::CreateCVar<>("sd.MinPosesForImuRotationInit", 20u, "");
 static uint32_t& min_poses_for_camera =
     CVarUtils::CreateCVar<>("sd.MinPosesForCamera", 10u, "");

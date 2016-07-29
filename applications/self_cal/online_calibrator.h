@@ -67,6 +67,7 @@ class OnlineCalibrator {
       std::vector<std::shared_ptr<TrackerPose>>& poses,
       CalibrationWindow& window, int ba_id);
 
+  bool AnalyzeCalibrationWindow(CalibrationWindow& new_window, double window_margin_threshold);
   bool AnalyzeCalibrationWindow(CalibrationWindow& new_window);
 
   template <bool UseImu, bool DoTvs>
@@ -82,7 +83,6 @@ class OnlineCalibrator {
   double GetWindowScore(const CalibrationWindow& window);
   std::shared_ptr<PriorityQueueParams> PriorityQueueParameters();
   void DoPriorityQueueThread();
-
 
   double ComputeKlDivergence(const CalibrationWindow& window0,
                              const CalibrationWindow& window1);
