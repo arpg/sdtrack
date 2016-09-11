@@ -54,8 +54,9 @@ Sophus::SE3d prev_t_ba; //
 
 int debug_level_threshold = 0;
 
+double total_gt_distance = 0;
 bool compare_self_cal_with_batch = false;
-bool unknown_cam_calibration = true;
+bool unknown_cam_calibration = false;
 bool unknown_imu_calibration = false;
 
 const int window_width = 640 * 1.5;
@@ -63,6 +64,7 @@ const int window_height = 480 * 1.5;
 std::string g_usage = "SD SELFCAL. Example usage:\n"
                       "-cam file:[loop=1]///Path/To/Dataset/[left,right]*pgm -cmod cameras.xml";
 
+bool calculate_error = true;
 bool is_keyframe = true;
 bool is_prev_keyframe = true;
 bool optimize_landmarks = true;
@@ -195,6 +197,18 @@ Sophus::SE3d guess; // Relative transform guess from the previous pose to the
 // next.
 
 ///////////////////////////////////////////////////////////////////////////
+double GetGroundTruthDistanceTraveled(size_t idx){
+   double dist = 0.0;
+   if(gt_poses.size() > idx && idx > 0){
+      for(size_t ii = 1; ii <= idx; ++ii){
+        dist +=
+            (gt_poses[ii-1]->t_wp.inverse() * gt_poses[ii]->t_wp).translation().norm();
+      }
+   }
+   return dist;
+}
+
+///////////////////////////////////////////////////////////////////////////
 bool CalculateError(Error& error){
 
   // First check if we have a ground truth to compare against
@@ -255,8 +269,7 @@ bool CalculateError(Error& error){
 
       if(index > 0){
         // add up the total distance traveled, based on the ground truth
-        error.DistanceTraveled()+= (gt_poses.at(gt_pose_index-1)->t_wp.inverse() *
-                                    gt_poses.at(index)->t_wp).translation().norm();
+        error.DistanceTraveled() = GetGroundTruthDistanceTraveled(gt_pose_index);
       }
 
       // calculate the % average translation error up to this point
@@ -1415,12 +1428,14 @@ void  BaAndStartNewLandmarks()
       }
 
       //----------CHANGE DETECTION----------------//
-      if (SelfCalActive(cam_calib)) {
+      if (SelfCalActive(cam_calib) && cam_calib->pq_window.start_index != UINT_MAX) {
         //cam_calib->last_window_kl_divergence =0;
 
         ///ZZZZZZZZZZZZ Remove this
-        cam_calib->pq_window.covariance = cam_calib->pq_window.covariance.block<4,4>(0,0);
-        cam_calib->candidate_window.covariance = cam_calib->candidate_window.covariance.block<4,4>(0,0);
+        if((cam_calib->candidate_window.covariance).fullPivLu().rank() == cam_calib->candidate_window.covariance.rows() - 1 ){
+          cam_calib->pq_window.covariance = cam_calib->pq_window.covariance.block<4,4>(0,0);
+          cam_calib->candidate_window.covariance = cam_calib->candidate_window.covariance.block<4,4>(0,0);
+        }
 
            cam_calib->last_window_kl_divergence =
            cam_calib->online_calibrator.ComputeYao1965(
@@ -1796,6 +1811,11 @@ void LoadPoses(std::string file_path){
       new_pose->time = time;
       gt_poses.push_back(new_pose);
 
+      if(gt_poses.size() > 1){
+        total_gt_distance += (gt_poses[gt_poses.size() - 2]->t_wp.inverse() *
+            new_pose->t_wp).translation().norm();
+      }
+
     }else{
       break;
     }
@@ -1817,7 +1837,6 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   for (auto &calib : calibrations) {
     calib.second->online_calibrator.SetBaDebugLevel(selfcal_ba_debug_level);
   }
-
 
 #ifdef CHECK_NANS
   _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
@@ -1954,7 +1973,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
   }
 
-  //VLOG(3) << "Guess:\n " << guess.matrix();
+  VLOG(3) << "Guess:\n " << guess.matrix();
 
   bool tracking_failed = false;
   {
@@ -2040,7 +2059,6 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   // Check to see if any online calibrator should be plotted
   for (auto const &calib : calibrations) {
     if (calib.second->plot_graphs && calib.second->do_self_cal) {
-
       uint32_t num_params = 0;
       switch (calib.second->type) {
       case Camera :
@@ -2059,6 +2077,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                 calib.second->candidate_window.mean[ii]);
           }
         }
+        VLOG(1) << "finished plotting camera params...";
         break;
 
       case IMU :
@@ -2093,45 +2112,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
   }
 
-  //  if (draw_plots) {
-  //    const bool imu_plots_needed = ImuSelfCalActive();
-  //    const uint32_t num_cam_params = do_cam_self_cal ?
-  //          rig.cameras_[0]->NumParams(): 0;
-  //    if (candidate_window.mean.rows() == 0) {
-  //      if (do_cam_self_cal) {
-  //        candidate_window.mean = rig.cameras_[0]->GetParams();
-  //      }else if (ImuSelfCalActive()) {
-  //        candidate_window.mean = rig.cameras_[0]->Pose().log();
-  //      }
-  //    }
 
-  //    for (size_t ii = 0; ii < num_cam_params; ++ii) {
-  //      plot_logs[ii].Log(rig.cameras_[0]->GetParams()[ii],
-  ////         old_rig.cameras[0].camera.GenericParams()[ii],
-  //          candidate_window.mean[ii]);
-  //    }
-
-  //    if (imu_plots_needed) {
-
-  //      Eigen::Vector6d error =
-  //          (rig.cameras_[0]->Pose().inverse() * rig.cameras_[0]->Pose()).log();
-
-  //      for (size_t ii = num_cam_params; ii < num_cam_params + 6; ++ii) {
-  //        plot_logs[ii].Log(rig.cameras_[0]->Pose().log()[ii - num_cam_params],
-  //            candidate_window.mean[ii]);
-  //      }
-  ////      Eigen::Vector6d error =
-  ////          (rig.t_wc_[0].inverse() * old_rig.cameras[0].T_wc).log();
-  ////      for (size_t ii = num_cam_params; ii < num_cam_params + 6; ii++) {
-  ////        plot_logs[ii].Log(error[ii - num_cam_params]);
-
-  //    }
-
-  //    analysis_logs[0].Log(last_window_kl_divergence,
-  //                         last_added_window_kl_divergence);
-  //    analysis_logs[1].Log(tracker.num_successful_tracks());
-  //    analysis_logs[2].Log(total_last_frame_proj_norm);
-  //  }
 
   if (is_keyframe) {
     VLOG(1) << "KEYFRAME." ;
@@ -2279,6 +2260,9 @@ void Run()
 
       ProcessImage(cvmat_images, timestamp);
 
+    }else if(poses.size() > 10 && calculate_error){
+      PrintErrorStatistics();
+      calculate_error = false;
     }
 
     if (camera_img && camera_img->data()) {
@@ -2621,13 +2605,14 @@ bool LoadCameras(GetPot& cl)
     imu_device.RegisterIMUDataCallback(&ImuCallback);
   }
 
+  Eigen::VectorXd params = rig.cameras_[0]->GetParams();
+  if (has_gt) {
+    gt_cam_params = params;
+  }
+
   // If we require self-calibration from an unknown initial calibration, then
   // perturb the values (camera calibraiton parameters only)
   if (unknown_cam_calibration) {
-    Eigen::VectorXd params = rig.cameras_[0]->GetParams();
-    if (has_gt) {
-      gt_cam_params = params;
-    }
     // fov in rads.
     const double fov_rads = 90 * M_PI / 180.0;
     const double f_x =
@@ -2660,8 +2645,8 @@ bool LoadCameras(GetPot& cl)
     Sophus::SE3t Tvs = rig.cameras_[0]->Pose();
     gt_Tvs = log_decoupled(VisionToRobotics(Tvs));
     gt_Tvs_vision = log_decoupled(Tvs);
-    VLOG(1) << "gt_Tvs: " << gt_Tvs.transpose();
-    VLOG(1) << "gt_Tvs (vision): " << log_decoupled(Tvs).transpose();
+//    VLOG(1) << "gt_Tvs: " << gt_Tvs.transpose();
+//    VLOG(1) << "gt_Tvs (vision): " << log_decoupled(Tvs).transpose();
   }
 
   if (has_imu && unknown_imu_calibration && use_imu_measurements) {
@@ -2813,6 +2798,7 @@ int main(int argc, char** argv) {
     LOG(INFO) << "Using ground truth poses from: " << gt_string;
     LoadPoses(gt_string);
     LOG(INFO) << "Loaded " << gt_poses.size() << " ground truth poses.";
+    LOG(INFO) << "Distance traveled GT: " << total_gt_distance;
   }
 
 

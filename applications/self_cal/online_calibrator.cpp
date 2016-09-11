@@ -486,7 +486,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       std::lock_guard<std::mutex> lck_(*oc_mutex_);
       windows_.push_back(new_window);
       VLOG(debug_level) << "Pushing back non overlapping window into position " <<
-                           windows_.size();
+                           windows_.size()-1;
       needs_update_ = true;
       return true;
     } else {
