@@ -11,10 +11,7 @@ int& g_sdtrack_debug =
 void SemiDenseTracker::Initialize(const KeypointOptions& keypoint_options,
                                   const TrackerOptions& tracker_options,
                                   calibu::Rig<Scalar>* rig) {
-  // rig_ = rig;
-  // const calibu::CameraModelGeneric<Scalar>& cam = rig->cameras[0].camera;
-  // camera_rig_->AddCamera(calibu::CreateFromOldCamera<Scalar>(cam),
-  //                       rig->cameras[0].T_wc);
+
   t_ba_ = Sophus::SE3d();
   camera_rig_ = rig;
   num_cameras_ = camera_rig_->cameras_.size();

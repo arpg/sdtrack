@@ -247,6 +247,7 @@ inline Sophus::SE3d RoboticsToVision(Sophus::SE3d T_r){
   return T_r * M_rv;
 }
 
+
 // Converts a realtive pose from vision frame to robotics
 inline Sophus::SE3d RelVision2Robotics(Sophus::SE3d T_v){
   Sophus::SO3t M_vr;

@@ -209,11 +209,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
         if (use_imu && ii >= start_active_pose && ii > 0) {
           std::vector<ba::ImuMeasurementT<Scalar>> meas =
               imu_buffer.GetRange(poses[ii - 1]->time, pose->time);
-          /*std::cerr << "Adding imu residual between poses " << ii - 1 << " with "
+          std::cerr << "Adding imu residual between poses " << ii - 1 << " with"
                      " time " << poses[ii - 1]->time <<  " and " << ii <<
                      " with time " << pose->time << " with " << meas.size() <<
                      " measurements" << std::endl;
-                     */
+
           imu_residual_ids.push_back(
                 ba.AddImuResidual(poses[ii - 1]->opt_id[id],
                 pose->opt_id[id], meas));

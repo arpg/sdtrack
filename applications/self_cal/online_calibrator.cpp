@@ -21,7 +21,8 @@ void OnlineCalibrator::Init(std::mutex* ba_mutex,
                             Eigen::VectorXd covariance_weights,
                             double imu_time_offset_in,
                             ba::InterpolationBufferT<
-                            ba::ImuMeasurementT<double>, double>* buffer)
+                            ba::ImuMeasurementT<double>, double>* buffer,
+                            uint32_t id)
 {
   ba_mutex_ = ba_mutex;
   oc_mutex_ = oc_mutex;
@@ -30,6 +31,7 @@ void OnlineCalibrator::Init(std::mutex* ba_mutex,
   queue_length_ = num_windows;
   window_length_ = window_length;
   rig_ = rig;
+  online_calibrator_id_ = id;
 
   covariance_weights_ = covariance_weights;
   // Take the square root as we must pre/post multiply by the values.
@@ -107,17 +109,28 @@ void OnlineCalibrator::DoPriorityQueueThread(){
     // the while loop is to check for spurious wakeup calls.
     while (!needs_update()) {
       oc_condition_var.wait(lock_);
+      VLOG(debug_level) << "PQ recived notification to update...";
     }
+
+    {
+      std::lock_guard<std::mutex>lck(*oc_mutex_);
+      is_pq_running_ = true;
+
+      VLOG(debug_level) << "PQ setting needs_update to false";
+      needs_update_ = false;
+    }
+
+
+
 
     // priority queue has changed and needs to be analyzed
 
-    bool apply_results= true;
+    bool use_pq_results= true;
     if(pq_params_->use_imu && pq_params_->do_tvs){
-      VLOG(debug_level) << "Calling analyze PQ with apply results = " <<
+      VLOG(debug_level) << "Calling analyze Tvs PQ with apply results = " <<
                            pq_params_->apply_results;
-      apply_results = AnalyzePriorityQueue<true, true, true>(
+      use_pq_results = AnalyzePriorityQueue<true, true, true>(
             pq_params_->poses,
-            //            &(pq_params_->current_tracks),
             pq_params_->current_tracks_size,
             *(pq_params_->overal_window),
             pq_params_->num_iterations,
@@ -125,22 +138,29 @@ void OnlineCalibrator::DoPriorityQueueThread(){
             pq_params_->rotation_only_Tvs
             );
     }else{
-      apply_results = AnalyzePriorityQueue<false, false, true>(
+      VLOG(debug_level) << "Calling analyze CAM PQ with apply results = " <<
+                           pq_params_->apply_results;
+      use_pq_results = AnalyzePriorityQueue<false, false, true>(
             pq_params_->poses,
-            //            &(pq_params_->current_tracks),
             pq_params_->current_tracks_size,
             *(pq_params_->overal_window),
             pq_params_->num_iterations,
-            pq_params_->apply_results,
-            pq_params_->rotation_only_Tvs
+            pq_params_->apply_results
             );
     }
 
 
     // Call the callback that will apply the update to the main rig
-    if(apply_results && pq_params_->callback){
+    if(use_pq_results && pq_params_->callback){
       pq_params_->callback(pq_params_->apply_results);
     }
+
+    {
+      std::lock_guard<std::mutex>lck(*oc_mutex_);
+      is_pq_running_ = false;
+    }
+
+    VLOG(debug_level) << "Finished processing PQ.";
 
   }
 
@@ -180,7 +200,6 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
   options.use_per_pose_cam_params = false;
   options.calculate_calibration_marginals = true;
   options.error_change_threshold = 1e-6;
-  options.translation_enabled = !rotation_only_Tvs;
 
   ba.Init(options, poses.size(),
           current_tracks_size * poses.size());
@@ -198,6 +217,9 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
         if(DoAsync){
           AddCalibrationWindowToBa<UseImu, DoTvs, true>(poses, window, pq_ba_id_);
         }else{
+          // if we're not doing asyng priority queue, there is only one online
+          // calibrator ba instance, so we can use the candidate_ba_id for both
+          // the candidate window and the pq since they are synchronous.
           AddCalibrationWindowToBa<UseImu, DoTvs, false>(poses, window, candidate_ba_id_);
         }
       }
@@ -215,7 +237,6 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
 
   ba.Solve(num_iterations);
 
-
   bool use_estimate = true;
   // Obtain the mean from the BA.
   if(DoTvs && UseImu){
@@ -232,15 +253,19 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
     VLOG(debug_level) << "PQ: POST BA Tvs is"
                       << t_vs;
   }else{
+
     window.mean = ba.rig()->cameras_[0]->GetParams();
+
     VLOG(debug_level) << "PQ: POST BA Params :"
                       << ba.rig()->cameras_[0]->GetParams().transpose();
-
   }
 
   if(use_estimate){
     window.covariance =
         ba.GetSolutionSummary().calibration_marginals;
+
+    //ZZZZZZZZZZZZ TODO: Remove this
+    window.covariance(4,4) = 1;
   }
 
 
@@ -249,33 +274,31 @@ bool OnlineCalibrator::AnalyzePriorityQueue(
     std::lock_guard<std::mutex>ba_lck(*ba_mutex_);
     std::lock_guard<std::mutex>oc_lck(*oc_mutex_);
 
-    // copy over the camera parameters
-    rig_->cameras_[0]->SetParams(ba.rig()->cameras_[0]->GetParams());
-
-
     if(DoTvs){
-      Sophus::SE3t new_imu_params = ba.rig()->cameras_[0]->Pose();
-      if(rotation_only_Tvs){
-        // If only updating rotation, perserve original translation:
-        new_imu_params.translation() = imu_params_backup.translation();
-      }
       // copy over the imu parameters
-      rig_->cameras_[0]->SetPose(new_imu_params);
+      Sophus::SE3d imu_params = ba.rig()->cameras_[0]->Pose();
+      rig_->cameras_[0]->SetPose(imu_params);
 
-      VLOG(debug_level) << "new PQ t_wc:" <<
+      VLOG(debug_level) << "new selfcal t_wc:" <<
                            VisionToRobotics(rig_->cameras_[0]->Pose());
-      VLOG(debug_level) << "new PQ mean: " <<
-                           log_decoupled(VisionToRobotics(rig_->cameras_[0]->Pose()))
-          .transpose();
-    }
+      VLOG(debug_level) << "new PQ window mean: " <<
+                           window.mean.transpose();
 
-    VLOG(debug_level) << "PQ setting needs_update to false";
-    needs_update_ = false;
+    }else{
+      // copy over the camera parameters
+      rig_->cameras_[0]->SetParams(window.mean);
+      VLOG(debug_level) << "new PQ window mean: " <<
+                           window.mean.transpose();
+    }
 
   }else{
     VLOG(debug_level) << "apply_resuts = false, or the PQ estimate is not good "
                       << "and is being discarted...";
     result = false;
+  }
+
+  if(!DoAsync){
+    needs_update_ = false;
   }
 
   return result;
@@ -405,6 +428,13 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
   if (new_window.score == 0) {
     return false;
   }
+
+//  //ZZZZZZZZZZZZZZZZ TODO: remove this, temp fix for strange incorrect
+//  // marginals returned by ba
+//  if(new_window.score < 1e-3){
+//    VLOG(debug_level) << "not adding window due to suspiciously low score...";
+//    return false;
+//  }
 
   // set the needs update flag to false
   {
@@ -539,6 +569,7 @@ double OnlineCalibrator::ComputeYao1965(
   //// ZZZ IMPLEMENT CONDITION NUMBER INSTEAD OF RANK HERE
   if (n0 == 0 || n1 == 0 || p == 0 || s0.fullPivLu().rank() != p ||
       s1.fullPivLu().rank() != p) {
+    // Insufficinet measurents or rank-deficient covariance, cannot compare
     p_score = 1.0;
   } else {
     const Eigen::MatrixXd s_inv = (s0 + s1).inverse();
@@ -783,7 +814,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
                                                      candidate_ba_id_);
     }
 
-    if(DoTvs){
+    if(DoTvs && UseImu){
       Sophus::SE3t t_vs = ba.rig()->cameras_[0]->Pose();
       t_vs = VisionToRobotics(t_vs);
       VLOG(debug_level) << "Window: PRE BA Tvs is:\n" << t_vs;
@@ -804,14 +835,7 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       Sophus::SE3d Tvs = VisionToRobotics(ba.rig()->cameras_[0]->Pose());
       VLOG(debug_level) << "Window: POST BA Tvs is: " << Tvs;
 
-
-      Eigen::MatrixXd imu_parameters = log_decoupled(VisionToRobotics(
-                                                       ba.rig()->cameras_[0]->Pose()));
-
-      if(rotation_only_Tvs){
-        // roll back the translation
-        imu_parameters.block<3,1>(0,0) = imu_params_backup.translation();
-      }
+      Eigen::MatrixXd imu_parameters = log_decoupled(ba.rig()->cameras_[0]->Pose());
 
       if(imu_parameters.block<3,1>(0,0).norm() > 1){
         use_candidate_estimate = false;
@@ -821,8 +845,8 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
         window.mean = imu_parameters;
       }
 
-
     }else{
+      VLOG(debug_level) << "Window: POST BA Params :" << ba.rig()->cameras_[0]->GetParams().transpose();
       window.mean = ba.rig()->cameras_[0]->GetParams();
     }
 
@@ -831,7 +855,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
 
     if(use_candidate_estimate){
       window.covariance = summary.calibration_marginals;
-      window.score = GetWindowScore(window, rotation_only_Tvs);
+
+      //ZZZZZZZZZZ Remove this
+      window.covariance(4, 4) = 1;
+
+      VLOG(debug_level) << "Window covariance is: \n" <<
+                           window.covariance;
+      window.score = GetWindowScore(window);
+      VLOG(debug_level) << "Window score is: " << window.score;
     }else{
       window.score = 0;
     }
@@ -845,17 +876,14 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
       std::lock_guard<std::mutex> oc_lock(*oc_mutex_);
 
       if(DoTvs){
-        Sophus::SE3t new_imu_params =  ba.rig()->cameras_[0]->Pose();
-        if(rotation_only_Tvs){
-          // If only updating rotation, perserve original translation:
-          new_imu_params.translation() = imu_params_backup.translation();
-        }
-        rig_->cameras_[0]->SetPose(new_imu_params);
+        rig_->cameras_[0]->SetPose(ba.rig()->cameras_[0]->Pose());
         VLOG(debug_level) << "Window: New selfcal_rig t_wc: "
                           << VisionToRobotics(rig_->cameras_[0]->Pose());
+      }else{
+        rig_->cameras_[0]->SetParams(window.mean);
+        VLOG(debug_level) << "Window: New selfcal_rig cam params: "
+                          << rig_->cameras_[0]->GetParams().transpose();
       }
-
-      rig_->cameras_[0]->SetParams(ba.rig()->cameras_[0]->GetParams());
 
 //      std::shared_ptr<TrackerPose> last_pose = poses.back();
 //      // Get the pose of the last pose. This is used to calculate the relative
@@ -880,15 +908,6 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
 //        }
 //      }
     } else {
-      //      // BA updates the selfcal rig (cam and imu parameters),
-      //      // so if we don't want parameters to be updated
-      //      // we have to roll back to the original param values.
-
-      //      VLOG(debug_level) << "rolling back rig parameters, apply_results = false";
-      //      std::lock_guard<std::mutex> lock(*ba_mutex_);
-      //      std::lock_guard<std::mutex> oc_lock(*oc_mutex_);
-      //      rig_->cameras_[0]->SetParams(cam_params_backup);
-      //      rig_->cameras_[0]->SetPose(imu_params_backup);
       VLOG(debug_level) << "Window: not applying updates. Nothing to do.";
     }
   }

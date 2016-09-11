@@ -11,7 +11,7 @@ static int& aac_ba_debug_level =
 static int& selfcal_ba_debug_level =
     CVarUtils::CreateCVar<>("debug.SelfcalBaDebugLevel", -1, "");
 static int& selfcal_debug_level =
-    CVarUtils::CreateCVar<>("debug.SelfcalDebugLevel", 2, "");
+    CVarUtils::CreateCVar<>("debug.SelfcalDebugLevel", 1, "");
 
 
 static double& gyro_sigma =
@@ -29,6 +29,8 @@ static Eigen::Vector3d& gravity_vector =
                                               ba::Gravity), "");
 static uint32_t& num_ba_poses =
     CVarUtils::CreateCVar<>("sd.NumBAPoses",10u, "");
+static uint32_t& num_keyframes =
+    CVarUtils::CreateCVar<>("sd.NumKeyframes",10000u, "");
 static uint32_t& num_selfcal_ba_iterations =
     CVarUtils::CreateCVar<>("sd.NumSelfCalBAIterations",10u, "");
 static uint32_t& min_poses_for_imu =
@@ -47,20 +49,18 @@ static bool& use_imu_for_guess =
     CVarUtils::CreateCVar<>("sd.UseImuForGuess", true, "");
 static bool& do_async_ba =
     CVarUtils::CreateCVar<>("sd.DoAsyncBA", true, "");
-static bool& do_serial_ac =
-    CVarUtils::CreateCVar<>("sd.DoSerialAC", false, "");
 static bool& use_imu_measurements =
     CVarUtils::CreateCVar<>("sd.UseImu", true, "");
 static bool& do_cam_self_cal =
-    CVarUtils::CreateCVar<>("sd.DoCamSelfCal", false, "");
+    CVarUtils::CreateCVar<>("sd.DoCamSelfCal", true, "");
 static bool& show_panel =
     CVarUtils::CreateCVar<>("sd.ShowPanel", true, "");
 static bool& do_imu_self_cal =
-    CVarUtils::CreateCVar<>("sd.DoIMUSelfCal", true, "");
+    CVarUtils::CreateCVar<>("sd.DoIMUSelfCal", false, "");
 static bool& use_batch_estimates =
     CVarUtils::CreateCVar<>("sd.UseBatchEstimates", false, "");
 static bool& do_async_pq =
-    CVarUtils::CreateCVar<>("sd.DoAsyncPQ", true, "");
+    CVarUtils::CreateCVar<>("sd.DoAsyncPQ", false, "");
 static uint32_t& num_aac_poses =
     CVarUtils::CreateCVar<>("sd.NumAACPoses",20u, "");
 static bool& do_keyframing =

@@ -52,7 +52,7 @@ class OnlineCalibrator {
       uint32_t window_length, Eigen::VectorXd covariance_weights,
       double imu_time_offset_in = 0,
       ba::InterpolationBufferT<ba::ImuMeasurementT<double>, double>* buffer =
-          nullptr);
+          nullptr, uint32_t id = 0);
   void TestJacobian(Eigen::Vector2t pix, Sophus::SE3t t_ba, Scalar rho);
 
   template <bool UseImu, bool DoTvs, bool DoAsync>
@@ -103,6 +103,10 @@ class OnlineCalibrator {
   void NotifyConditionVariable(){
     oc_condition_var.notify_all();
   }
+  bool IsPriorityQueueRunning(){
+    std::lock_guard<std::mutex>lck(*oc_mutex_);
+    return is_pq_running_;
+  }
 
   uint32_t NumWindows() { return windows_.size(); }
   uint32_t queue_length() { return queue_length_; }
@@ -126,10 +130,12 @@ private:
   calibu::Rig<Scalar>* rig_;
   Eigen::VectorXd covariance_weights_;
   CalibrationWindow total_window_;
+  uint32_t online_calibrator_id_;
+  bool is_pq_running_ = false;
 
   // CANDIDATE WINDOW BA
   // Visual BA with camera parameters
-  // Lm size: 1, Pose size: 6, Calibration size: 5
+  // Lm size: 1, Pose size: 6, Calibration size: 4 (linear camera model)
   ba::BundleAdjuster<double, 1, 6, 5> selfcal_ba;
   // VI BA with camera parameters
   ba::BundleAdjuster<double, 1, 15, 5, false> vi_selfcal_ba;
@@ -142,7 +148,7 @@ private:
   // PRIORITY QUEUE BA (there need to be separete instances since the PQ
   // runs async)
   // Visual BA with camera parameters for PQ
-  // Lm size: 1, Pose size: 6, Calibration size: 5
+  // Lm size: 1, Pose size: 6, Calibration size: 4 (linear camera model)
   ba::BundleAdjuster<double, 1, 6, 5> pq_selfcal_ba;
   // VI BA with camera parameters for PQ
   ba::BundleAdjuster<double, 1, 15, 5, false> pq_vi_selfcal_ba;
