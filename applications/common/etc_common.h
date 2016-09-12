@@ -199,6 +199,12 @@ struct TrackerPose {
   std::vector<uint32_t> opt_id;
   std::vector<Sophus::SE3t> calib_t_wp;
   Eigen::VectorXd cam_params;
+  Sophus::SE3t T_vs;
+  Eigen::VectorXd candidate_window_mean;
+  double candidate_window_mean_difference = 0;
+  double candidate_window_kl_divergence = 0;
+  double candidate_window_score = 0;
+
   double time;
   uint32_t longest_track;
 };

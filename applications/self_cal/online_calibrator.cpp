@@ -856,6 +856,23 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
                            window.covariance;
       window.score = GetWindowScore(window);
       VLOG(debug_level) << "Window score is: " << window.score;
+
+      // set the window mean and score to all the poses used in this candidate windwo
+      VLOG(debug_level) << "Setting window mean and score to all poses";
+      {
+        std::lock_guard<std::mutex> lock(*ba_mutex_);
+        std::lock_guard<std::mutex> oc_lock(*oc_mutex_);
+
+        for (uint32_t ii = window.start_index; ii < window.end_index ; ++ii) {
+          std::shared_ptr<TrackerPose> pose = poses[ii];
+          pose->candidate_window_mean_difference =
+              (window.mean - rig_->cameras_[0]->GetParams()).norm()/
+              rig_->cameras_[0]->GetParams().norm();
+          pose->candidate_window_mean = window.mean;
+          pose->candidate_window_score = window.score;
+        }
+      }
+
     }else{
       window.score = 0;
     }

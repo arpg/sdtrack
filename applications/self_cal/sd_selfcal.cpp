@@ -120,6 +120,12 @@ struct Metrics{
 
 Metrics global_metrics;
 
+struct GTCalibration{
+  //calibu::Rig<Scalar> rig;
+  Eigen::VectorXd cam_params;
+  double timestamp;
+};
+
 struct Calibration {
   sdtrack::OnlineCalibrator online_calibrator;
   double last_window_kl_divergence = 0;
@@ -170,6 +176,7 @@ std::shared_ptr<hal::Image> camera_img;
 std::vector<std::vector<std::shared_ptr<SceneGraph::ImageView>>> patches;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 std::vector<std::shared_ptr<sdtrack::TrackerPose>> gt_poses;
+std::vector<GTCalibration> gt_calibration;
 std::vector<std::unique_ptr<SceneGraph::GLAxis>> axes;
 std::shared_ptr<SceneGraph::GLPrimitives<>> line_strip;
 
@@ -414,14 +421,42 @@ void CheckParameterChange(std::shared_ptr<Calibration> calib) {
         calib->num_change_needed) {
       VLOG(1) << "PARAM CHANGE DETECTED" ;
       calib->unknown_calibration = true;
-      //TODO: Check this, seems like it should be num_change_needed *
-      // self_cal_segment_length
       calib->unknown_calibration_start_pose
           = poses.size() - calib->num_change_needed;
       VLOG(1) << "Unknown cam calibration = true with start pose " <<
                  calib->unknown_calibration_start_pose;
+      VLOG(1) << "Clearing the priority queue, as we know nothing about the calibration...";
       calib->online_calibrator.ClearQueue();
+      VLOG(1) << "Attempting to estimate parameter change start point...";
+      size_t change_start_index;
+      size_t num_no_change_poses = 0;
+      {
+        std::lock_guard<std::mutex> aac_lock(aac_mutex);
+        for(size_t ii = calib->unknown_calibration_start_pose; ii > 0; --ii){
+          std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
+//          VLOG(1) << std::setprecision(3) <<
+//                     "Pose: " << ii <<
+//                     " kl: " << pose->candidate_window_kl_divergence <<
+//                     " mean diff %: " << pose->candidate_window_mean_difference <<
+//                     " score: " << pose->candidate_window_score << std::endl;
+          change_start_index = ii;
+          if(pose->candidate_window_score !=0 && pose->candidate_window_kl_divergence != 0){
+            if(pose->candidate_window_kl_divergence > 0.96){
+              num_no_change_poses++;
+            }
+          }
+          if (num_no_change_poses == 8){
+            // the candidate window is not statistically different from the pq
+            // mean, we must be before the calibration change occurred.
+            break;
+          }
+        }
+        change_start_index -= num_no_change_poses;
+        VLOG(1) << "Parameter change seems to have started around pose " <<
+                   change_start_index;
+      }
     }
+
   } else {
     // num_change_needed *consecutive* change detections are required to trigger
     // a parameter change, so zero out the number of change detections if a
@@ -1460,7 +1495,7 @@ void  BaAndStartNewLandmarks()
         //        imu_calib->last_window_kl_divergence =
         //            imu_calib->online_calibrator.ComputeYao1965(
         //              imu_calib->pq_window,
-        //              imu_calib->candidate_window);
+        //              imu_calib->candidate_window);ls
       }
 
       for (auto const &calib : calibrations) {
@@ -1480,6 +1515,18 @@ void  BaAndStartNewLandmarks()
           // If so, clear the priority queue.
           CheckParameterChange(calib.second);
 
+        }
+      }
+
+      // set the candidate window kl divergence to all poses in the window
+      VLOG(2) << "Setting candidate window kl divergence to all poses in window";
+      {
+        std::lock_guard<std::mutex> lock(aac_mutex);
+        for (uint32_t ii = cam_calib->candidate_window.start_index;
+             ii < cam_calib->candidate_window.end_index ; ++ii) {
+          std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
+          pose->candidate_window_kl_divergence =
+              cam_calib->last_window_kl_divergence;
         }
       }
 
@@ -1758,6 +1805,52 @@ void  BaAndStartNewLandmarks()
   if (!do_bundle_adjustment) {
     tracker.TransformTrackTabs(tracker.t_ba());
   }
+}
+
+
+Eigen::VectorXd GetCalibParamsForTime(double time){
+  Eigen::VectorXd gt_cam_params;
+  if(time > 0){
+     for(const auto calib : gt_calibration){
+        if(calib.timestamp >= time){
+          gt_cam_params = calib.cam_params;
+          break;
+        }
+     }
+  }
+  return gt_cam_params;
+}
+
+///////////////////////////////////////////////////////////////////////////
+void LoadCalibrationValues(std::string file_path){
+  FILE* input = fopen(file_path.c_str(), "r");
+  if( input == NULL){
+    LOG(ERROR) << "Could not read input file: "
+          << file_path;
+  }
+
+  while(1)
+  {
+    double time, fx, fy, cx, cy;
+    if(fscanf(input, "%lf,%lf,%lf,%lf,%lf",
+              &time, &fx, &fy, &cx, &cy) == 5){
+
+      GTCalibration calib;
+
+      calib.timestamp = time;
+
+      Eigen::VectorXd cam_params(5);
+      cam_params << fx, fy, cx, cy, 0;
+      calib.cam_params = cam_params;
+
+      gt_calibration.push_back(calib);
+
+    }else{
+      break;
+    }
+  }
+  fclose(input);
+
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2064,6 +2157,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   for (auto const &calib : calibrations) {
     if (calib.second->plot_graphs && calib.second->do_self_cal) {
       uint32_t num_params = 0;
+      Eigen::VectorXd gt_calib_params =
+          GetCalibParamsForTime(poses.back()->time);
       switch (calib.second->type) {
       case Camera :
         num_params = rig.cameras_[0]->NumParams();
@@ -2073,7 +2168,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
         for (size_t ii = 0; ii < num_params; ++ii) {
           if (has_gt) {
-            double gt_value = gt_cam_params[ii];
+            double gt_value = gt_calib_params[ii];
             plot_logs[ii].Log(rig.cameras_[0]->GetParams()[ii],
                 calib.second->candidate_window.mean[ii], gt_value);
           }else{
@@ -2832,6 +2927,16 @@ int main(int argc, char** argv) {
     LoadPoses(gt_string);
     LOG(INFO) << "Loaded " << gt_poses.size() << " ground truth poses.";
     LOG(INFO) << "Distance traveled GT: " << total_gt_distance;
+  }
+
+  if(cl.search("-gtcalib")){
+    // file with ground truth calibration values
+    std::string gt_calib_string = cl.follow("", "-gtcalib");
+    LOG(INFO) << "Using ground truth calibration values from: " <<
+                 gt_calib_string;
+    LoadCalibrationValues(gt_calib_string);
+    LOG(INFO) << "Laded " << gt_calibration.size()
+              << " ground truth calibration values.";
   }
 
 
