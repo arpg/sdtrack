@@ -56,7 +56,7 @@ int debug_level_threshold = 0;
 
 double total_gt_distance = 0;
 bool compare_self_cal_with_batch = false;
-bool unknown_cam_calibration = false;
+bool unknown_cam_calibration = true;
 bool unknown_imu_calibration = false;
 
 const int window_width = 640 * 1.5;
@@ -175,6 +175,8 @@ std::shared_ptr<SceneGraph::GLPrimitives<>> line_strip;
 
 // Inertial stuff
 ba::BundleAdjuster<double, 1, 6, 0> bundle_adjuster;
+//ba::BundleAdjuster<double, 1, 15, 0> vi_bundle_adjuster;
+//ba::BundleAdjuster<double, 1, 15, 0> aac_bundle_adjuster;
 ba::BundleAdjuster<double, 1, 15, 0> vi_bundle_adjuster;
 ba::BundleAdjuster<double, 1, 15, 0> aac_bundle_adjuster;
 ba::InterpolationBufferT<ba::ImuMeasurementT<Scalar>, Scalar> imu_buffer;
@@ -243,8 +245,8 @@ bool CalculateError(Error& error){
         if(gt_poses[ii]->time >= pose->time){
           gt_pose = gt_poses[ii]->t_wp;
 
-          VLOG(2) << "Comparing estimated pose with time: " << pose->time <<
-                     " with gt pose with time: " << gt_poses[ii]->time;
+//          VLOG(2) << "Comparing estimated pose with time: " << pose->time <<
+//                     " with gt pose with time: " << gt_poses[ii]->time;
           gt_pose_index = ii;
           break;
         }
@@ -527,10 +529,11 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
       for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
         std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
 
+        bool is_pose_active = (ii != 0 && ii >= start_active_pose);
         // Add pose to BA
         pose->opt_id[id] = ba.AddPose(
               pose->t_wp, pose->cam_params, pose->v_w, pose->b,
-              ii >= start_active_pose , pose->time);
+              is_pose_active, pose->time);
 
         if (ii == start_active_pose && use_imu && all_poses_active) {
           // Regularize the IMU nullspace: translation and the rotation about
@@ -542,13 +545,13 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
           std::vector<ba::ImuMeasurementT<Scalar>> meas =
               imu_buffer.GetRange(poses[ii - 1]->time, pose->time);
 
-          /*StreamMessage(selfcal_debug_level) << "Adding imu residual between poses " << ii - 1 << std::setprecision(15) <<
-                       " with time " << poses[ii - 1]->time << " active: " <<
-                       ba.GetPose(poses[ii - 1]->opt_id[id]).is_active <<
-                       " and " << ii << " with time " << pose->time <<
-                       " active: " <<
-                       ba.GetPose(poses[ii]->opt_id[id]).is_active <<
-                       " with " << meas.size() << " measurements" << std::endl;*/
+//          VLOG(selfcal_debug_level) << "Adding imu residual between poses " << ii - 1 << std::setprecision(15) <<
+//                       " with time " << poses[ii - 1]->time << " active: " <<
+//                       ba.GetPose(poses[ii - 1]->opt_id[id]).is_active <<
+//                       " and " << ii << " with time " << pose->time <<
+//                       " active: " <<
+//                       ba.GetPose(poses[ii]->opt_id[id]).is_active <<
+//                       " with " << meas.size() << " measurements" << std::endl;
 
           imu_residual_ids.push_back(
                 ba.AddImuResidual(poses[ii - 1]->opt_id[id],
@@ -669,6 +672,10 @@ void DoBundleAdjustment(BaType& ba, bool use_imu,
         std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
         const ba::PoseT<double>& ba_pose =
             ba.GetPose(pose->opt_id[id]);
+
+//        std::cerr << "Pose " << ii << " after BA: " << ba_pose.t_wp.translation().transpose() <<
+//                     " " << ba_pose.t_wp.rotationMatrix().eulerAngles(0,1,2).transpose() << std::endl <<
+//                     "b: " << ba_pose.b.transpose() << " v_w: " << ba_pose.v_w.transpose() << std::endl;
 
         pose->t_wp = ba_pose.t_wp;
         if (use_imu) {
@@ -1428,15 +1435,14 @@ void  BaAndStartNewLandmarks()
       }
 
       //----------CHANGE DETECTION----------------//
-      if (SelfCalActive(cam_calib) && cam_calib->pq_window.start_index != UINT_MAX) {
-        //cam_calib->last_window_kl_divergence =0;
+      if (SelfCalActive(cam_calib) /*&& cam_calib->pq_window.start_index != UINT_MAX*/) {
 
         ///ZZZZZZZZZZZZ Remove this
         if((cam_calib->candidate_window.covariance).fullPivLu().rank() == cam_calib->candidate_window.covariance.rows() - 1 ){
           cam_calib->pq_window.covariance = cam_calib->pq_window.covariance.block<4,4>(0,0);
           cam_calib->candidate_window.covariance = cam_calib->candidate_window.covariance.block<4,4>(0,0);
         }
-
+           VLOG(1) << "Computing KL divergence between pq_window and candidate window...";
            cam_calib->last_window_kl_divergence =
            cam_calib->online_calibrator.ComputeYao1965(
               cam_calib->pq_window,
@@ -1849,10 +1855,8 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
   }
   frame_count++;
 
-  // ???
   prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
 
-  // If this is a keyframe, set it as one on the tracker.
   if (is_prev_keyframe) {
     prev_t_ba = Sophus::SE3d();
   } else {
@@ -1973,7 +1977,7 @@ void ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
   }
 
-  VLOG(3) << "Guess:\n " << guess.matrix();
+  VLOG(5) << "Guess:\n " << guess.matrix();
 
   bool tracking_failed = false;
   {
@@ -2262,7 +2266,36 @@ void Run()
 
     }else if(poses.size() > 10 && calculate_error){
       PrintErrorStatistics();
+      VLOG(1) << "Final pose: \n"<< poses.back()->t_wp.matrix();
       calculate_error = false;
+
+      if(imu_buffer.elements.size()){
+        VLOG(1) << "Integrating all IMU measurements (" << imu_buffer.elements.size() <<
+                    ")";
+        std::shared_ptr<sdtrack::TrackerPose> pose1 = poses.front();
+        std::shared_ptr<sdtrack::TrackerPose> pose2 = poses.back();
+        std::vector<ba::ImuPoseT<Scalar>> imu_poses;
+        ba::PoseT<Scalar> start_pose;
+        start_pose.t_wp = pose1->t_wp;
+        start_pose.b = pose1->b;
+        start_pose.v_w = pose1->v_w;
+        start_pose.time = pose1->time;
+        // Integrate the measurements since the last frame.
+        VLOG(1) << "Getting imu measurements from time: " << pose1->time << " to time: " <<
+                   pose2->time;
+        VLOG(1) << "start pose: \n" << pose1->t_wp.matrix();
+
+        std::vector<ba::ImuMeasurementT<Scalar> > meas =
+            imu_buffer.GetRange(pose1->time, pose2->time);
+        decltype(vi_bundle_adjuster)::ImuResidual::IntegrateResidual(
+              start_pose, meas, start_pose.b.head<3>(), start_pose.b.tail<3>(),
+              vi_bundle_adjuster.GetImuCalibration().g_vec, imu_poses);
+        if (imu_poses.size() > 1) {
+          VLOG(1) << "Got " << imu_poses.size() << " poses from imu integration.";
+          VLOG(1) << "Last integrated imu pose: \n" << imu_poses.back().t_wp.matrix();
+        }
+
+      }
     }
 
     if (camera_img && camera_img->data()) {
@@ -2286,7 +2319,7 @@ void Run()
       // Draw the inertial residual
 
       for (uint32_t id : ba_imu_residual_ids) {
-        const ba::ImuResidualT<Scalar>& res = vi_bundle_adjuster.GetImuResidual(id);
+        const ba::ImuResidualT<Scalar, 15, 15>& res = vi_bundle_adjuster.GetImuResidual(id);
         const ba::PoseT<Scalar>& pose = vi_bundle_adjuster.GetPose(res.pose1_id);
         std::vector<ba::ImuMeasurementT<Scalar> > meas =
             imu_buffer.GetRange(res.measurements.front().time,

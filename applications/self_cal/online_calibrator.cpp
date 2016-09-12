@@ -429,13 +429,6 @@ bool OnlineCalibrator::AnalyzeCalibrationWindow(
     return false;
   }
 
-//  //ZZZZZZZZZZZZZZZZ TODO: remove this, temp fix for strange incorrect
-//  // marginals returned by ba
-//  if(new_window.score < 1e-3){
-//    VLOG(debug_level) << "not adding window due to suspiciously low score...";
-//    return false;
-//  }
-
   // set the needs update flag to false
   {
     std::unique_lock<std::mutex>(*oc_mutex_);

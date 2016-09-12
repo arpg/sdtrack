@@ -50,7 +50,7 @@ static bool& use_imu_for_guess =
 static bool& do_async_ba =
     CVarUtils::CreateCVar<>("sd.DoAsyncBA", true, "");
 static bool& use_imu_measurements =
-    CVarUtils::CreateCVar<>("sd.UseImu", true, "");
+    CVarUtils::CreateCVar<>("sd.UseImu", false, "");
 static bool& do_cam_self_cal =
     CVarUtils::CreateCVar<>("sd.DoCamSelfCal", true, "");
 static bool& show_panel =
