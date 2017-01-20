@@ -34,6 +34,8 @@ find_package(OpenCV2 REQUIRED)
 find_package(GLog REQUIRED)
 find_package(CVars REQUIRED)
 find_package(TBB REQUIRED)
+find_package( OpenCV REQUIRED core calib3d )
+
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/SDTRACKERConfig.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/SDTRACKERConfig.h)
