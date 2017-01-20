@@ -53,7 +53,7 @@ void SemiDenseTracker::Initialize(const KeypointOptions& keypoint_options,
   // Calculate the pyramid dimensions for each patch. This is used to initialize
   // new patches.
   for (uint32_t ii = 0 ; ii < tracker_options_.pyramid_levels ; ++ii) {
-    LOG(INFO) << "Level " << ii << " patch dim is " << patch_dim;
+    VLOG(2) << "Level " << ii << " patch dim is " << patch_dim;
     pyramid_error_thresholds_[ii] = robust_norm_thresh;
     robust_norm_thresh *= 2;
     pyramid_patch_dims_[ii] = patch_dim;
@@ -154,7 +154,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
                               tracker_options_.patch_dim), cv::Size(-1, -1),
                      criteria);
     for (uint32_t ii = 0 ; ii < keypoints.size() ; ++ii) {
-      // LOG(INFO) << "kp " << ii << " refined from " << keypoints[ii].pt.x << ", "
+      // VLOG(2) << "kp " << ii << " refined from " << keypoints[ii].pt.x << ", "
       //           << keypoints[ii].pt.y << " to " << subpixel_centers[ii].x <<
       //              ", " << subpixel_centers[ii].y << std::endl;
       keypoints[ii].pt = subpixel_centers[ii];
@@ -163,7 +163,7 @@ void SemiDenseTracker::ExtractKeypoints(const cv::Mat& image,
 
   HarrisScore(image.data, image.cols, image.rows,
               tracker_options_.patch_dim, keypoints);
-  LOG(INFO) << "extract feature detection for " << keypoints.size() <<
+  VLOG(2) << "extract feature detection for " << keypoints.size() <<
       " and "  << cells_hit << " cells " <<  " keypoints took " <<
       Toc(time) << " seconds." << std::endl;
 }
@@ -220,7 +220,7 @@ void SemiDenseTracker::BackProjectTrack(std::shared_ptr<DenseTrack> track,
       camera_rig_->cameras_[cam_id]->Unproject(kp.center_px).normalized() *
       tracker_options_.default_ray_depth;
 
-  //LOG(INFO) << "Initializing keypoint at " << kp.pt.x << ", " <<
+  //VLOG(2) << "Initializing keypoint at " << kp.pt.x << ", " <<
   //               kp.pt.y << " with response: " << kp.response << std::endl;
 
 
@@ -257,7 +257,7 @@ void SemiDenseTracker::BackProjectTrack(std::shared_ptr<DenseTrack> track,
       }
     }
 
-    //    LOG(INFO) << "\tCenter at level " << ii << " " << patch.center[0] <<
+    //    VLOG(2) << "\tCenter at level " << ii << " " << patch.center[0] <<
     //                 ", " << patch.center[1] << " x: " <<
     //                 patch.center[0] - extent << " to " << x_max << " y: " <<
     //                 patch.center[1] - extent << " to " << y_max << std::endl;
@@ -444,7 +444,7 @@ double SemiDenseTracker::EvaluateTrackResiduals(
         if (tracker_options_.use_robust_norm_) {
           const double weight_sqrt = //sqrt(1.0 / ref_patch.statistics[ii][1]);
               sqrt(fabs(res) > c_huber ? c_huber / fabs(res) : 1.0);
-          // LOG(INFO) << "Weight for " << res << " at level " << level << " is " <<
+          // VLOG(2) << "Weight for " << res << " at level " << level << " is " <<
           //              weight_sqrt * weight_sqrt << std::endl;
           res *= weight_sqrt;
           if (weight_sqrt != 1) {
@@ -508,7 +508,7 @@ void SemiDenseTracker::ReprojectTrackCenters() {
             tracker_options_.feature_cells;
         if (addressy > feature_cells_[cam_id].rows() ||
             addressx > feature_cells_[cam_id].cols()) {
-          LOG(INFO) << "Out of bounds feature cell access at : " << addressy <<
+          VLOG(2) << "Out of bounds feature cell access at : " << addressy <<
               ", " << addressx << std::endl;
         }
         if (feature_cells_[cam_id](addressy, addressx) != kUnusedCell) {
@@ -595,7 +595,7 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
         }
       }
 
-      LOG(INFO)
+      VLOG(2)
           << "Auto optim. level " << last_level << " with pose : " <<
              level_options.optimize_pose << " and lm : " <<
              level_options.optimize_landmarks << " with av track " <<
@@ -645,7 +645,7 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
       } while (!pose_exit && !landmark_exit);
     }
 
-    std::cerr << "Pyramid optimization took " << Toc(time) << " seconds." << std::endl;
+    VLOG(3) << "Pyramid optimization took " << Toc(time) << " seconds." << std::endl;
 
     time = Tic();
     // Do final 2d alignment of tracks.
@@ -654,7 +654,7 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
     alignment_options.only_optimize_camera_id = options.only_optimize_camera_id;
     Do2dAlignment(alignment_options, GetImagePyramid(), GetCurrentTracks(), 0);
 
-    std::cerr << "2D alignment optimization took " << Toc(time) << " seconds." << std::endl;
+    VLOG(3) << "2D alignment optimization took " << Toc(time) << " seconds." << std::endl;
   } else {
     // The user has specified the pyramid level they want optimized.
     level_options.optimize_landmarks = options.optimize_landmarks;
@@ -666,7 +666,7 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
     ///zzzzzz evaluate residuals at all levels so we can see
     for (uint32_t ii = 0 ; ii < tracker_options_.pyramid_levels ; ++ii)  {
       if (ii != level) {
-        LOG(INFO) << "post rmse: " << ii << " " <<
+        VLOG(2) << "post rmse: " << ii << " " <<
                                 EvaluateTrackResiduals(ii, image_pyramid_,
                                                        current_tracks_, false,
                                                        true) <<
@@ -675,10 +675,10 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
     }
     double post_error = EvaluateTrackResiduals(
         level, image_pyramid_, current_tracks_, false, true);
-    LOG(INFO) << "post rmse: " << post_error << " " << "pre : " <<
+    VLOG(2) << "post rmse: " << post_error << " " << "pre : " <<
         stats.pre_solve_error << std::endl;
     if (post_error > stats.pre_solve_error) {
-      LOG(INFO) << "Exiting due to " << post_error << " > " <<
+      VLOG(2) << "Exiting due to " << post_error << " > " <<
           stats.pre_solve_error << " rolling back. " <<
           std::endl;
 
@@ -706,7 +706,7 @@ void SemiDenseTracker::OptimizeTracks(const OptimizationOptions &options,
   ReprojectTrackCenters();
 
   // Print pre-post errors
-  LOG(INFO) << "Level " << level << " solve took " << Toc(time) <<
+  VLOG(2) << "Level " << level << " solve took " << Toc(time) <<
                           "s" << " with delta_p_norm: " <<
                           stats.delta_pose_norm << " and delta lm norm: " <<
                           stats.delta_lm_norm << std::endl;
@@ -902,7 +902,7 @@ void SemiDenseTracker::TransferPatch(std::shared_ptr<DenseTrack> track,
       result.valid_projections.push_back(pix);
       result.valid_rays.push_back(ii);
       if (std::isnan(pix[0]) || std::isnan(pix[1])) {
-        LOG(INFO) << "Pixel at: " << pix.transpose() <<
+        VLOG(2) << "Pixel at: " << pix.transpose() <<
             " center ray: " << ref_kp.ray << " rho: " <<
             ref_kp.rho << std::endl;
       }
@@ -945,7 +945,7 @@ void SemiDenseTracker::StartNewLandmarks(int only_start_in_camera) {
         StartNewTracks(image_pyramid_[cam_id], cv_keypoints, num_new_tracks,
                        cam_id);
 
-    LOG(INFO) << "Tracked: " << num_successful_tracks_ << " started " <<
+    VLOG(2) << "Tracked: " << num_successful_tracks_ << " started " <<
         started << " out of " << num_new_tracks <<
         " new tracks with " << cv_keypoints.size() <<
         " keypoints in cam " << cam_id <<  std::endl;
@@ -1050,7 +1050,7 @@ void SemiDenseTracker::OptimizePyramidLevel(
         stats.delta_lm_norm += fabs(delta_ray);
 
         if (std::isnan(delta_ray) || std::isinf(delta_ray)) {
-          LOG(INFO) << "delta_ray " << track->id << ": " << delta_ray <<
+          VLOG(2) << "delta_ray " << track->id << ": " << delta_ray <<
               "vinv:" << track->v_inv_vec/*v_inv_vec[track->opt_id]*/ << " r_l " <<
               track->r_l_vec /*r_l_vec(track->residual_offset)*/ << " w: " <<
               track->w_vec.transpose() /*w_vec[track->opt_id].transpose()*/ << "dp : " <<
